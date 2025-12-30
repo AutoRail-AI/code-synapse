@@ -1,40 +1,72 @@
 /**
- * Local LLM inference using node-llama-cpp
- * Handles the Business Logic Layer (intent inference)
+ * LLM Integration Module
+ *
+ * Provides local LLM inference capabilities using node-llama-cpp:
+ * - LLMService: Core model management and inference
+ * - BusinessLogicInferrer: Function summarization with confidence scoring
+ * - GraphRAGSummarizer: Hierarchical summaries (Function → File → Module → System)
+ *
+ * @module
  */
 
-export interface InferenceOptions {
-  maxTokens?: number;
-  temperature?: number;
-}
+// Core LLM Service
+export {
+  LLMService,
+  createLLMService,
+  createInitializedLLMService,
+  createLLMServiceWithPreset,
+  createInitializedLLMServiceWithPreset,
+  type LLMServiceConfig,
+  type InferenceOptions,
+  type InferenceResult,
+  type LLMStats,
+} from "./llm-service.js";
 
-export class LLMService {
-  private modelPath: string;
-  private model: unknown;
+// Business Logic Inference
+export {
+  BusinessLogicInferrer,
+  createBusinessLogicInferrer,
+  type FunctionContext,
+  type InferenceOutput,
+  type InferredBusinessLogic,
+  type BusinessLogicInferrerConfig,
+} from "./business-logic-inferrer.js";
 
-  constructor(modelPath: string) {
-    this.modelPath = modelPath;
-  }
+// GraphRAG Summarization
+export {
+  GraphRAGSummarizer,
+  createGraphRAGSummarizer,
+  type FunctionSummary,
+  type FileSummary,
+  type ModuleSummary,
+  type SystemSummary,
+  type SummaryHierarchy,
+  type GraphRAGConfig,
+} from "./graph-rag-summarizer.js";
 
-  async initialize(): Promise<void> {
-    // TODO: Load the LLM model using node-llama-cpp
-  }
-
-  async close(): Promise<void> {
-    // TODO: Unload model and free resources
-  }
-
-  async infer(_prompt: string, _options?: InferenceOptions): Promise<string> {
-    // TODO: Generate completion from prompt
-    throw new Error("Not implemented");
-  }
-
-  async inferIntent(_codeBlock: string): Promise<string> {
-    // TODO: Infer business intent from code
-    throw new Error("Not implemented");
-  }
-}
-
-export function createLLMService(modelPath: string): LLMService {
-  return new LLMService(modelPath);
-}
+// Model Registry and Selection
+export {
+  MODEL_REGISTRY,
+  MODEL_PRESETS,
+  getAvailableModels,
+  getModelById,
+  filterModels,
+  resolveModel,
+  getModelsDirectory,
+  isModelDownloaded,
+  getModelPath,
+  listDownloadedModels,
+  getRecommendedModel,
+  getModelsByFamily,
+  formatModelInfo,
+  printModelComparison,
+  getModelFromPreset,
+  getModelSelectionGuide,
+  getRecommendationForSystem,
+  type ModelFamily,
+  type ModelSize,
+  type ModelTask,
+  type ModelSpec,
+  type ModelResolution,
+  type ModelPreset,
+} from "./models.js";

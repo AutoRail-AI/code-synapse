@@ -164,12 +164,11 @@ Inferred via local LLM (Qwen 2.5):
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         Storage Layer                                        │
-│   ┌────────────────────┐    ┌─────────────────────┐    ┌─────────────────┐  │
-│   │  .code-synapse/    │    │  CozoDB (RocksDB)    │    │  LanceDB        │  │
-│   │  ├── graph/        │    │  Structural Graph    │    │  Vector Store   │  │
-│   │  ├── vectors/      │    │  Relationships       │    │  Embeddings     │  │
-│   │  └── config.json   │    └─────────────────────┘    └─────────────────┘  │
-│   └────────────────────┘                                                     │
+│   ┌────────────────────┐    ┌─────────────────────────────────────────────┐  │
+│   │  .code-synapse/    │    │  CozoDB (RocksDB Backend)                    │  │
+│   │  ├── data/         │    │  ├── Structural Graph (Nodes, Relationships) │  │
+│   │  └── config.json   │    │  └── Vector Embeddings (HNSW Indices)        │  │
+│   └────────────────────┘    └─────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -197,9 +196,10 @@ Inferred via local LLM (Qwen 2.5):
 
 | Technology | Purpose | Why This Choice |
 |------------|---------|-----------------|
-| **CozoDB (RocksDB)** | Graph database | Embedded, CozoScript (Datalog) queries, relationship traversal |
-| **LanceDB** | Vector database | Embedded, fast similarity search, Apache Arrow |
+| **CozoDB (RocksDB)** | Graph + Vector database | Embedded, CozoScript (Datalog) queries, HNSW vector indices |
 | **Orama** | Fuzzy search | In-memory, typo-tolerant, sub-millisecond |
+
+> **Note**: CozoDB provides both graph storage AND native vector search via HNSW indices. This unified approach eliminates synchronization issues between separate databases.
 
 ### Intelligence Layer
 
@@ -207,7 +207,40 @@ Inferred via local LLM (Qwen 2.5):
 |------------|---------|-----------------|
 | **node-llama-cpp** | Local LLM inference | GBNF grammar support, no API keys |
 | **HuggingFace Transformers.js** | Embeddings | ONNX runtime, local generation |
-| **Qwen 2.5 (1.5B-3B)** | Business logic inference | Small, fast, runs on CPU |
+| **Model Registry** | Model selection | 12 models across 4 families |
+
+#### Supported LLM Models
+
+Code-Synapse includes a comprehensive model registry with presets for different hardware configurations:
+
+| Preset | Model | Parameters | RAM | Use Case |
+|--------|-------|------------|-----|----------|
+| `fastest` | Qwen 2.5 Coder 0.5B | 0.5B | 1GB | Ultra-fast, minimal resources |
+| `minimal` | Qwen 2.5 Coder 1.5B | 1.5B | 2GB | Laptops with limited RAM |
+| `balanced` | Qwen 2.5 Coder 3B | 3B | 4GB | **Recommended default** |
+| `quality` | Qwen 2.5 Coder 7B | 7B | 8GB | Production-quality analysis |
+| `maximum` | Qwen 2.5 Coder 14B | 14B | 16GB | Maximum quality |
+
+**Model Families:**
+
+| Family | Models | Strengths |
+|--------|--------|-----------|
+| **Qwen 2.5 Coder** | 0.5B, 1.5B, 3B, 7B, 14B | Best-in-class for code, recommended |
+| **Llama 3.x** | 1B, 3B, 8B | General-purpose, Meta's latest |
+| **CodeLlama** | 7B, 13B | Code-specialized, proven |
+| **DeepSeek Coder** | 1.3B, 6.7B | Strong alternative to Qwen |
+
+**Usage:**
+```typescript
+// Using preset (recommended)
+const llm = await createInitializedLLMServiceWithPreset("balanced");
+
+// Using specific model ID
+const llm = await createInitializedLLMService({ modelId: "qwen2.5-coder-7b" });
+
+// Using custom model path
+const llm = await createInitializedLLMService({ modelPath: "/path/to/model.gguf" });
+```
 
 ### Infrastructure Layer
 
@@ -245,7 +278,7 @@ User Query: "how does authentication work?"
        │
        ├──► Orama (Fuzzy) ──► Symbol names with typos tolerated
        │
-       ├──► LanceDB (Semantic) ──► Conceptually related code
+       ├──► CozoDB (Semantic) ──► Vector similarity via HNSW indices
        │
        └──► CozoDB (Structural) ──► Exact matches + graph context
        │
@@ -328,17 +361,18 @@ User Query: "how does authentication work?"
 project-root/
 └── .code-synapse/
     ├── config.json          # Project configuration
-    ├── graph/               # CozoDB database files
-    │   ├── nodes/           # Node table data
-    │   ├── rels/            # Relationship data
-    │   └── _schema_version  # Migration tracking
-    ├── vectors/             # LanceDB vector data
-    │   └── embeddings.lance # Vector embeddings
+    ├── data/                # CozoDB database (RocksDB)
+    │   ├── *.sst            # RocksDB sorted string tables
+    │   ├── CURRENT          # Current manifest pointer
+    │   ├── MANIFEST-*       # Database manifest
+    │   └── OPTIONS-*        # RocksDB options
     ├── cache/               # Inference cache
     │   └── llm_results.json # Cached LLM outputs
     ├── traces/              # OpenTelemetry traces
     └── logs/                # Application logs
 ```
+
+> **Note**: CozoDB uses RocksDB as its storage backend, storing both graph data and vector embeddings in a single unified database.
 
 ### Graph Schema
 
@@ -467,7 +501,7 @@ project-root/
 - **Additional Language Support**: Python, Go, Rust parsers via UCE interface
 - **Remote Indexing**: Index remote repositories without full clone
 - **Team Sharing**: Export/import knowledge graphs between team members
-- **Custom LLM Models**: Support for different local models beyond Qwen
+- **Additional LLM Models**: Easy to add new models via the model registry
 - **IDE Plugins**: Native integrations beyond MCP protocol
 
 ### Scalability Considerations

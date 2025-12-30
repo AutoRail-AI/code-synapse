@@ -86,7 +86,7 @@ export class GraphWriter {
    * Atomically deletes old entities and writes new ones.
    */
   async writeFile(result: ExtractionResult): Promise<WriteResult> {
-    const startTime = Date.now();
+    const _startTime = Date.now();
 
     try {
       // Validate if enabled

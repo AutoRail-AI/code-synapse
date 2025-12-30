@@ -49,15 +49,6 @@ reachable[to] := reachable[mid], *calls{from: mid, to}
                    v_knn(vec, $query_vec, 10, distance)
 ```
 
-## Vector Database (Legacy)
-
-| Library | Version | Purpose | Documentation |
-|---------|---------|---------|---------------|
-| **@lancedb/lancedb** | ^0.17.0 | Vector similarity search (optional fallback) | [LanceDB Docs](https://lancedb.github.io/lancedb/) |
-| | | | [GitHub](https://github.com/lancedb/lancedb) |
-
-> **Note**: CozoDB now provides native vector search via HNSW indices. LanceDB is retained for specialized use cases requiring Apache Arrow integration.
-
 ## Code Parsing
 
 | Library | Version | Purpose | Documentation |

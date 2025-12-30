@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { CozoBatch, ExtractionResult } from "../extraction/types.js";
+import type { CozoBatch } from "../extraction/types.js";
 
 /**
  * Query result from the graph store.

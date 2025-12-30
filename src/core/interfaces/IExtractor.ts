@@ -8,7 +8,7 @@
  */
 
 import type { UCEFile } from "../../types/uce.js";
-import type { CozoBatch, ExtractionResult, ExtractionStats } from "../extraction/types.js";
+import type { CozoBatch, ExtractionResult } from "../extraction/types.js";
 
 /**
  * Extractor options.

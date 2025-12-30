@@ -251,18 +251,14 @@ export class MigrationRunner {
       _statements: [],
     };
 
-    try {
-      // Run the migration - statements execute immediately because tx.active is false
-      await migration[direction](this.db, immediateTx);
+    // Run the migration - statements execute immediately because tx.active is false
+    // Note: No rollback possible - schema changes in CozoDB are immediate
+    // Failed migrations may leave partial state - next run will retry
+    await migration[direction](this.db, immediateTx);
 
-      // Update schema version after successful migration
-      const newVersion = direction === "up" ? migration.version : migration.version - 1;
-      await this.db.setSchemaVersion(newVersion);
-    } catch (error) {
-      // Note: No rollback possible - schema changes in CozoDB are immediate
-      // Failed migrations may leave partial state - next run will retry
-      throw error;
-    }
+    // Update schema version after successful migration
+    const newVersion = direction === "up" ? migration.version : migration.version - 1;
+    await this.db.setSchemaVersion(newVersion);
   }
 
   /**

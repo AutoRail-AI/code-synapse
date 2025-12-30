@@ -15,12 +15,65 @@ import {
   readJson,
   createLogger,
 } from "../../utils/index.js";
-import type { ProjectConfig, IndexStats } from "../../types/index.js";
+import type { ProjectConfig } from "../../types/index.js";
+import { createGraphStore } from "../../core/graph/index.js";
+import { MODEL_PRESETS, getModelById, listDownloadedModels } from "../../core/llm/index.js";
 
 const logger = createLogger("status");
 
 export interface StatusOptions {
   verbose?: boolean;
+}
+
+/**
+ * Get index stats from the database
+ */
+async function getIndexStats(graphDbPath: string): Promise<{
+  fileCount: number;
+  functionCount: number;
+  classCount: number;
+  interfaceCount: number;
+  variableCount?: number;
+  relationshipCount?: number;
+}> {
+  try {
+    const graphStore = await createGraphStore({ path: graphDbPath });
+
+    // Query counts using CozoScript
+    const fileResult = await graphStore.query<{ count: number }>(
+      `?[count] := count = count(id), *file{id}`
+    );
+    const funcResult = await graphStore.query<{ count: number }>(
+      `?[count] := count = count(id), *function{id}`
+    );
+    const classResult = await graphStore.query<{ count: number }>(
+      `?[count] := count = count(id), *class{id}`
+    );
+    const ifaceResult = await graphStore.query<{ count: number }>(
+      `?[count] := count = count(id), *interface{id}`
+    );
+    const varResult = await graphStore.query<{ count: number }>(
+      `?[count] := count = count(id), *variable{id}`
+    );
+
+    await graphStore.close();
+
+    return {
+      fileCount: fileResult.rows[0]?.count ?? 0,
+      functionCount: funcResult.rows[0]?.count ?? 0,
+      classCount: classResult.rows[0]?.count ?? 0,
+      interfaceCount: ifaceResult.rows[0]?.count ?? 0,
+      variableCount: varResult.rows[0]?.count ?? 0,
+    };
+  } catch (error) {
+    logger.debug({ error }, "Could not read stats from database");
+    return {
+      fileCount: 0,
+      functionCount: 0,
+      classCount: 0,
+      interfaceCount: 0,
+    };
+  }
 }
 
 /**
@@ -118,7 +171,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
     console.log(`  Vector DB:    ${formatBytes(vectorDbSize)}`);
   }
 
-  // Try to get index stats (placeholder for now)
+  // Try to get index stats
   console.log();
   console.log(chalk.white.bold("Index Status"));
 
@@ -134,26 +187,42 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
       chalk.dim("to index the project")
     );
   } else {
-    // TODO: Read actual stats from database
-    const stats: Partial<IndexStats> = {
-      fileCount: 0,
-      functionCount: 0,
-      classCount: 0,
-      interfaceCount: 0,
-      relationshipCount: 0,
-    };
+    // Read actual stats from database
+    const stats = await getIndexStats(graphDbPath);
 
     console.log(`  Files:         ${stats.fileCount}`);
     console.log(`  Functions:     ${stats.functionCount}`);
     console.log(`  Classes:       ${stats.classCount}`);
     console.log(`  Interfaces:    ${stats.interfaceCount}`);
-    console.log(`  Relationships: ${stats.relationshipCount}`);
+    console.log(`  Variables:     ${stats.variableCount ?? 0}`);
 
-    if (options.verbose) {
-      console.log();
-      console.log(chalk.white.bold("Business Logic Inference"));
-      console.log(`  Inferred:    ${stats.inferredCount ?? 0}/${stats.functionCount}`);
-      console.log(`  Progress:    ${stats.inferenceProgress ?? 0}%`);
+    if (options.verbose && stats.relationshipCount !== undefined) {
+      console.log(`  Relationships: ${stats.relationshipCount}`);
+    }
+  }
+
+  // LLM Model info
+  const extConfig = config as ProjectConfig & { llmModel?: string; skipLlm?: boolean };
+  console.log();
+  console.log(chalk.white.bold("LLM Settings"));
+
+  if (extConfig.skipLlm) {
+    console.log(`  Status:  ${chalk.yellow("Disabled")}`);
+  } else {
+    const modelId = extConfig.llmModel || MODEL_PRESETS.balanced;
+    const modelSpec = getModelById(modelId);
+    console.log(`  Status:  ${chalk.green("Enabled")}`);
+    if (modelSpec) {
+      console.log(`  Model:   ${modelSpec.name} (${modelSpec.parameters})`);
+      console.log(`  RAM:     ${modelSpec.minRamGb}GB minimum`);
+    } else {
+      console.log(`  Model:   ${modelId}`);
+    }
+
+    // Show downloaded models count
+    const downloaded = listDownloadedModels();
+    if (downloaded.length > 0) {
+      console.log(`  Downloaded: ${downloaded.length} model(s)`);
     }
   }
 

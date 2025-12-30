@@ -2,7 +2,7 @@
  * FileWatcher Tests
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -110,7 +110,7 @@ describe("FileWatcher", () => {
       const batches: FileChangeBatch[] = [];
       let eventCount = 0;
 
-      const watcher = new FileWatcher({
+      const _watcher = new FileWatcher({
         project,
         debounceMs: 50,
         onChange: () => eventCount++,
@@ -119,6 +119,7 @@ describe("FileWatcher", () => {
         },
       });
 
+      // _watcher is created to test callback registration, not used directly
       // Simulate events by directly testing the internal batch building logic
       // This avoids timing issues with filesystem events
       const mockEvents: FileChangeEvent[] = [

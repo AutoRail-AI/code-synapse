@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { IGraphStore } from "../IGraphStore.js";
 import { CozoGraphStore } from "../../graph/cozo-graph-store.js";
-import type { CozoBatch } from "../../extraction/types.js";
+import type { CozoBatch as _CozoBatch } from "../../extraction/types.js";
 import { createEmptyBatch } from "../../extraction/types.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";

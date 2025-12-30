@@ -26,8 +26,7 @@ pnpm test             # Run tests (vitest)
 | Package | Purpose | Used In |
 |---------|---------|---------|
 | `@huggingface/transformers` | Local embeddings (ONNX) | `core/embeddings` |
-| `cozo-node` | Graph database (CozoDB) | `core/graph` |
-| `@lancedb/lancedb` | Vector database | `core/vector` |
+| `cozo-node` | Graph + Vector database (CozoDB with RocksDB) | `core/graph` |
 | `@modelcontextprotocol/sdk` | MCP protocol server | `mcp/` |
 | `chalk` | CLI colored output | `cli/` |
 | `chokidar` | File system watching | `core/indexer` |
@@ -73,11 +72,15 @@ src/
 ├── core/                   # Shared core logic (used by CLI & MCP)
 │   ├── index.ts            # Core module exports
 │   ├── parser/             # Tree-sitter AST parsing
-│   ├── graph/              # CozoDB graph operations
-│   ├── vector/             # LanceDB vector operations
+│   ├── graph/              # CozoDB graph + vector operations
+│   ├── graph-builder/      # Atomic writes, incremental updates
+│   ├── extraction/         # Entity extraction pipeline
+│   ├── semantic/           # TypeScript Compiler API analysis
+│   ├── interfaces/         # Core interface definitions
 │   ├── embeddings/         # HuggingFace transformers
 │   ├── llm/                # node-llama-cpp inference
-│   └── indexer/            # Orchestrates all core modules
+│   ├── indexer/            # Orchestrates all core modules
+│   └── telemetry/          # Tracing and metrics
 │
 ├── types/                  # Shared TypeScript types
 │   └── index.ts
@@ -94,7 +97,8 @@ src/
 |---------------------|--------------|---------|
 | New CLI command | `src/cli/commands/` | `config.ts`, `query.ts` |
 | MCP tool/resource | `src/mcp/` | `tools.ts`, `resources.ts` |
-| Database operations | `src/core/graph/` or `src/core/vector/` | Query helpers, schema |
+| Database operations | `src/core/graph/` | Query helpers, schema, migrations |
+| Entity extraction | `src/core/extraction/` | Extractors for new entity types |
 | File parsing logic | `src/core/parser/` | Language grammars, AST utils |
 | Embedding generation | `src/core/embeddings/` | Model loading, batch processing |
 | LLM inference | `src/core/llm/` | Prompts, inference helpers |
@@ -200,16 +204,21 @@ User                          AI Agent
    │                            │
    └──────────┬─────────────────┘
               ▼
-         ┌─────────┐
-         │  Core   │
-         │ Indexer │
-         └────┬────┘
-              │
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
-┌───────┐ ┌───────┐ ┌───────┐
-│Parser │ │ Graph │ │Vector │
-└───────┘ └───────┘ └───────┘
+    ┌─────────────────────┐
+    │  IndexerCoordinator │
+    └──────────┬──────────┘
+               │
+   ┌───────────┼───────────┬────────────┐
+   ▼           ▼           ▼            ▼
+┌───────┐ ┌────────┐ ┌──────────┐ ┌───────────┐
+│Scanner│ │ Parser │ │Extraction│ │GraphWriter│
+└───────┘ └────────┘ └──────────┘ └─────┬─────┘
+                                        │
+                                        ▼
+                                 ┌────────────┐
+                                 │  CozoDB    │
+                                 │(Graph+Vec) │
+                                 └────────────┘
 ```
 
 ### Core Modules
@@ -217,11 +226,15 @@ User                          AI Agent
 | Module | Purpose | Dependency |
 |--------|---------|------------|
 | `parser` | AST parsing (Syntax Layer) | `web-tree-sitter` |
-| `graph` | Structural relationships | `cozo-node` |
-| `vector` | Semantic search | `@lancedb/lancedb` |
+| `semantic` | Type resolution, symbol linking | TypeScript Compiler API |
+| `extraction` | Entity extraction pipeline | - |
+| `graph` | Graph + vector storage | `cozo-node` (RocksDB) |
+| `graph-builder` | Atomic writes, incremental updates | - |
 | `embeddings` | Vector embeddings | `@huggingface/transformers` |
-| `llm` | Intent inference (Business Logic Layer) | `node-llama-cpp` |
-| `indexer` | Orchestrates all modules | - |
+| `llm` | Intent inference (Business Logic Layer) | `node-llama-cpp` (12 models) |
+| `indexer` | Pipeline orchestration, file watching | `chokidar` |
+| `interfaces` | Core contracts (IParser, IGraphStore) | - |
+| `telemetry` | Tracing and metrics | - |
 
 ### Four-Layer Knowledge Engine
 
@@ -229,6 +242,43 @@ User                          AI Agent
 2. **Semantic Layer** - Import/export relationships, type hierarchies
 3. **Architectural Layer** - Service boundaries, API contracts, design patterns
 4. **Business Logic Layer** - Local SLM (Qwen 2.5) for intent inference
+
+### LLM Model Selection
+
+The LLM module (`src/core/llm/`) supports 12 models across 4 families with automatic download:
+
+**Presets:**
+| Preset | Model | RAM | Description |
+|--------|-------|-----|-------------|
+| `fastest` | qwen2.5-coder-0.5b | 1GB | Ultra-fast, minimal resources |
+| `minimal` | qwen2.5-coder-1.5b | 2GB | Good for low-memory systems |
+| `balanced` | qwen2.5-coder-3b | 4GB | **Recommended default** |
+| `quality` | qwen2.5-coder-7b | 8GB | Production quality |
+| `maximum` | qwen2.5-coder-14b | 16GB | Maximum quality |
+
+**Model Families:**
+- **Qwen 2.5 Coder**: 0.5B, 1.5B, 3B, 7B, 14B (recommended for code)
+- **Llama 3.x**: 1B, 3B, 8B (general purpose)
+- **CodeLlama**: 7B, 13B (code-specialized)
+- **DeepSeek Coder**: 1.3B, 6.7B (alternative to Qwen)
+
+**Usage in code:**
+```typescript
+import { createInitializedLLMServiceWithPreset, createInitializedLLMService } from "./core/llm/index.js";
+
+// Using preset (recommended)
+const llm = await createInitializedLLMServiceWithPreset("balanced");
+
+// Using specific model ID
+const llm = await createInitializedLLMService({ modelId: "qwen2.5-coder-7b" });
+
+// Helper functions
+import { getAvailableModels, getModelSelectionGuide, filterModels } from "./core/llm/index.js";
+
+getAvailableModels();                          // List all 12 models
+filterModels({ maxRamGb: 4, codeOptimized: true }); // Filter by criteria
+getModelSelectionGuide();                       // Human-readable guide
+```
 
 ## CLI Commands
 
@@ -320,37 +370,38 @@ import { fileURLToPath } from "node:url";
 
 ## Implementation Roadmap
 
-See `docs/implementation-plan.md` for detailed implementation steps.
+See `docs/implementation-plan.md` for detailed implementation steps and `docs/implementation-tracker.md` for progress tracking.
 
 ### Phase Status
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| **Phase 1** | Project Foundation & Scaffolding | ✅ Complete |
-| **Phase 2** | Graph Database Foundation (CozoDB) | 🔲 Pending |
-| **Phase 3** | File System Scanner | 🔲 Pending |
-| **Phase 4** | Code Parser Layer (Tree-sitter) | 🔲 Pending |
-| **Phase 5** | Semantic Analysis Layer | 🔲 Pending |
-| **Phase 6** | Entity Extraction | 🔲 Pending |
-| **Phase 7** | MCP Server Implementation | 🔲 Pending |
-| **Phase 8** | LLM Integration (Business Logic Layer) | 🔲 Pending |
+| **H1-H5** | Horizontals (Foundation, Disposables, Schema, Async, Telemetry) | ✅ Complete |
+| **V1** | Graph Database Foundation (CozoDB) | ✅ Complete |
+| **V2** | File System Scanner | ✅ Complete |
+| **V3** | Code Parser Layer (Tree-sitter) | ✅ Complete |
+| **V4** | Semantic Analysis Layer | ✅ Complete |
+| **V5** | Entity Extraction | ✅ Complete |
+| **V6** | Architecture Refactor (Interfaces) | ✅ Complete |
+| **V7** | Graph Builder | ✅ Complete |
+| **V8** | Indexer & Watcher | ✅ Complete |
+| **V9** | MCP Server Implementation | ✅ Complete |
+| **V10** | LLM Integration (12 models) | ✅ Complete |
+| **V11** | CLI Commands | 🔲 Pending |
 
-### Phase 1 Completed Items
+### Current Architecture
 
-- ✅ Project structure with cli/, mcp/, core/ separation
-- ✅ TypeScript configuration (strict mode, ES2022, NodeNext)
-- ✅ ESLint + Prettier configuration
-- ✅ CLI framework with Commander.js (init, start, index, status commands)
-- ✅ Core module scaffolding (parser, graph, vector, embeddings, llm, indexer)
-- ✅ Shared types and utilities
-- ✅ MCP server entry point
+- **131 tests passing** across all modules
+- **CozoDB** with RocksDB backend for unified graph + vector storage
+- **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor)
+- **Incremental indexing** with file hash-based change detection
+- **File watching** with event debouncing and batching
 
-### Next Steps (Phase 2)
+### Next Steps (V11)
 
-1. Implement CozoDB wrapper in `src/core/graph/`
-2. Define graph schema (File, Function, Class nodes; CALLS, IMPORTS edges)
-3. Create entity models matching graph schema
-4. Implement graph operations layer
+1. Polish CLI command implementations
+2. Add model selection to CLI (code-synapse config --model)
+3. Add progress bars for model downloads and indexing
 
 ## Key Constraints
 
@@ -359,3 +410,25 @@ See `docs/implementation-plan.md` for detailed implementation steps.
 - **Node version:** >= 18
 - **Privacy-first:** All processing must stay local, no external API calls
 - **ESM:** Use `.js` extension in imports; use `node:` prefix for built-ins
+
+## Documentation References
+
+For detailed architecture and implementation information, see the following documents:
+
+| Document | Purpose |
+|----------|---------|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture overview and design decisions |
+| [`docs/implementation-plan.md`](docs/implementation-plan.md) | Detailed implementation phases and specifications |
+| [`docs/implementation-tracker.md`](docs/implementation-tracker.md) | Progress tracking and change log |
+| [`docs/architecture-refactor-plan.md`](docs/architecture-refactor-plan.md) | V6 interface-based architecture refactor plan |
+| [`docs/references.md`](docs/references.md) | External references and documentation links |
+
+### Key Technologies
+
+| Technology | Documentation |
+|------------|---------------|
+| **CozoDB** | [docs.cozodb.org](https://docs.cozodb.org) - Datalog query language (CozoScript) |
+| **Tree-sitter** | [tree-sitter.github.io](https://tree-sitter.github.io) - Incremental parsing |
+| **MCP Protocol** | [modelcontextprotocol.io](https://modelcontextprotocol.io) - AI agent communication |
+| **HuggingFace Transformers** | [huggingface.co/docs/transformers.js](https://huggingface.co/docs/transformers.js) - Local embeddings |
+| **node-llama-cpp** | [node-llama-cpp.withcat.ai](https://node-llama-cpp.withcat.ai) - Local LLM inference |

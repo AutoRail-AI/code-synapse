@@ -38,7 +38,7 @@ Unlike standard tools (LSP, grep) that only see syntax, Code-Synapse builds a mu
 * **⚡ Zero-Config "Sidecar":** Runs locally on your machine. No Docker required. Just `npx code-synapse start`.
 * **🔌 Agent-First Design:** Built natively on the **Model Context Protocol (MCP)**. Works out-of-the-box with Claude Desktop, Cursor, and any MCP-compliant tool.
 * **🧠 Hybrid Intelligence:** Combines deterministic Static Analysis (Tree-sitter) for 100% accuracy with probabilistic AI Inference (Local LLM) for deep context.
-* **🔒 Privacy-First:** Your code never leaves your machine. We use embedded databases (**KùzuDB** & **LanceDB**) and local models (**Qwen 2.5 Coder**) to keep everything offline.
+* **🔒 Privacy-First:** Your code never leaves your machine. We use an embedded database (**CozoDB** with RocksDB backend) and local models (**Qwen 2.5 Coder**) to keep everything offline.
 * **🔄 Incremental Indexing:** Smart file-watching ensures the graph is updated in milliseconds when you save a file.
 
 ---
@@ -98,42 +98,100 @@ Restart your AI Agent. You can now ask complex, context-aware questions:
 
 ## 🏗️ Architecture
 
-Code-Synapse is designed as a modular **Monorepo** using the following stack:
+Code-Synapse is designed as a modular TypeScript application using the following stack:
 
-* **Orchestrator:** TypeScript (Node.js)
-* **Parsing:** `web-tree-sitter` (WASM) for universal language support.
-* **Graph Database:** **KùzuDB** (Embedded) for storing structural relationships (Imports, Calls, Inheritance).
-* **Vector Database:** **LanceDB** (Embedded) for semantic search and intent matching.
-* **Inference:** **ONNX Runtime** running quantized models (e.g., `all-MiniLM-L6-v2`) for local embeddings.
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Runtime** | TypeScript (Node.js) | Main orchestrator |
+| **Parsing** | `web-tree-sitter` (WASM) | Universal language AST parsing |
+| **Database** | **CozoDB** (RocksDB backend) | Unified graph + vector storage |
+| **Embeddings** | `@huggingface/transformers` (ONNX) | Local embedding generation |
+| **LLM** | `node-llama-cpp` | Local business logic inference |
+| **Protocol** | MCP SDK | AI agent communication |
+
+### LLM Model Selection
+
+Code-Synapse supports multiple local LLM models for business logic inference. Choose based on your hardware:
+
+| Preset | Model | RAM | Best For |
+|--------|-------|-----|----------|
+| **fastest** | Qwen 2.5 Coder 0.5B | 1GB | Resource-constrained systems |
+| **minimal** | Qwen 2.5 Coder 1.5B | 2GB | Laptops with limited RAM |
+| **balanced** | Qwen 2.5 Coder 3B | 4GB | **Recommended default** |
+| **quality** | Qwen 2.5 Coder 7B | 8GB | Production-quality analysis |
+| **maximum** | Qwen 2.5 Coder 14B | 16GB | Maximum quality |
+
+**Supported model families:**
+- **Qwen 2.5 Coder** (Recommended) - Best-in-class for code tasks
+- **Llama 3.x** - General-purpose from Meta
+- **CodeLlama** - Code-specialized Llama variant
+- **DeepSeek Coder** - Strong alternative to Qwen
+
+### Why CozoDB?
+
+We use **CozoDB** as a unified database for both graph relationships AND vector embeddings:
+
+* **Graph Storage**: Stores structural relationships (CALLS, IMPORTS, EXTENDS, IMPLEMENTS)
+* **Vector Search**: HNSW indices for semantic similarity search
+* **Single Database**: No synchronization between separate graph/vector DBs
+* **Datalog Queries**: Powerful recursive queries via CozoScript
 
 ```mermaid
 graph LR
     User[AI Agent] -->|MCP Protocol| Sidecar[Code-Synapse CLI]
-    
+
     subgraph "Local Knowledge Engine"
         Sidecar --> Indexer
         Indexer -->|Parse| AST[Tree-sitter]
         Indexer -->|Infer| LLM[Local SLM]
-        
-        AST --> Graph[(KùzuDB Graph)]
-        LLM --> Vector[(LanceDB Vector)]
-        
-        Graph <--> QueryEngine
-        Vector <--> QueryEngine
-        
+
+        AST --> DB[(CozoDB)]
+        LLM --> DB
+
+        DB -->|Graph + Vector| QueryEngine
+
         QueryEngine -->|Context| Sidecar
     end
 
+```
+
+### Data Pipeline
+
+```
+File System → Scanner → Parser (Tree-sitter) → Semantic Analyzer (TS Compiler)
+     ↓
+Entity Extraction → Graph Writer → CozoDB (RocksDB)
+     ↓
+Embeddings (ONNX) → Vector Index (HNSW)
 ```
 
 ---
 
 ## 🗺️ Roadmap
 
-* **Phase 1 (Current):** Core Indexing (JS/TS, Python) & MCP Interface.
-* **Phase 2:** Advanced "Business Logic" inference using local Qwen 2.5 integration.
-* **Phase 3:** Cross-repository dependency mapping.
-* **Phase 4:** IDE Extensions (VS Code sidebar for human navigation).
+### Completed
+
+- [x] **Foundation**: Project scaffolding, CLI framework, utilities
+- [x] **Graph Database**: CozoDB integration with schema migrations
+- [x] **File Scanner**: Project detection, file discovery, change detection
+- [x] **Code Parser**: Tree-sitter WASM parsing for TS/JS
+- [x] **Semantic Analysis**: TypeScript Compiler API for type resolution
+- [x] **Entity Extraction**: Functions, classes, interfaces, relationships
+- [x] **Graph Builder**: Atomic writes, incremental updates
+- [x] **Indexer & Watcher**: Pipeline orchestration, file watching
+
+### In Progress
+
+- [x] **MCP Server**: AI agent communication interface
+- [x] **LLM Integration**: Business logic inference with local models (12 models supported)
+- [ ] **CLI Polish**: Full command implementations
+
+### Future
+
+- [ ] Python language support
+- [ ] Cross-repository dependency mapping
+- [ ] GraphRAG hierarchical summarization
+- [ ] IDE Extensions (VS Code sidebar)
 
 ## 🤝 Contributing
 

@@ -11,6 +11,7 @@ import { initCommand } from "./commands/init.js";
 import { startCommand } from "./commands/start.js";
 import { statusCommand } from "./commands/status.js";
 import { indexCommand } from "./commands/index.js";
+import { configCommand } from "./commands/config.js";
 import { createLogger } from "../utils/logger.js";
 
 const logger = createLogger("cli");
@@ -35,6 +36,7 @@ program
   .description("Initialize Code-Synapse for the current project")
   .option("-f, --force", "Force reinitialization even if already initialized")
   .option("--skip-llm", "Skip LLM-based business logic inference")
+  .option("-m, --model <preset>", "LLM model preset (fastest, minimal, balanced, quality, maximum)")
   .action(initCommand);
 
 program
@@ -55,6 +57,14 @@ program
   .description("Show the current status of Code-Synapse")
   .option("-v, --verbose", "Show detailed statistics")
   .action(statusCommand);
+
+program
+  .command("config")
+  .description("Manage Code-Synapse configuration")
+  .option("-m, --model <preset>", "Set LLM model (preset or model ID)")
+  .option("-l, --list-models", "List all available models")
+  .option("-g, --show-guide", "Show model selection guide")
+  .action(configCommand);
 
 // =============================================================================
 // Global Error Handling

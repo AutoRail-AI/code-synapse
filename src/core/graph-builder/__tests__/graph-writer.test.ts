@@ -2,14 +2,14 @@
  * GraphWriter Tests
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 
 import { CozoGraphStore } from "../../graph/cozo-graph-store.js";
 import { GraphWriter } from "../graph-writer.js";
-import { createEmptyBatch, type CozoBatch, type ExtractionResult } from "../../extraction/types.js";
+import { createEmptyBatch, type ExtractionResult } from "../../extraction/types.js";
 
 describe("GraphWriter", () => {
   let store: CozoGraphStore;

@@ -11,7 +11,7 @@ import type { IParser } from "../interfaces/IParser.js";
 import type { IGraphStore } from "../interfaces/IGraphStore.js";
 import type { DetectedProject } from "./project-detector.js";
 import type { FileInfo } from "./scanner.js";
-import type { ExtractionResult } from "../extraction/types.js";
+import type { ExtractionResult as _ExtractionResult } from "../extraction/types.js";
 import type { WriteResult, GraphFileInfo } from "../graph-builder/index.js";
 
 import { FileScanner } from "./scanner.js";

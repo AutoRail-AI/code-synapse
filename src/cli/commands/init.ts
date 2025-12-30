@@ -16,12 +16,19 @@ import {
   fileExists,
   createLogger,
 } from "../../utils/index.js";
+import {
+  MODEL_PRESETS,
+  getModelById,
+  
+  type ModelPreset,
+} from "../../core/llm/index.js";
 
 const logger = createLogger("init");
 
 export interface InitOptions {
   force?: boolean;
   skipLlm?: boolean;
+  model?: string;
 }
 
 /**
@@ -77,7 +84,20 @@ export async function initCommand(options: InitOptions): Promise<void> {
     if (projectConfig.framework) {
       console.log(chalk.dim(`  Framework:  ${projectConfig.framework}`));
     }
-    console.log(chalk.dim(`  LLM:        ${options.skipLlm ? "disabled" : "enabled"}`));
+
+    // Show LLM model info
+    if (options.skipLlm) {
+      console.log(chalk.dim(`  LLM:        disabled`));
+    } else {
+      const modelId = (projectConfig as ProjectConfig & { llmModel?: string }).llmModel || MODEL_PRESETS.balanced;
+      const modelSpec = getModelById(modelId);
+      if (modelSpec) {
+        console.log(chalk.dim(`  LLM Model:  ${modelSpec.name} (${modelSpec.parameters})`));
+        console.log(chalk.dim(`  RAM Needed: ${modelSpec.minRamGb}GB`));
+      } else {
+        console.log(chalk.dim(`  LLM Model:  ${modelId}`));
+      }
+    }
 
     console.log();
     console.log(chalk.dim("Created:"));
@@ -90,17 +110,23 @@ export async function initCommand(options: InitOptions): Promise<void> {
     console.log(chalk.cyan("Next steps:"));
     console.log(
       chalk.dim("  1. Run"),
+      chalk.white("code-synapse index"),
+      chalk.dim("to index the project")
+    );
+    console.log(
+      chalk.dim("  2. Run"),
       chalk.white("code-synapse start"),
       chalk.dim("to start the MCP server")
     );
     console.log(
-      chalk.dim("  2. Configure your AI agent to connect to the server")
+      chalk.dim("  3. Configure your AI agent to connect to the server")
     );
 
     if (!options.skipLlm) {
       console.log();
-      console.log(chalk.dim("For business logic inference, ensure Ollama is running:"));
-      console.log(chalk.dim("  ollama pull qwen2.5-coder:1.5b"));
+      console.log(chalk.dim("LLM model will be downloaded automatically on first use."));
+      console.log(chalk.dim("To change model: code-synapse config --model <preset>"));
+      console.log(chalk.dim("Available presets: fastest, minimal, balanced, quality, maximum"));
     }
   } catch (error) {
     spinner.fail(chalk.red("Failed to initialize Code-Synapse"));
@@ -210,9 +236,34 @@ async function detectProjectConfig(options: InitOptions): Promise<ProjectConfig>
   };
 
   // Store LLM preference in config (optional field)
+  const extendedConfig = config as ProjectConfig & {
+    skipLlm?: boolean;
+    llmModel?: string;
+  };
+
   if (options.skipLlm) {
-    (config as ProjectConfig & { skipLlm?: boolean }).skipLlm = true;
+    extendedConfig.skipLlm = true;
+  } else {
+    // Set model - use provided model or default to balanced
+    let modelId: string = MODEL_PRESETS.balanced;
+
+    if (options.model) {
+      // Check if it's a preset name
+      if (options.model in MODEL_PRESETS) {
+        modelId = MODEL_PRESETS[options.model as ModelPreset];
+      } else {
+        // Check if it's a direct model ID
+        const model = getModelById(options.model);
+        if (model) {
+          modelId = options.model;
+        } else {
+          logger.warn({ model: options.model }, "Unknown model, using balanced preset");
+        }
+      }
+    }
+
+    extendedConfig.llmModel = modelId;
   }
 
-  return config;
+  return extendedConfig;
 }
