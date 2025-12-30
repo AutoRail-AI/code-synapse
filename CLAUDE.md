@@ -16,7 +16,45 @@ pnpm start            # Run CLI (node dist/cli/index.js)
 pnpm lint             # Lint (strict: --max-warnings 0)
 pnpm check-types      # Type check
 pnpm format           # Format code with Prettier
+pnpm test             # Run tests (vitest)
 ```
+
+## Dependencies
+
+### Production Dependencies
+
+| Package | Purpose | Used In |
+|---------|---------|---------|
+| `@huggingface/transformers` | Local embeddings (ONNX) | `core/embeddings` |
+| `@kuzu/kuzu-wasm` | Graph database (WASM) | `core/graph` |
+| `@lancedb/lancedb` | Vector database | `core/vector` |
+| `@modelcontextprotocol/sdk` | MCP protocol server | `mcp/` |
+| `chalk` | CLI colored output | `cli/` |
+| `chokidar` | File system watching | `core/indexer` |
+| `commander` | CLI framework | `cli/` |
+| `fast-glob` | Fast file pattern matching | `core/indexer` |
+| `node-llama-cpp` | Local LLM inference | `core/llm` |
+| `ora` | CLI spinners | `cli/` |
+| `pino` | Structured logging | All modules |
+| `tree-sitter-javascript` | JS grammar for parsing | `core/parser` |
+| `tree-sitter-typescript` | TS grammar for parsing | `core/parser` |
+| `web-tree-sitter` | Code parsing (WASM) | `core/parser` |
+| `zod` | Schema validation | `types/`, `core/` |
+
+### Dev Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `@eslint/js` | ESLint core |
+| `@types/node` | Node.js types |
+| `eslint` | Linting |
+| `eslint-config-prettier` | ESLint + Prettier compat |
+| `globals` | Global variables for ESLint |
+| `pino-pretty` | Pretty log output (dev) |
+| `prettier` | Code formatting |
+| `typescript` | TypeScript compiler |
+| `typescript-eslint` | TypeScript ESLint plugin |
+| `vitest` | Testing framework |
 
 ## Project Structure
 

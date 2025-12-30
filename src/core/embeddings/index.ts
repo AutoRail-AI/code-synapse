@@ -17,12 +17,12 @@ export class EmbeddingService {
     // TODO: Load the embedding model using @huggingface/transformers
   }
 
-  async embed(text: string): Promise<EmbeddingResult> {
+  async embed(_text: string): Promise<EmbeddingResult> {
     // TODO: Generate embedding for text
     throw new Error("Not implemented");
   }
 
-  async embedBatch(texts: string[]): Promise<EmbeddingResult[]> {
+  async embedBatch(_texts: string[]): Promise<EmbeddingResult[]> {
     // TODO: Generate embeddings for multiple texts
     throw new Error("Not implemented");
   }

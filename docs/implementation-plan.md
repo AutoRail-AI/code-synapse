@@ -47,6 +47,41 @@ src/
     └── index.ts            ✅ File system helpers, config paths
 ```
 
+### Installed Dependencies
+
+**Production:**
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@huggingface/transformers` | ^3.5.1 | Local embeddings (ONNX) |
+| `@kuzu/kuzu-wasm` | ^0.7.0 | Graph database (WASM) |
+| `@lancedb/lancedb` | ^0.17.0 | Vector database |
+| `@modelcontextprotocol/sdk` | ^1.25.1 | MCP protocol server |
+| `chalk` | ^5.6.2 | CLI colored output |
+| `chokidar` | ^5.0.0 | File system watching |
+| `commander` | ^14.0.2 | CLI framework |
+| `fast-glob` | ^3.3.3 | Fast file pattern matching |
+| `node-llama-cpp` | ^3.14.5 | Local LLM inference |
+| `ora` | ^9.0.0 | CLI spinners |
+| `pino` | ^10.1.0 | Structured logging |
+| `tree-sitter-javascript` | ^0.25.0 | JS grammar for parsing |
+| `tree-sitter-typescript` | ^0.23.2 | TS grammar for parsing |
+| `web-tree-sitter` | ^0.26.3 | Code parsing (WASM) |
+| `zod` | ^4.2.1 | Schema validation |
+
+**Development:**
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@eslint/js` | ^9.39.1 | ESLint core |
+| `@types/node` | ^22.15.3 | Node.js types |
+| `eslint` | ^9.39.1 | Linting |
+| `eslint-config-prettier` | ^10.1.0 | ESLint + Prettier compat |
+| `globals` | ^16.2.0 | Global variables for ESLint |
+| `pino-pretty` | ^13.1.3 | Pretty log output (dev) |
+| `prettier` | ^3.7.4 | Code formatting |
+| `typescript` | 5.9.2 | TypeScript compiler |
+| `typescript-eslint` | ^8.33.0 | TypeScript ESLint plugin |
+| `vitest` | ^4.0.16 | Testing framework |
+
 ---
 
 ## Table of Contents
@@ -159,8 +194,8 @@ src/
   ```
 
 - **Query Language**: Cypher (compatible with Neo4j syntax)
-- **Node Binding**: `@kuzu/node` npm package
-- **Installation**: `npm install @kuzu/node`
+- **Node Binding**: `@kuzu/kuzu-wasm` npm package (WASM version)
+- **Installation**: `pnpm add @kuzu/kuzu-wasm`
 
 ### Code Parsing Layer
 
@@ -431,26 +466,25 @@ src/
 
 - **Command Structure**:
   ```bash
-  codek init          # Initialize project
-  codek serve         # Start MCP server
-  codek status        # Show indexing status
-  codek reindex       # Force re-index
-  codek mcp-config    # Output MCP configuration
+  code-synapse init     # Initialize project
+  code-synapse start    # Start MCP server
+  code-synapse status   # Show indexing status
+  code-synapse index    # Force re-index
   ```
 
 - **Implementation**:
   ```typescript
   import { Command } from 'commander';
-  
+
   const program = new Command();
   program
-    .name('codek')
-    .description('Code Knowledge Platform')
-    .version('1.0.0');
-  
+    .name('code-synapse')
+    .description('An agent-first knowledge engine for AI coding assistants')
+    .version('0.1.0');
+
   program
     .command('init')
-    .description('Initialize code knowledge graph')
+    .description('Initialize Code-Synapse for the current project')
     .action(initCommand);
   ```
 
@@ -487,47 +521,39 @@ src/
 
 ### Package Manager & Distribution
 
-**npm (Node Package Manager)**
-- **Distribution Method**: Global CLI package
-- **Installation**: `npm install -g @codeknowledge/cli`
-- **Binary Command**: `codek`
+**pnpm (Package Manager)**
+- **Distribution Method**: Local development / global CLI
+- **Installation**: `pnpm install` (local) or `npm install -g code-synapse` (global)
+- **Binary Command**: `code-synapse`
 
 **Package Configuration**:
 ```json
 {
-  "name": "@codeknowledge/cli",
+  "name": "code-synapse",
   "bin": {
-    "codek": "./dist/cli/index.js"
+    "code-synapse": "./dist/cli/index.js"
   },
+  "packageManager": "pnpm@9.0.0",
   "engines": {
-    "node": ">=18.0.0"
-  },
-  "os": ["darwin", "linux", "win32"],
-  "preferGlobal": true
+    "node": ">=18"
+  }
 }
 ```
 
 ### Build & Compilation Tools
 
-**tsup (TypeScript Bundler)**
+**TypeScript Compiler (tsc)**
 - **Why Chosen**:
-  - Zero config TypeScript bundler
-  - Fast (uses esbuild)
-  - Generates types automatically
-  - Code splitting support
+  - Native TypeScript compiler - no extra dependencies
+  - Simpler for CLI applications
+  - Direct ESM output with proper module resolution
+  - Watch mode built-in
 
-- **Build Configuration**:
-  ```typescript
-  // tsup.config.ts
-  export default {
-    entry: ['src/index.ts', 'src/cli/index.ts'],
-    format: ['esm'],
-    dts: true,
-    splitting: false,
-    sourcemap: true,
-    clean: true,
-    target: 'node18'
-  };
+- **Build Commands**:
+  ```bash
+  pnpm build       # Compile to dist/
+  pnpm dev         # Watch mode (tsc --watch)
+  pnpm check-types # Type check without emit
   ```
 
 ### Testing Framework
@@ -564,7 +590,7 @@ src/
 
 - **Usage** (User-optional):
   ```bash
-  pm2 start codek -- serve
+  pm2 start code-synapse -- start
   pm2 save
   pm2 startup
   ```
@@ -659,7 +685,7 @@ src/
 
 **1. Initialization Flow**
 ```
-User runs `codek init`
+User runs `code-synapse init`
      ↓
 CLI Commander receives command
      ↓
@@ -770,9 +796,6 @@ code-knowledge-platform/
 │   │   └── fs.ts             # File system helpers
 │   └── config/
 │       └── defaults.ts       # Default configuration
-├── scripts/
-│   └── postinstall.js        # Post-installation script
-├── parsers/                  # Tree-sitter WASM parsers (downloaded)
 └── tests/
     └── fixtures/             # Test code samples
 ```
@@ -780,20 +803,27 @@ code-knowledge-platform/
 **Dependencies to Install**:
 ```bash
 # Core dependencies
-npm install typescript @types/node
-npm install commander         # CLI framework
-npm install pino pino-pretty  # Logging
-npm install chokidar          # File watching
-npm install @kuzu/node        # Graph database
-npm install web-tree-sitter   # Code parser
-npm install @modelcontextprotocol/sdk  # MCP protocol
+pnpm add @huggingface/transformers   # Local embeddings
+pnpm add @kuzu/kuzu-wasm             # Graph database (WASM)
+pnpm add @lancedb/lancedb            # Vector database
+pnpm add @modelcontextprotocol/sdk   # MCP protocol
+pnpm add chalk ora                   # CLI output
+pnpm add chokidar                    # File watching
+pnpm add commander                   # CLI framework
+pnpm add fast-glob                   # File pattern matching
+pnpm add node-llama-cpp              # Local LLM inference
+pnpm add pino                        # Structured logging
+pnpm add tree-sitter-typescript tree-sitter-javascript  # Parser grammars
+pnpm add web-tree-sitter             # Code parser (WASM)
+pnpm add zod                         # Schema validation
 
 # Development dependencies
-npm install -D tsup           # Build tool
-npm install -D vitest         # Testing
-npm install -D @types/chokidar
-npm install -D eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin
-npm install -D prettier
+pnpm add -D typescript @types/node   # TypeScript
+pnpm add -D eslint typescript-eslint @eslint/js  # Linting
+pnpm add -D eslint-config-prettier globals       # ESLint config
+pnpm add -D prettier                 # Code formatting
+pnpm add -D vitest                   # Testing
+pnpm add -D pino-pretty              # Pretty logs (dev)
 ```
 
 **Configuration Files**:
@@ -801,29 +831,26 @@ npm install -D prettier
 **package.json**:
 ```json
 {
-  "name": "@codeknowledge/cli",
+  "name": "code-synapse",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "bin": {
-    "codek": "./dist/cli/index.js"
+    "code-synapse": "./dist/cli/index.js"
   },
-  "files": [
-    "dist/",
-    "parsers/",
-    "scripts/"
-  ],
   "scripts": {
-    "dev": "tsup --watch",
-    "build": "tsup",
+    "dev": "tsc --watch",
+    "build": "tsc",
+    "start": "node dist/cli/index.js",
     "test": "vitest",
-    "lint": "eslint src/",
-    "format": "prettier --write src/",
-    "postinstall": "node scripts/postinstall.js"
+    "lint": "eslint --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
+  "packageManager": "pnpm@9.0.0",
   "engines": {
-    "node": ">=18.0.0"
-  },
-  "keywords": ["code-analysis", "mcp", "ai-agent"]
+    "node": ">=18"
+  }
 }
 ```
 
@@ -832,8 +859,8 @@ npm install -D prettier
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "outDir": "./dist",
     "rootDir": "./src",
@@ -844,33 +871,19 @@ npm install -D prettier
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "noEmitOnError": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }
 ```
 
-**tsup.config.ts**:
-```typescript
-import { defineConfig } from 'tsup';
-
-export default defineConfig({
-  entry: {
-    index: 'src/index.ts',
-    cli: 'src/cli/index.ts'
-  },
-  format: ['esm'],
-  dts: true,
-  splitting: false,
-  sourcemap: true,
-  clean: true,
-  target: 'node18',
-  shims: true,
-  bundle: true,
-  external: ['@kuzu/node']  // Native module, don't bundle
-});
-```
+**Build Tool**: Using `tsc` directly (TypeScript compiler)
+- No bundler needed for CLI applications
+- Simpler setup, fewer dependencies
+- ESM output with NodeNext module resolution
+- Run `pnpm build` to compile, `pnpm dev` for watch mode
 
 #### Step 1.2: Core Utilities Implementation
 
@@ -984,28 +997,15 @@ async function serveCommand(options: {
 async function statusCommand(): Promise<void>
 ```
 
-#### Step 1.4: Post-Install Script
+#### Step 1.4: No Post-Install Script Needed
 
-**What to Build**: Automated setup after npm installation
+**Decision**: Post-install scripts are not needed because:
+- Node.js version is enforced via `engines` field in package.json
+- Tree-sitter WASM files are loaded directly from `node_modules` at runtime
+- Ollama check is done at runtime when LLM inference is requested
+- Welcome message is shown by `code-synapse init` command
 
-**Post-Install Script** (`scripts/postinstall.js`):
-```javascript
-// Structure (no implementation):
-1. Check Node.js version (>= 18.0.0)
-2. Detect platform (darwin, linux, win32)
-3. Detect architecture (x64, arm64)
-4. Download Tree-sitter WASM parsers
-   - tree-sitter-typescript.wasm
-   - tree-sitter-javascript.wasm
-5. Check for Ollama installation (optional)
-6. Display welcome message with next steps
-7. Handle download errors gracefully
-```
-
-**Where to Download Parsers From**:
-- Use GitHub releases or CDN
-- Fallback to npm packages if download fails
-- Cache in `~/.codegraph/cache/parsers/`
+All dependencies come from npm packages defined in package.json - no external downloads.
 
 ---
 
@@ -3415,34 +3415,31 @@ function displayNextSteps(): void {
   console.log(`
 Next steps:
   1. Start MCP server:
-     codek serve
-  
-  2. Configure Claude Desktop:
-     codek mcp-config >> ~/Library/Application\\ Support/Claude/claude_desktop_config.json
-  
-  3. Restart Claude Desktop
-  
-  4. Ask Claude questions about your codebase!
+     code-synapse start
+
+  2. Configure your AI agent to connect to the MCP server
+
+  3. Ask your AI assistant questions about your codebase!
   `);
 }
 ```
 
-#### Step 12.2: Serve Command
+#### Step 12.2: Start Command
 
 **What to Build**: Start MCP server in serving mode
 
-**Serve Command** (`src/cli/commands/serve.ts`):
+**Start Command** (`src/cli/commands/start.ts`):
 ```typescript
 // Structure:
-export async function serveCommand(
-  options: ServeOptions
+export async function startCommand(
+  options: StartOptions
 ): Promise<void> {
-  const logger = createLogger('serve');
+  const logger = createLogger('start');
   
   // 1. Check if initialized
   if (!await isInitialized()) {
     logger.error('Project not initialized');
-    logger.info('Run: codek init');
+    logger.info('Run: code-synapse init');
     return;
   }
   
@@ -3563,8 +3560,8 @@ export async function mcpConfigCommand(): Promise<void> {
   const config = {
     mcpServers: {
       [projectName]: {
-        command: 'codek',
-        args: ['serve'],
+        command: 'code-synapse',
+        args: ['start'],
         cwd: projectRoot
       }
     }
@@ -3578,10 +3575,10 @@ export async function mcpConfigCommand(): Promise<void> {
 **Usage**:
 ```bash
 # User adds configuration to Claude Desktop:
-codek mcp-config >> ~/Library/Application\ Support/Claude/claude_desktop_config.json
+code-synapse mcp-config >> ~/Library/Application\ Support/Claude/claude_desktop_config.json
 
 # Or manually copy the output
-codek mcp-config
+code-synapse mcp-config
 ```
 
 ---
@@ -3728,8 +3725,8 @@ RETURN f
 {
   "mcpServers": {
     "my-project": {
-      "command": "codek",
-      "args": ["serve"],
+      "command": "code-synapse",
+      "args": ["start"],
       "cwd": "/path/to/my-project"
     }
   }

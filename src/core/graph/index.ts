@@ -20,27 +20,27 @@ export class GraphStore {
     // TODO: Close database connection
   }
 
-  async addNode(node: GraphNode): Promise<void> {
+  async addNode(_node: GraphNode): Promise<void> {
     // TODO: Add node to graph
     throw new Error("Not implemented");
   }
 
-  async addEdge(edge: GraphEdge): Promise<void> {
+  async addEdge(_edge: GraphEdge): Promise<void> {
     // TODO: Add edge to graph
     throw new Error("Not implemented");
   }
 
-  async query(cypher: string): Promise<unknown[]> {
+  async query(_cypher: string): Promise<unknown[]> {
     // TODO: Execute Cypher query
     throw new Error("Not implemented");
   }
 
-  async findReferences(symbolId: string): Promise<GraphNode[]> {
+  async findReferences(_symbolId: string): Promise<GraphNode[]> {
     // TODO: Find all references to a symbol
     throw new Error("Not implemented");
   }
 
-  async findDependencies(fileId: string): Promise<GraphNode[]> {
+  async findDependencies(_fileId: string): Promise<GraphNode[]> {
     // TODO: Find all dependencies of a file
     throw new Error("Not implemented");
   }
