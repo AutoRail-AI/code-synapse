@@ -20,17 +20,17 @@ export class VectorStore {
     // TODO: Close database connection
   }
 
-  async upsert(id: string, embedding: EmbeddingResult, metadata: Record<string, unknown>): Promise<void> {
+  async upsert(_id: string, _embedding: EmbeddingResult, _metadata: Record<string, unknown>): Promise<void> {
     // TODO: Upsert vector into database
     throw new Error("Not implemented");
   }
 
-  async search(queryVector: number[], limit: number): Promise<SearchResult[]> {
+  async search(_queryVector: number[], _limit: number): Promise<SearchResult[]> {
     // TODO: Perform vector similarity search
     throw new Error("Not implemented");
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(_id: string): Promise<void> {
     // TODO: Delete vector from database
     throw new Error("Not implemented");
   }

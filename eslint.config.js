@@ -17,5 +17,16 @@ export default [
         ...globals.node,
       },
     },
+    rules: {
+      // Allow unused variables/args prefixed with underscore
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
   },
 ];

@@ -50,12 +50,12 @@ export class Indexer {
     throw new Error("Not implemented");
   }
 
-  async indexFile(filePath: string): Promise<void> {
+  async indexFile(_filePath: string): Promise<void> {
     // TODO: Index single file (for incremental updates)
     throw new Error("Not implemented");
   }
 
-  async removeFile(filePath: string): Promise<void> {
+  async removeFile(_filePath: string): Promise<void> {
     // TODO: Remove file from index
     throw new Error("Not implemented");
   }

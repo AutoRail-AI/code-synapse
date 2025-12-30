@@ -16,7 +16,7 @@ export class Parser {
     // TODO: Initialize tree-sitter with language grammars
   }
 
-  async parseFile(filePath: string): Promise<ParsedFile> {
+  async parseFile(_filePath: string): Promise<ParsedFile> {
     // TODO: Parse file using tree-sitter
     throw new Error("Not implemented");
   }

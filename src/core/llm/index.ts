@@ -24,12 +24,12 @@ export class LLMService {
     // TODO: Unload model and free resources
   }
 
-  async infer(prompt: string, options?: InferenceOptions): Promise<string> {
+  async infer(_prompt: string, _options?: InferenceOptions): Promise<string> {
     // TODO: Generate completion from prompt
     throw new Error("Not implemented");
   }
 
-  async inferIntent(codeBlock: string): Promise<string> {
+  async inferIntent(_codeBlock: string): Promise<string> {
     // TODO: Infer business intent from code
     throw new Error("Not implemented");
   }
