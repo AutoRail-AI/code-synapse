@@ -11,6 +11,8 @@
 export * from "./project-detector.js";
 export * from "./scanner.js";
 export * from "./hasher.js";
+export * from "./coordinator.js";
+export * from "./watcher.js";
 
 // Re-export types
 export type {
@@ -31,6 +33,24 @@ export type {
   FileChangeStatus,
   BatchHashResult,
 } from "./hasher.js";
+
+export type {
+  IndexingPhase,
+  IndexingProgressEvent,
+  IndexingError,
+  IndexingCoordinatorResult,
+  IndexerCoordinatorOptions,
+} from "./coordinator.js";
+
+export type {
+  FileChangeType,
+  FileChangeEvent,
+  FileChangeBatch,
+  BatchHandler,
+  ChangeHandler,
+  FileWatcherOptions,
+  WatcherState,
+} from "./watcher.js";
 
 // =============================================================================
 // Indexer Orchestrator (to be expanded in later phases)

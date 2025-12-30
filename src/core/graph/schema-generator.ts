@@ -59,10 +59,35 @@ const TS_TYPE_MAP: Record<PropertyType, string> = {
 // =============================================================================
 
 /**
- * Converts camelCase to snake_case
+ * Converts camelCase to snake_case (for property names)
+ * Example: startLine -> start_line
  */
 function toSnakeCase(str: string): string {
   return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+/**
+ * Converts PascalCase or UPPER_SNAKE_CASE to snake_case (for relation names)
+ * Examples:
+ *   TypeAlias -> type_alias
+ *   GhostNode -> ghost_node
+ *   CONTAINS -> contains
+ *   HAS_METHOD -> has_method
+ */
+function pascalToSnakeCase(str: string): string {
+  // Check if string is UPPER_SNAKE_CASE (all uppercase with underscores)
+  if (str === str.toUpperCase() && str.includes("_")) {
+    // Already snake_case, just lowercase it
+    return str.toLowerCase();
+  }
+  // Check if string is ALL_CAPS (all uppercase without underscores)
+  if (str === str.toUpperCase()) {
+    return str.toLowerCase();
+  }
+  // Otherwise it's PascalCase - convert to snake_case
+  return str
+    .replace(/([A-Z])/g, (match, _, offset) => (offset > 0 ? "_" : "") + match.toLowerCase())
+    .toLowerCase();
 }
 
 /**
@@ -117,8 +142,8 @@ function generateNodeRelation(
   const keyPart = keyFields.join(",\n    ");
   const depPart = dependentFields.join(",\n    ");
 
-  // Use lowercase relation names for CozoDB convention
-  const relationName = nodeName.toLowerCase();
+  // Use snake_case relation names for CozoDB convention
+  const relationName = pascalToSnakeCase(nodeName);
 
   if (dependentFields.length > 0) {
     return `:create ${relationName} {
@@ -163,8 +188,8 @@ function generateRelationshipRelation(
 
   const keyPart = keyFields.join(",\n    ");
 
-  // Use lowercase, snake_case for relation names
-  const relationName = relName.toLowerCase();
+  // Use snake_case for relation names
+  const relationName = pascalToSnakeCase(relName);
 
   if (dependentFields.length > 0) {
     const depPart = dependentFields.join(",\n    ");
@@ -519,10 +544,10 @@ export function getKuzuType(propType: PropertyType): string {
 }
 
 /**
- * Gets the CozoDB relation name for a node type (lowercase)
+ * Gets the CozoDB relation name for a node type (snake_case)
  */
 export function getRelationName(nodeName: string): string {
-  return nodeName.toLowerCase();
+  return pascalToSnakeCase(nodeName);
 }
 
 /**

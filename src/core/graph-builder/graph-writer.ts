@@ -119,11 +119,19 @@ export class GraphWriter {
         },
       };
     } catch (error) {
+      let errorMessage: string;
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === "object" && error !== null) {
+        errorMessage = JSON.stringify(error);
+      } else {
+        errorMessage = String(error);
+      }
       return {
         fileId: result.fileId,
         filePath: result.filePath,
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
         stats: {
           entitiesWritten: 0,
           relationshipsWritten: 0,
