@@ -1,51 +1,43 @@
 /**
- * KùzuDB graph database operations
- * Handles structural relationships (imports, calls, inheritance)
+ * Graph Database Module
+ *
+ * CozoDB-based graph database for storing and querying the code knowledge graph.
+ * Handles structural relationships (imports, calls, inheritance) between code entities.
+ * Supports native vector search for semantic queries.
+ *
+ * @module
  */
 
-import type { GraphNode, GraphEdge } from "../../types/index.js";
+// Re-export interface types
+export type {
+  IGraphStore,
+  ITransaction,
+  QueryResult,
+  VectorSearchResult,
+  GraphStoreConfig,
+} from "../interfaces/IGraphStore.js";
 
-export class GraphStore {
-  private dbPath: string;
+// Re-export IGraphStore implementation and factory
+export { CozoGraphStore, createGraphStore } from "./cozo-graph-store.js";
 
-  constructor(dbPath: string) {
-    this.dbPath = dbPath;
-  }
+// Re-export schema definitions and generator
+export * from "./schema-definitions.js";
+export * from "./schema-generator.js";
 
-  async initialize(): Promise<void> {
-    // TODO: Initialize KùzuDB connection
-  }
+// Re-export database
+export * from "./database.js";
 
-  async close(): Promise<void> {
-    // TODO: Close database connection
-  }
+// Re-export migration runner
+export * from "./migration-runner.js";
 
-  async addNode(_node: GraphNode): Promise<void> {
-    // TODO: Add node to graph
-    throw new Error("Not implemented");
-  }
+// Re-export migrations registry
+export { migrations, getMigration, getLatestVersion } from "./migrations/index.js";
 
-  async addEdge(_edge: GraphEdge): Promise<void> {
-    // TODO: Add edge to graph
-    throw new Error("Not implemented");
-  }
+// Re-export operations
+export * from "./operations.js";
 
-  async query(_cypher: string): Promise<unknown[]> {
-    // TODO: Execute Cypher query
-    throw new Error("Not implemented");
-  }
+// Re-export query builder
+export * from "./query-builder.js";
 
-  async findReferences(_symbolId: string): Promise<GraphNode[]> {
-    // TODO: Find all references to a symbol
-    throw new Error("Not implemented");
-  }
-
-  async findDependencies(_fileId: string): Promise<GraphNode[]> {
-    // TODO: Find all dependencies of a file
-    throw new Error("Not implemented");
-  }
-}
-
-export function createGraphStore(dbPath: string): GraphStore {
-  return new GraphStore(dbPath);
-}
+// Re-export ghost resolver for external dependencies
+export * from "./ghost-resolver.js";

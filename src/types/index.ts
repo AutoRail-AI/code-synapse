@@ -2,6 +2,12 @@
  * Shared types for Code-Synapse
  */
 
+// Re-export Universal Code Entity (UCE) types
+export * from "./uce.js";
+
+// Re-export Result type for functional error handling
+export * from "./result.js";
+
 // =============================================================================
 // Project Configuration
 // =============================================================================

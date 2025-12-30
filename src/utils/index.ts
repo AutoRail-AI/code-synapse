@@ -11,6 +11,21 @@ export * from "./logger.js";
 // Re-export file system utilities
 export * from "./fs.js";
 
+// Re-export disposable utilities
+export * from "./disposable.js";
+
+// Re-export validation utilities
+export * from "./validation.js";
+
+// Re-export async utilities
+export * from "./async.js";
+
+// Re-export object pool
+export * from "./pool.js";
+
+// Re-export event bus
+export * from "./events.js";
+
 // =============================================================================
 // Configuration Paths
 // =============================================================================
@@ -39,11 +54,15 @@ export function getLogsDir(projectRoot: string = getProjectRoot()): string {
 }
 
 export function getGraphDbPath(projectRoot: string = getProjectRoot()): string {
-  return path.join(getDataDir(projectRoot), "kuzu");
+  return path.join(getDataDir(projectRoot), "cozodb");
 }
 
+/**
+ * @deprecated Vector storage is now handled by CozoDB HNSW indices.
+ * This function is kept for backward compatibility but returns embeddings cache path.
+ */
 export function getVectorDbPath(projectRoot: string = getProjectRoot()): string {
-  return path.join(getDataDir(projectRoot), "lancedb");
+  return path.join(getDataDir(projectRoot), "embeddings");
 }
 
 // =============================================================================

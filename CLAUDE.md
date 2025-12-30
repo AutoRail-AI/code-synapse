@@ -26,7 +26,7 @@ pnpm test             # Run tests (vitest)
 | Package | Purpose | Used In |
 |---------|---------|---------|
 | `@huggingface/transformers` | Local embeddings (ONNX) | `core/embeddings` |
-| `@kuzu/kuzu-wasm` | Graph database (WASM) | `core/graph` |
+| `cozo-node` | Graph database (CozoDB) | `core/graph` |
 | `@lancedb/lancedb` | Vector database | `core/vector` |
 | `@modelcontextprotocol/sdk` | MCP protocol server | `mcp/` |
 | `chalk` | CLI colored output | `cli/` |
@@ -73,7 +73,7 @@ src/
 ├── core/                   # Shared core logic (used by CLI & MCP)
 │   ├── index.ts            # Core module exports
 │   ├── parser/             # Tree-sitter AST parsing
-│   ├── graph/              # KùzuDB graph operations
+│   ├── graph/              # CozoDB graph operations
 │   ├── vector/             # LanceDB vector operations
 │   ├── embeddings/         # HuggingFace transformers
 │   ├── llm/                # node-llama-cpp inference
@@ -217,7 +217,7 @@ User                          AI Agent
 | Module | Purpose | Dependency |
 |--------|---------|------------|
 | `parser` | AST parsing (Syntax Layer) | `web-tree-sitter` |
-| `graph` | Structural relationships | `@kuzu/kuzu-wasm` |
+| `graph` | Structural relationships | `cozo-node` |
 | `vector` | Semantic search | `@lancedb/lancedb` |
 | `embeddings` | Vector embeddings | `@huggingface/transformers` |
 | `llm` | Intent inference (Business Logic Layer) | `node-llama-cpp` |
@@ -327,7 +327,7 @@ See `docs/implementation-plan.md` for detailed implementation steps.
 | Phase | Description | Status |
 |-------|-------------|--------|
 | **Phase 1** | Project Foundation & Scaffolding | ✅ Complete |
-| **Phase 2** | Graph Database Foundation (KùzuDB) | 🔲 Pending |
+| **Phase 2** | Graph Database Foundation (CozoDB) | 🔲 Pending |
 | **Phase 3** | File System Scanner | 🔲 Pending |
 | **Phase 4** | Code Parser Layer (Tree-sitter) | 🔲 Pending |
 | **Phase 5** | Semantic Analysis Layer | 🔲 Pending |
@@ -347,7 +347,7 @@ See `docs/implementation-plan.md` for detailed implementation steps.
 
 ### Next Steps (Phase 2)
 
-1. Implement KùzuDB wrapper in `src/core/graph/`
+1. Implement CozoDB wrapper in `src/core/graph/`
 2. Define graph schema (File, Function, Class nodes; CALLS, IMPORTS edges)
 3. Create entity models matching graph schema
 4. Implement graph operations layer
