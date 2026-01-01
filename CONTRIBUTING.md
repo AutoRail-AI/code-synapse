@@ -107,12 +107,12 @@ git checkout -b fix/your-bug-description
 Write clear, descriptive commit messages:
 
 ```bash
-git commit -m "Add Python language support
+git commit -m "Add Go language support
 
-- Implement PythonParser using tree-sitter-python
-- Add Python-specific entity extraction
-- Add integration tests for Python parsing
-- Update documentation with Python examples
+- Implement GoParser using tree-sitter-go
+- Add Go-specific entity extraction
+- Add integration tests for Go parsing
+- Update documentation with Go examples
 
 Fixes #123"
 ```

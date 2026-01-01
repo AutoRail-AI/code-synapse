@@ -387,21 +387,25 @@ See `docs/implementation-plan.md` for detailed implementation steps and `docs/im
 | **V8** | Indexer & Watcher | ✅ Complete |
 | **V9** | MCP Server Implementation | ✅ Complete |
 | **V10** | LLM Integration (12 models) | ✅ Complete |
-| **V11** | CLI Commands | 🔲 Pending |
+| **V11** | CLI Commands | ✅ Complete |
 
 ### Current Architecture
 
-- **131 tests passing** across all modules
+- **155+ tests passing** across all modules
 - **CozoDB** with RocksDB backend for unified graph + vector storage
 - **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor)
 - **Incremental indexing** with file hash-based change detection
 - **File watching** with event debouncing and batching
+- **MCP Server** with stdio transport (primary) and HTTP transport (optional)
+- **Full CLI** with all commands implemented (init, index, status, config, start)
 
-### Next Steps (V11)
+### Next Steps (Post-Beta)
 
-1. Polish CLI command implementations
-2. Add model selection to CLI (code-synapse config --model)
-3. Add progress bars for model downloads and indexing
+1. Performance optimizations for large codebases (10,000+ files)
+2. Windows platform improvements
+3. Better error messages and diagnostics
+4. Additional MCP tools based on user feedback
+5. Cross-repository dependency mapping
 
 ## Key Constraints
 

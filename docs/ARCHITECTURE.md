@@ -569,14 +569,21 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 
 ### Planned Features
 
-- Python language support via UCE interface
+**High Priority (Post-Beta):**
+- Performance optimizations for large codebases (10,000+ files)
+- Windows platform support improvements
+- Better error messages and diagnostics
+- Additional MCP tools based on user feedback
+- Improved logging and debugging capabilities
+
+**Feature Enhancements:**
 - Cross-repository dependency mapping
 - Full GraphRAG hierarchical summarization
 - IDE Extensions (VS Code sidebar)
 - Additional LLM models via model registry
 - Web UI for graph visualization
 - Export/import knowledge graphs
-- Multi-language project support
+- Additional language support (Go, Rust, Java, etc.)
 
 ### Scalability Considerations
 
@@ -599,11 +606,11 @@ To add support for a new language:
 
 Example structure:
 ```typescript
-// src/core/parser/python-parser.ts
-export class PythonParser implements IParser {
+// src/core/parser/go-parser.ts
+export class GoParser implements IParser {
   // Implement IParser interface
   async parseCode(code: string, filePath: string): Promise<ParsedFile> {
-    // Parse Python code using tree-sitter-python
+    // Parse Go code using tree-sitter-go
   }
 }
 ```

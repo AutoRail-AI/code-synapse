@@ -388,16 +388,25 @@ Embeddings (ONNX) → Vector Index (HNSW)
 - [x] **Entity Extraction**: Functions, classes, interfaces, relationships
 - [x] **Graph Builder**: Atomic writes, incremental updates
 - [x] **Indexer & Watcher**: Pipeline orchestration, file watching
-- [x] **MCP Server**: AI agent communication interface (HTTP/SSE)
+- [x] **MCP Server**: AI agent communication interface (stdio transport, HTTP optional)
 - [x] **LLM Integration**: Business logic inference with local models (12 models supported)
 - [x] **CLI Commands**: Full command implementations (init, index, status, config, start)
 
 ### Future
 
-- [ ] Python language support
+**High Priority:**
+- [ ] Performance optimizations for large codebases (10,000+ files)
+- [ ] Windows platform support improvements
+- [ ] Better error messages and diagnostics
+- [ ] Additional MCP tools based on beta feedback
+
+**Features:**
 - [ ] Cross-repository dependency mapping
 - [ ] GraphRAG hierarchical summarization
 - [ ] IDE Extensions (VS Code sidebar)
+- [ ] Web UI for graph visualization
+- [ ] Export/import knowledge graphs
+- [ ] Additional language support (Go, Rust, Java, etc.)
 
 ## 🤝 Contributing
 
@@ -455,7 +464,7 @@ pnpm format
 - ✨ New features
 - 📚 Documentation improvements
 - 🧪 Test coverage
-- 🌐 Language support (Python, Go, Rust, etc.)
+- 🌐 Additional language support (Go, Rust, Java, etc.)
 - 🎨 UI/UX improvements
 - ⚡ Performance optimizations
 
