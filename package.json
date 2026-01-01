@@ -1,11 +1,39 @@
 {
-  "name": "code-synapse",
+  "name": "@autorail/code-synapse",
   "version": "0.1.0",
-  "private": true,
+  "description": "An agent-first knowledge engine that transforms code into a structured Knowledge Graph for AI reasoning",
   "type": "module",
+  "license": "Apache-2.0",
+  "author": "Code-Synapse Contributors",
+  "homepage": "https://github.com/code-synapse/code-synapse#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/code-synapse/code-synapse.git"
+  },
+  "bugs": {
+    "url": "https://github.com/code-synapse/code-synapse/issues"
+  },
+  "keywords": [
+    "ai",
+    "mcp",
+    "knowledge-graph",
+    "code-analysis",
+    "llm",
+    "cursor",
+    "claude-code",
+    "static-analysis",
+    "typescript",
+    "tree-sitter",
+    "cozodb"
+  ],
   "bin": {
     "code-synapse": "./dist/cli/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "tsc --watch",
     "build": "tsc",
@@ -45,6 +73,6 @@
   },
   "packageManager": "pnpm@9.0.0",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

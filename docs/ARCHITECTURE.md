@@ -2,23 +2,28 @@
 
 **Zero-Config Smart Sidecar for AI Agents**
 
-This document describes the high-level architecture, technology choices, and design decisions for Code-Synapse - an agent-first knowledge engine that transforms raw code into a structured Knowledge Graph optimized for machine reasoning.
+A comprehensive guide to the architecture, design decisions, and implementation status of Code-Synapse - an agent-first knowledge engine that transforms raw code into a structured Knowledge Graph optimized for machine reasoning.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Core Architecture Principles](#core-architecture-principles)
-3. [Three-Layer Knowledge Model](#three-layer-knowledge-model)
-4. [System Architecture](#system-architecture)
+2. [Core Principles](#core-principles)
+3. [System Architecture](#system-architecture)
+4. [Three-Layer Knowledge Model](#three-layer-knowledge-model)
 5. [Technology Stack](#technology-stack)
-6. [Data Flow Pipeline](#data-flow-pipeline)
-7. [Component Architecture](#component-architecture)
+6. [Module Architecture](#module-architecture)
+7. [Data Flow](#data-flow)
 8. [Storage Architecture](#storage-architecture)
 9. [MCP Protocol Integration](#mcp-protocol-integration)
-10. [Key Architectural Decisions](#key-architectural-decisions)
-11. [Risk Mitigations](#risk-mitigations)
+10. [LLM Integration](#llm-integration)
+11. [Key Design Decisions](#key-design-decisions)
+12. [Implementation Status](#implementation-status)
+13. [Testing & Verification](#testing--verification)
+14. [Risk Mitigations](#risk-mitigations)
+15. [Future Roadmap](#future-roadmap)
+16. [Technology References](#technology-references)
 
 ---
 
@@ -43,7 +48,7 @@ Code-Synapse is a local CLI "sidecar" that runs alongside AI agents (Claude Code
 
 ---
 
-## Core Architecture Principles
+## Core Principles
 
 ### 1. Embedded-First Design
 
@@ -72,6 +77,64 @@ Code-Synapse is a local CLI "sidecar" that runs alongside AI agents (Claude Code
 - Graph context automatically included
 - Confidence scores on inferred data
 - Hierarchical summaries for efficient context usage
+
+---
+
+## System Architecture
+
+### High-Level Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              User / AI Agent                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                    │                                    │
+                    ▼                                    ▼
+┌─────────────────────────────┐        ┌─────────────────────────────────────┐
+│         CLI Layer           │        │           MCP Layer                  │
+│   (commander.js + chalk)    │        │   (@modelcontextprotocol/sdk)       │
+│   init │ index │ status     │        │   Tools  │  Resources                │
+│   config │ start            │        │                                      │
+└─────────────────────────────┘        └─────────────────────────────────────┘
+                    │                                    │
+                    └──────────────┬─────────────────────┘
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Core Layer                                         │
+│                                                                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │   Scanner   │──│   Parser    │──│  Extractor  │──│Graph Writer │        │
+│  │ (fast-glob) │  │(tree-sitter)│  │ (pipeline)  │  │  (CozoDB)   │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
+│                                                                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                          │
+│  │ Embeddings  │  │  LLM Service│  │File Watcher │                          │
+│  │  (ONNX)     │  │(llama.cpp)  │  │ (chokidar)  │                          │
+│  └─────────────┘  └─────────────┘  └─────────────┘                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Storage Layer                                        │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                    CozoDB (RocksDB Backend)                            │  │
+│  │  • Graph Relations: file, function, class, interface, variable         │  │
+│  │  • Edge Relations: contains, calls, imports, extends, implements       │  │
+│  │  • Vector Index: HNSW for semantic search                              │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  Location: .code-synapse/data/graph.db                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Three-Part Design
+
+| Part | Purpose | Technology |
+|------|---------|------------|
+| **CLI** | User interface for configuration and management | Commander.js, Chalk, Ora |
+| **MCP Server** | AI agent communication via Model Context Protocol | @modelcontextprotocol/sdk |
+| **Core** | Shared business logic used by both CLI and MCP | TypeScript modules |
 
 ---
 
@@ -119,69 +182,6 @@ Inferred via local LLM (Qwen 2.5):
 
 ---
 
-## System Architecture
-
-### High-Level System Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              User / AI Agent                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-                    │                                    │
-                    ▼                                    ▼
-┌─────────────────────────────┐        ┌─────────────────────────────────────┐
-│         CLI Layer           │        │           MCP Layer                  │
-│   (commander.js + chalk)    │        │   (@modelcontextprotocol/sdk)       │
-│   ┌─────────────────────┐   │        │   ┌─────────────────────────────┐   │
-│   │ init │ start │ index│   │        │   │  Tools  │  Resources        │   │
-│   └─────────────────────┘   │        │   └─────────────────────────────┘   │
-└─────────────────────────────┘        └─────────────────────────────────────┘
-                    │                                    │
-                    └──────────────┬─────────────────────┘
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Core Layer                                         │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                        Indexer Coordinator                              │ │
-│  │  ┌──────────────────────────────────────────────────────────────────┐  │ │
-│  │  │  File Watcher (RxJS) ──► Buffer ──► Dedupe ──► Process Batch    │  │ │
-│  │  └──────────────────────────────────────────────────────────────────┘  │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                   │                                          │
-│  ┌────────────────┬───────────────┼───────────────┬────────────────────┐    │
-│  ▼                ▼               ▼               ▼                    ▼    │
-│ ┌──────┐    ┌─────────┐    ┌───────────┐    ┌─────────┐          ┌──────┐  │
-│ │Parser│    │ Semantic│    │   Graph   │    │ Vector  │          │ LLM  │  │
-│ │(UCE) │    │ Worker  │    │  Store    │    │  Store  │          │Service│ │
-│ └──────┘    └─────────┘    └───────────┘    └─────────┘          └──────┘  │
-│                  │                                                          │
-│          ┌───────┴───────┐                                                  │
-│          │ Worker Thread │                                                  │
-│          │ (TS Compiler) │                                                  │
-│          └───────────────┘                                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Storage Layer                                        │
-│   ┌────────────────────┐    ┌─────────────────────────────────────────────┐  │
-│   │  .code-synapse/    │    │  CozoDB (RocksDB Backend)                    │  │
-│   │  ├── data/         │    │  ├── Structural Graph (Nodes, Relationships) │  │
-│   │  └── config.json   │    │  └── Vector Embeddings (HNSW Indices)        │  │
-│   └────────────────────┘    └─────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Three-Part Design
-
-| Part | Purpose | Technology |
-|------|---------|------------|
-| **CLI** | User interface for configuration and management | Commander.js, Chalk, Ora |
-| **MCP Server** | AI agent communication via Model Context Protocol | @modelcontextprotocol/sdk |
-| **Core** | Shared business logic used by both CLI and MCP | TypeScript modules |
-
----
-
 ## Technology Stack
 
 ### Parsing Layer
@@ -197,9 +197,8 @@ Inferred via local LLM (Qwen 2.5):
 | Technology | Purpose | Why This Choice |
 |------------|---------|-----------------|
 | **CozoDB (RocksDB)** | Graph + Vector database | Embedded, CozoScript (Datalog) queries, HNSW vector indices |
-| **Orama** | Fuzzy search | In-memory, typo-tolerant, sub-millisecond |
 
-> **Note**: CozoDB provides both graph storage AND native vector search via HNSW indices. This unified approach eliminates synchronization issues between separate databases.
+CozoDB provides both graph storage AND native vector search via HNSW indices. This unified approach eliminates synchronization issues between separate databases.
 
 ### Intelligence Layer
 
@@ -209,39 +208,6 @@ Inferred via local LLM (Qwen 2.5):
 | **HuggingFace Transformers.js** | Embeddings | ONNX runtime, local generation |
 | **Model Registry** | Model selection | 12 models across 4 families |
 
-#### Supported LLM Models
-
-Code-Synapse includes a comprehensive model registry with presets for different hardware configurations:
-
-| Preset | Model | Parameters | RAM | Use Case |
-|--------|-------|------------|-----|----------|
-| `fastest` | Qwen 2.5 Coder 0.5B | 0.5B | 1GB | Ultra-fast, minimal resources |
-| `minimal` | Qwen 2.5 Coder 1.5B | 1.5B | 2GB | Laptops with limited RAM |
-| `balanced` | Qwen 2.5 Coder 3B | 3B | 4GB | **Recommended default** |
-| `quality` | Qwen 2.5 Coder 7B | 7B | 8GB | Production-quality analysis |
-| `maximum` | Qwen 2.5 Coder 14B | 14B | 16GB | Maximum quality |
-
-**Model Families:**
-
-| Family | Models | Strengths |
-|--------|--------|-----------|
-| **Qwen 2.5 Coder** | 0.5B, 1.5B, 3B, 7B, 14B | Best-in-class for code, recommended |
-| **Llama 3.x** | 1B, 3B, 8B | General-purpose, Meta's latest |
-| **CodeLlama** | 7B, 13B | Code-specialized, proven |
-| **DeepSeek Coder** | 1.3B, 6.7B | Strong alternative to Qwen |
-
-**Usage:**
-```typescript
-// Using preset (recommended)
-const llm = await createInitializedLLMServiceWithPreset("balanced");
-
-// Using specific model ID
-const llm = await createInitializedLLMService({ modelId: "qwen2.5-coder-7b" });
-
-// Using custom model path
-const llm = await createInitializedLLMService({ modelPath: "/path/to/model.gguf" });
-```
-
 ### Infrastructure Layer
 
 | Technology | Purpose | Why This Choice |
@@ -249,52 +215,37 @@ const llm = await createInitializedLLMService({ modelPath: "/path/to/model.gguf"
 | **RxJS** | Reactive event handling | Backpressure, batching, deduplication |
 | **Pino** | Structured logging | Fast, JSON output, component context |
 | **Zod** | Schema validation | Runtime type safety, good error messages |
-| **OpenTelemetry** | Performance tracing | Bottleneck identification, debugging |
 
 ---
 
-## Data Flow Pipeline
+## Module Architecture
 
-### Indexing Flow
-
-```
-┌────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌────────┐
-│ File   │──►│ Scanner │──►│ Parser  │──►│Semantic │──►│ Graph   │──►│ Vector │
-│ System │   │         │   │ (UCE)   │   │ Worker  │   │ Writer  │   │ Writer │
-└────────┘   └─────────┘   └─────────┘   └─────────┘   └─────────┘   └────────┘
-                                                             │
-                                                             ▼
-                                                       ┌───────────┐
-                                                       │ LLM       │
-                                                       │ Inference │
-                                                       │ (async)   │
-                                                       └───────────┘
-```
-
-### Query Flow (Hybrid Search)
+### Directory Structure
 
 ```
-User Query: "how does authentication work?"
-       │
-       ├──► Orama (Fuzzy) ──► Symbol names with typos tolerated
-       │
-       ├──► CozoDB (Semantic) ──► Vector similarity via HNSW indices
-       │
-       └──► CozoDB (Structural) ──► Exact matches + graph context
-       │
-       ▼
-   Result Merger
-       │
-       ▼
-   Ranked Results (items found in multiple sources boosted)
-       │
-       ▼
-   Graph Enrichment (add callers, callees, dependencies)
+src/
+├── cli/                    # User-facing CLI
+│   ├── index.ts            # Entry point, signal handlers
+│   └── commands/           # init, index, status, config, start
+│
+├── mcp/                    # MCP Server
+│   ├── server.ts           # Server setup, tool handlers
+│   ├── tools.ts            # Tool definitions
+│   └── resources.ts        # Resource handlers
+│
+├── core/                   # Business logic
+│   ├── parser/             # Tree-sitter AST parsing
+│   ├── graph/              # CozoDB database layer
+│   ├── indexer/            # Indexing orchestration
+│   ├── extraction/         # Entity extraction
+│   ├── graph-builder/      # Graph construction
+│   ├── embeddings/         # Vector embeddings
+│   ├── llm/                # Local LLM inference
+│   └── interfaces/         # Contract interfaces
+│
+├── types/                  # Type definitions
+└── utils/                  # Shared utilities
 ```
-
----
-
-## Component Architecture
 
 ### Build Order: Horizontals First, Then Verticals
 
@@ -304,26 +255,14 @@ User Query: "how does authentication work?"
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           VERTICALS (Features)                               │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │
-│  │   V1    │ │   V2    │ │   V3    │ │   V4    │ │   V5    │ │   V6    │   │
-│  │  Graph  │ │ Scanner │ │ Parser  │ │Semantic │ │  MCP    │ │  LLM    │   │
-│  │   DB    │ │         │ │  (UCE)  │ │ Worker  │ │ Server  │ │Inference│   │
-│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘   │
-└───────┼──────────┼──────────┼──────────┼──────────┼──────────┼─────────────┘
-        │          │          │          │          │          │
-┌───────┴──────────┴──────────┴──────────┴──────────┴──────────┴─────────────┐
-│                         HORIZONTALS (Infrastructure)                         │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ H5: Telemetry         │ OpenTelemetry tracing, @traced() decorator   │   │
-│  ├──────────────────────────────────────────────────────────────────────┤   │
-│  │ H4: Async Utils       │ Result<T,E>, Pool, Events, Retry, Deferred   │   │
-│  ├──────────────────────────────────────────────────────────────────────┤   │
-│  │ H3: Schema + Types    │ Schema Source of Truth, UCE types, Zod       │   │
-│  ├──────────────────────────────────────────────────────────────────────┤   │
-│  │ H2: Resource Mgmt     │ TypeScript 5.2 using, Disposable interfaces  │   │
-│  ├──────────────────────────────────────────────────────────────────────┤   │
-│  │ H1: Core Foundation   │ Logger, Errors, FS utils, Config paths       │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
+│  V1 Graph → V2 Scanner → V3 Parser → V4 Semantic → V5 Extract              │
+│  → V6 Refactor → V7 Build → V8 Indexer → V9 MCP → V10 LLM → V11 CLI        │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ depends on
+┌─────────────────────────────┴───────────────────────────────────────────────┐
+│                    HORIZONTALS (Infrastructure)                              │
+│  H1 Foundation → H2 Resource Mgmt → H3 Schema → H4 Async → H5 Telemetry     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -345,11 +284,63 @@ User Query: "how does authentication work?"
 | **V2: File Scanner** | File discovery | Project detection, glob patterns, hashing |
 | **V3: Code Parser** | Syntax extraction | Tree-sitter parsing, UCE transformation |
 | **V4: Semantic Analysis** | Type intelligence | Worker thread, TypeScript Compiler API |
-| **V5-V6: Entity Extraction** | Graph building | Function/Class extraction, atomic writes |
-| **V7: Indexer & Watcher** | Orchestration | RxJS file watching, incremental updates |
-| **V8: MCP Server** | Agent communication | Tools, resources, hybrid search |
-| **V9: LLM Integration** | Business logic | GBNF grammars, GraphRAG, confidence scoring |
-| **V10: CLI Commands** | User interface | Full command implementations |
+| **V5: Entity Extraction** | Graph building | Function/Class extraction, batch processing |
+| **V6: Architecture Refactor** | Code quality | Interface contracts, storage consolidation |
+| **V7: Graph Builder** | Persistence | Atomic writes, incremental updates |
+| **V8: Indexer & Watcher** | Orchestration | RxJS file watching, pipeline coordination |
+| **V9: MCP Server** | Agent communication | Tools, resources, hybrid search |
+| **V10: LLM Integration** | Business logic | Model registry, GBNF grammars, inference |
+| **V11: CLI Commands** | User interface | Full command implementations |
+
+### Interface Contracts
+
+The codebase uses explicit interface contracts for testability and modularity:
+
+| Interface | Purpose |
+|-----------|---------|
+| **IParser** | Universal code parser abstraction |
+| **IGraphStore** | Graph database operations |
+| **IScanner** | File discovery abstraction |
+| **ISemanticAnalyzer** | Type resolution abstraction |
+| **IExtractor** | Entity extraction abstraction |
+
+---
+
+## Data Flow
+
+### Indexing Pipeline
+
+```
+┌────────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
+│   SCAN     │──►│  PARSE   │──►│ EXTRACT  │──►│  WRITE   │──►│ COMPLETE │
+│            │   │          │   │          │   │          │   │          │
+│ fast-glob  │   │tree-sitter│  │ pipeline │   │  CozoDB  │   │  stats   │
+│ project    │   │   UCE    │   │ entities │   │  batch   │   │ report   │
+│ detection  │   │ transform │   │ relations│   │ atomic   │   │          │
+└────────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘
+```
+
+**Phase Details:**
+
+1. **Scanning**: ProjectDetector analyzes package.json/tsconfig.json, FileScanner uses fast-glob to find source files
+2. **Parsing**: TypeScriptParser loads tree-sitter WASM, walks AST to extract functions, classes, interfaces
+3. **Extraction**: EntityPipeline creates unique IDs, extracts relationships (CONTAINS, CALLS, IMPORTS, etc.)
+4. **Writing**: GraphWriter batches entities into CozoDB transactions atomically
+
+### Query Flow (Hybrid Search)
+
+```
+User Query: "how does authentication work?"
+       │
+       ├──► Vector Similarity (CozoDB HNSW indices)
+       │
+       ├──► Keyword Matching (CozoDB text search)
+       │
+       └──► Graph Traversal (CozoScript Datalog)
+       │
+       ▼
+   Result Merger → Ranked Results → Graph Enrichment
+```
 
 ---
 
@@ -362,34 +353,25 @@ project-root/
 └── .code-synapse/
     ├── config.json          # Project configuration
     ├── data/                # CozoDB database (RocksDB)
-    │   ├── *.sst            # RocksDB sorted string tables
-    │   ├── CURRENT          # Current manifest pointer
-    │   ├── MANIFEST-*       # Database manifest
-    │   └── OPTIONS-*        # RocksDB options
-    ├── cache/               # Inference cache
-    │   └── llm_results.json # Cached LLM outputs
-    ├── traces/              # OpenTelemetry traces
+    │   └── graph.db/        # Graph + vector storage
     └── logs/                # Application logs
 ```
-
-> **Note**: CozoDB uses RocksDB as its storage backend, storing both graph data and vector embeddings in a single unified database.
 
 ### Graph Schema
 
 **Node Types:**
-- `File` - Source files with path, hash, language
-- `Function` - Functions with signature, complexity, summary
-- `Class` - Classes with methods, properties
-- `Interface` - TypeScript interfaces
-- `Variable` - Module-level variables and constants
+- `file` - Source files with path, hash, language
+- `function` - Functions with signature, async flag, JSDoc
+- `class` - Classes with methods, properties
+- `interface` - TypeScript interfaces
+- `variable` - Module-level variables and constants
 
 **Relationship Types:**
-- `CONTAINS` - File contains Function/Class
-- `CALLS` - Function calls Function
-- `IMPORTS` - File imports from File
-- `EXTENDS` - Class extends Class
-- `IMPLEMENTS` - Class implements Interface
-- `REFERENCES` - Symbol references Symbol
+- `contains` - File contains Function/Class/Interface/Variable
+- `calls` - Function calls Function
+- `imports` - File imports from File
+- `extends` - Class extends Class
+- `implements` - Class implements Interface
 
 ---
 
@@ -418,10 +400,11 @@ project-root/
 | `search_code` | Hybrid search across symbols, content, semantics |
 | `get_function` | Retrieve function details with call graph |
 | `get_class` | Retrieve class with inheritance hierarchy |
-| `get_dependencies` | Module dependency graph for a file |
+| `get_file` | Get file contents and symbols |
 | `get_callers` | Find all callers of a function |
 | `get_callees` | Find all functions called by a function |
-| `explain_code` | Get LLM-generated explanation with context |
+| `get_imports` | Get import chain for a file |
+| `get_project_stats` | Get project statistics |
 
 ### Available MCP Resources
 
@@ -429,28 +412,112 @@ project-root/
 |----------|-------------|---------|
 | File content | `file://{path}` | Raw file content |
 | Symbol list | `symbols://{path}` | Symbols in a file |
-| Project graph | `graph://overview` | High-level project structure |
+| Project graph | `graph://` | High-level project structure |
 
 ---
 
-## Key Architectural Decisions
+## LLM Integration
 
-### Decision Summary Table
+### Model Registry
+
+Code-Synapse includes a comprehensive model registry with 12 models across 4 families:
+
+| Preset | Model | Parameters | RAM | Use Case |
+|--------|-------|------------|-----|----------|
+| `fastest` | Qwen 2.5 Coder 0.5B | 0.5B | 1GB | Ultra-fast, minimal resources |
+| `minimal` | Qwen 2.5 Coder 1.5B | 1.5B | 2GB | Laptops with limited RAM |
+| `balanced` | Qwen 2.5 Coder 3B | 3B | 4GB | **Recommended default** |
+| `quality` | Qwen 2.5 Coder 7B | 7B | 8GB | Production-quality analysis |
+| `maximum` | Qwen 2.5 Coder 14B | 14B | 16GB | Maximum quality |
+
+### Model Families
+
+| Family | Models | Strengths |
+|--------|--------|-----------|
+| **Qwen 2.5 Coder** | 0.5B, 1.5B, 3B, 7B, 14B | Best-in-class for code, recommended |
+| **Llama 3.x** | 1B, 3B, 8B | General-purpose, Meta's latest |
+| **CodeLlama** | 7B, 13B | Code-specialized, proven |
+| **DeepSeek Coder** | 1.3B, 6.7B | Strong alternative to Qwen |
+
+### Inference Features
+
+- **GBNF Grammar Constraints**: Forces syntactically valid JSON output from small models
+- **Confidence Scoring**: Quality metrics for inferred business logic
+- **GraphRAG Pattern**: Hierarchical summarization (Function → Module → System)
+- **Caching**: Results cached to avoid redundant inference
+
+---
+
+## Key Design Decisions
 
 | Decision | Component | Rationale |
 |----------|-----------|-----------|
 | **TypeScript 5.2 `using`** | Resource Management | Automatic cleanup prevents memory leaks in long-running sidecar |
-| **Schema Source of Truth** | Graph Database | Single source generates CozoScript DDL and TypeScript types, preventing drift |
-| **Result<T,E> type** | Error Handling | Clean error handling without exceptions, better composition |
+| **Schema Source of Truth** | Graph Database | Single source generates CozoScript DDL and TypeScript types |
+| **CozoDB Unified Storage** | Storage Layer | Single database for graph + vectors eliminates sync complexity |
+| **Result<T,E> type** | Error Handling | Clean error handling without exceptions |
 | **Object Pool pattern** | Parser/DB | Reuse expensive resources (parsers, connections) |
-| **UCE Interface** | Parser | Language-agnostic output enables polyglot support without schema changes |
-| **Worker Thread Isolation** | Semantic Analysis | Non-blocking analysis, prevents MCP timeouts on large codebases |
-| **Transactional Atomicity** | Graph Updates | Prevents corruption from interrupted incremental updates |
+| **UCE Interface** | Parser | Language-agnostic output enables polyglot support |
+| **Worker Thread Isolation** | Semantic Analysis | Non-blocking analysis, prevents MCP timeouts |
+| **Transactional Atomicity** | Graph Updates | Prevents corruption from interrupted updates |
 | **RxJS reactive streams** | File Watching | Handles git checkout floods with backpressure |
-| **Hybrid Search** | Query Engine | Combines vector similarity, keyword matching, and graph traversal |
 | **GBNF Grammars** | LLM Output | Guarantees valid JSON from small local models |
-| **GraphRAG pattern** | Summarization | Hierarchical summaries reduce context needed for high-level questions |
-| **Orama fuzzy search** | Symbol Search | Sub-millisecond typo-tolerant search |
+
+---
+
+## Implementation Status
+
+### All Phases Complete ✅
+
+| Phase | Name | Status |
+|-------|------|--------|
+| H1 | Core Foundation | ✅ Complete |
+| H2 | Resource Management | ✅ Complete |
+| H3 | Schema & Types | ✅ Complete |
+| H4 | Async Infrastructure | ✅ Complete |
+| H5 | Telemetry | ✅ Complete |
+| V1 | Graph Database | ✅ Complete |
+| V2 | File Scanner | ✅ Complete |
+| V3 | Code Parser | ✅ Complete |
+| V4 | Semantic Analysis | ✅ Complete |
+| V5 | Entity Extraction | ✅ Complete |
+| V6 | Architecture Refactor | ✅ Complete |
+| V7 | Graph Builder | ✅ Complete |
+| V8 | Indexer & Watcher | ✅ Complete |
+| V9 | MCP Server | ✅ Complete |
+| V10 | LLM Integration | ✅ Complete |
+| V11 | CLI Commands | ✅ Complete |
+
+---
+
+## Testing & Verification
+
+### Test Summary
+
+- **Total Tests**: 155 passing
+- **Test Files**: 11
+- **Skipped**: 6 (MCP transport tests, tested manually)
+
+### Checkpoints Verified
+
+| Checkpoint | Goal | Result |
+|------------|------|--------|
+| **CP1: Foundation** | CLI launches, parsing works | ✅ 66 tests |
+| **CP2: Indexing** | Full pipeline end-to-end | ✅ 89 tests |
+| **CP3: MCP Server** | AI agents can query | ✅ 24 tests |
+| **CP4: Full System** | Complete verification | ✅ 155 tests |
+
+### Key Verifications
+
+- CLI commands execute without errors (init, index, status, config, start)
+- File scanner discovers project files correctly
+- Parser extracts functions, classes, imports
+- Graph database CRUD operations work
+- Incremental updates process correctly
+- File watcher detects and batches changes
+- MCP tools respond correctly
+- LLM model registry functional with 12 models
+- Performance benchmarks pass (100 parses <5s, 50 queries <2s)
 
 ---
 
@@ -458,59 +525,120 @@ project-root/
 
 ### Memory Pressure from TypeScript Compiler
 
-**Risk**: TypeScript Compiler API is synchronous, blocking, and memory-intensive. Running in main thread causes MCP timeouts on large codebases (50k+ LOC).
+**Risk**: TypeScript Compiler API is synchronous, blocking, and memory-intensive.
 
-**Mitigation**: Isolate semantic analysis in dedicated Worker Thread. Main thread stays responsive for MCP queries during indexing. Worker can be terminated if stuck.
+**Mitigation**: Isolate semantic analysis in dedicated Worker Thread. Main thread stays responsive for MCP queries.
 
 ### Schema Drift Between Code and Database
 
-**Risk**: Maintaining separate CozoScript DDL strings and TypeScript interfaces manually guarantees drift, causing runtime errors.
+**Risk**: Maintaining separate CozoScript DDL and TypeScript interfaces manually causes drift.
 
-**Mitigation**: Single Schema Source of Truth that generates both CozoScript DDL and TypeScript types. Schema changes in one place automatically propagate.
+**Mitigation**: Single Schema Source of Truth that generates both CozoScript DDL and TypeScript types.
 
 ### Data Corruption from Interrupted Updates
 
-**Risk**: If process killed between deletion and insertion during incremental updates, graph is left in corrupted state.
+**Risk**: If process killed between deletion and insertion during incremental updates, graph is corrupted.
 
-**Mitigation**: Wrap entire file update (delete + insert + relationships) in single database transaction. Automatic rollback on failure.
+**Mitigation**: Wrap entire file update in single database transaction with automatic rollback on failure.
 
 ### File Watcher Floods
 
-**Risk**: When user runs `git checkout another-branch`, hundreds of file events fire instantly. Simple queues bloat memory and overwhelm indexer.
+**Risk**: `git checkout` triggers hundreds of file events instantly, overwhelming indexer.
 
-**Mitigation**: RxJS reactive streams with bufferTime, deduplication, and controlled concurrency. Handles 500+ file changes gracefully.
+**Mitigation**: RxJS reactive streams with bufferTime, deduplication, and controlled concurrency.
 
 ### LLM Output Reliability
 
-**Risk**: Small models (1.5B parameters) often include preambles and produce malformed JSON, polluting the database.
+**Risk**: Small models produce malformed JSON, polluting the database.
 
-**Mitigation**: GBNF grammar-constrained sampling forces syntactically valid output. Output cleaning and confidence scoring for quality metrics.
-
-### Large Codebase Performance
-
-**Risk**: Initial indexing of large projects takes too long, impacting user experience.
-
-**Mitigation**: Incremental indexing (only changed files), parallel parsing, worker thread isolation, and progress reporting. Users see continuous progress rather than blocked UI.
+**Mitigation**: GBNF grammar-constrained sampling forces syntactically valid output.
 
 ---
 
-## Future Considerations
+## Future Roadmap
 
-### Potential Extensions
+### Planned Features
 
-- **Additional Language Support**: Python, Go, Rust parsers via UCE interface
-- **Remote Indexing**: Index remote repositories without full clone
-- **Team Sharing**: Export/import knowledge graphs between team members
-- **Additional LLM Models**: Easy to add new models via the model registry
-- **IDE Plugins**: Native integrations beyond MCP protocol
+- Python language support via UCE interface
+- Cross-repository dependency mapping
+- Full GraphRAG hierarchical summarization
+- IDE Extensions (VS Code sidebar)
+- Additional LLM models via model registry
 
 ### Scalability Considerations
 
 - Graph database can be sharded by directory for monorepos
-- Vector embeddings can be computed incrementally
-- LLM inference can be batched and prioritized
-- Telemetry enables identifying new bottlenecks as codebases grow
+- Vector embeddings computed incrementally
+- LLM inference batched and prioritized
+- Telemetry enables identifying bottlenecks as codebases grow
 
 ---
 
-*This architecture document is maintained alongside the implementation. See `docs/implementation-plan.md` for the detailed roadmap and `docs/implementation-tracker.md` for progress tracking.*
+## Technology References
+
+### Production Dependencies
+
+| Library | Version | Purpose | Documentation |
+|---------|---------|---------|---------------|
+| **cozo-node** | ^0.7.6 | Graph + vector database | [CozoDB Docs](https://docs.cozodb.org/en/latest/) |
+| **web-tree-sitter** | ^0.26.3 | WASM-based AST parsing | [Tree-sitter Docs](https://tree-sitter.github.io/tree-sitter/) |
+| **tree-sitter-typescript** | ^0.23.2 | TypeScript/TSX grammar | [GitHub](https://github.com/tree-sitter/tree-sitter-typescript) |
+| **tree-sitter-javascript** | ^0.25.0 | JavaScript grammar | [GitHub](https://github.com/tree-sitter/tree-sitter-javascript) |
+| **@huggingface/transformers** | ^3.5.1 | Local embeddings (ONNX) | [Transformers.js Docs](https://huggingface.co/docs/transformers.js) |
+| **node-llama-cpp** | ^3.14.5 | Local LLM inference | [Docs](https://withcatai.github.io/node-llama-cpp/) |
+| **@modelcontextprotocol/sdk** | ^1.25.1 | MCP server implementation | [MCP Spec](https://modelcontextprotocol.io/) |
+| **commander** | ^14.0.2 | CLI framework | [Commander.js Docs](https://github.com/tj/commander.js) |
+| **chalk** | ^5.6.2 | Terminal colors | [Chalk Docs](https://github.com/chalk/chalk) |
+| **ora** | ^9.0.0 | Terminal spinners | [Ora Docs](https://github.com/sindresorhus/ora) |
+| **chokidar** | ^5.0.0 | File watching | [Chokidar Docs](https://github.com/paulmillr/chokidar) |
+| **fast-glob** | ^3.3.3 | Fast file matching | [fast-glob Docs](https://github.com/mrmlnc/fast-glob) |
+| **pino** | ^10.1.0 | Structured logging | [Pino Docs](https://getpino.io/) |
+| **zod** | ^4.2.1 | Schema validation | [Zod Docs](https://zod.dev/) |
+
+### Development Dependencies
+
+| Library | Version | Purpose | Documentation |
+|---------|---------|---------|---------------|
+| **typescript** | 5.9.2 | TypeScript compiler | [TypeScript Docs](https://www.typescriptlang.org/docs/) |
+| **vitest** | ^4.0.16 | Testing framework | [Vitest Docs](https://vitest.dev/) |
+| **eslint** | ^9.39.1 | Code linting | [ESLint Docs](https://eslint.org/docs/) |
+| **prettier** | ^3.7.4 | Code formatting | [Prettier Docs](https://prettier.io/docs/en/) |
+
+### Embedding Models
+
+| Model | Dimensions | Use Case |
+|-------|------------|----------|
+| `all-MiniLM-L6-v2` | 384 | Fast, general-purpose |
+| `all-mpnet-base-v2` | 768 | Higher quality, slower |
+| `bge-small-en-v1.5` | 384 | Good for code |
+
+### Why CozoDB? (Comparison with Alternatives)
+
+| Feature | CozoDB | Neo4j | KuzuDB | SQLite |
+|---------|--------|-------|--------|--------|
+| **Embedded** | ✅ | ❌ | ✅ | ✅ |
+| **Native Vectors** | ✅ HNSW | ❌ | ❌ | ❌ |
+| **Recursive Queries** | ✅ Datalog | ✅ Cypher | ✅ Cypher | ❌ |
+| **JSON Support** | ✅ Native | ✅ | ✅ | ❌ |
+| **Transactions** | ✅ Block | ✅ | ✅ | ✅ |
+| **Storage Backend** | RocksDB | Custom | Custom | File |
+
+**Key Benefits:**
+
+1. **Single Database** - Graph + Vector in one store (eliminates sync issues)
+2. **Datalog** - More expressive recursive queries than Cypher
+3. **Embedded** - No external server, perfect for CLI tool
+4. **RocksDB Backend** - Proven performance and reliability
+
+### Quick Links
+
+- [CozoDB Tutorial](https://docs.cozodb.org/en/latest/tutorial.html)
+- [CozoDB Functions](https://docs.cozodb.org/en/latest/functions.html)
+- [Tree-sitter Query Syntax](https://tree-sitter.github.io/tree-sitter/using-parsers#query-syntax)
+- [MCP Protocol Spec](https://modelcontextprotocol.io/specification)
+- [TypeScript AST Viewer](https://ts-ast-viewer.com/)
+- [node-llama-cpp Documentation](https://withcatai.github.io/node-llama-cpp/)
+
+---
+
+*Last Updated: December 31, 2025*

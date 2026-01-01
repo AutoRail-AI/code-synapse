@@ -407,7 +407,7 @@ See `docs/implementation-plan.md` for detailed implementation steps and `docs/im
 
 - **Language:** TypeScript (strict mode)
 - **Package manager:** pnpm 9.0.0+
-- **Node version:** >= 18
+- **Node version:** >= 20 (v25 recommended for development)
 - **Privacy-first:** All processing must stay local, no external API calls
 - **ESM:** Use `.js` extension in imports; use `node:` prefix for built-ins
 

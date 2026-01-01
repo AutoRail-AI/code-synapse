@@ -51,48 +51,119 @@ Install the CLI globally via npm:
 
 ```bash
 npm install -g code-synapse
-
 ```
 
-### 2. Initialization
+Or run from source:
 
-Navigate to your project root and initialize the graph:
+```bash
+git clone https://github.com/your-org/code-synapse.git
+cd code-synapse
+pnpm install && pnpm build
+pnpm link --global
+```
+
+### 2. Initialize & Index
+
+Navigate to your project and set up the knowledge graph:
 
 ```bash
 cd my-project
-code-synapse init
-
+code-synapse init              # Initialize configuration
+code-synapse index             # Build the knowledge graph
+code-synapse status            # Verify indexing complete
 ```
 
-*This will download the necessary parsers and the local embedding model (approx. 100MB).*
+### 3. Start the MCP Server
 
-### 3. Connect Your Agent (e.g., Claude Desktop)
+```bash
+code-synapse start             # Start on default port 3100
+code-synapse start --port 3200 # Or specify a custom port
+```
 
-Add Code-Synapse to your MCP configuration file:
+### 4. Connect Your AI Agent
 
-**File:** `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+#### Claude Code
+
+```bash
+# Add Code-Synapse as an HTTP MCP server
+claude mcp add --transport http code-synapse http://localhost:3100/mcp
+
+# Verify connection (within Claude Code)
+/mcp
+```
+
+Or add to `~/.claude.json` or project `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "code-synapse": {
-      "command": "code-synapse",
-      "args": ["start"],
-      "env": {
-        "PROJECT_ROOT": "/absolute/path/to/your/project"
-      }
+      "type": "http",
+      "url": "http://localhost:3100/mcp"
     }
   }
 }
-
 ```
 
-### 4. Usage
+#### Cursor
 
-Restart your AI Agent. You can now ask complex, context-aware questions:
+Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "url": "http://localhost:3100/mcp"
+    }
+  }
+}
+```
+
+### 5. Query Your Codebase
+
+Now ask complex, context-aware questions:
 
 > *"How does the checkout process handle failed payments? Explain the business logic."*
 > *"Refactor the `UserAuth` class. First, check who calls it and what business features depend on it to ensure no regressions."*
+> *"Find all functions that call the payment API and show their error handling."*
+
+---
+
+## 📖 Documentation
+
+- **[How It Works](./docs/HOW-IT-WORKS.md)** - Deep dive into architecture, data flow, MCP integration, and running from source
+- **[Architecture](./docs/ARCHITECTURE.md)** - Technical design decisions, implementation status, and technology references
+
+---
+
+## 🔧 CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `code-synapse init` | Initialize project configuration |
+| `code-synapse index` | Build/rebuild the knowledge graph |
+| `code-synapse status` | Show project and index statistics |
+| `code-synapse config --list-models` | List available LLM models |
+| `code-synapse config --model <preset>` | Set LLM model (fastest/balanced/quality/maximum) |
+| `code-synapse start` | Start the MCP server |
+| `code-synapse start --port 3200` | Start on custom port |
+
+---
+
+## 🔌 MCP Tools Available
+
+When connected, Code-Synapse provides these tools to your AI agent:
+
+| Tool | Description |
+|------|-------------|
+| `search_code` | Hybrid semantic + keyword search across the codebase |
+| `get_function` | Get function details with callers and callees |
+| `get_class` | Get class details with methods and hierarchy |
+| `get_file` | Get file contents and symbols |
+| `get_callers` | Find all callers of a function |
+| `get_callees` | Find all functions called by a function |
+| `get_imports` | Get import chain for a file |
+| `get_project_stats` | Get project statistics |
 
 ---
 
@@ -169,7 +240,7 @@ Embeddings (ONNX) → Vector Index (HNSW)
 
 ## 🗺️ Roadmap
 
-### Completed
+### Completed ✅
 
 - [x] **Foundation**: Project scaffolding, CLI framework, utilities
 - [x] **Graph Database**: CozoDB integration with schema migrations
@@ -179,12 +250,9 @@ Embeddings (ONNX) → Vector Index (HNSW)
 - [x] **Entity Extraction**: Functions, classes, interfaces, relationships
 - [x] **Graph Builder**: Atomic writes, incremental updates
 - [x] **Indexer & Watcher**: Pipeline orchestration, file watching
-
-### In Progress
-
-- [x] **MCP Server**: AI agent communication interface
+- [x] **MCP Server**: AI agent communication interface (HTTP/SSE)
 - [x] **LLM Integration**: Business logic inference with local models (12 models supported)
-- [ ] **CLI Polish**: Full command implementations
+- [x] **CLI Commands**: Full command implementations (init, index, status, config, start)
 
 ### Future
 
