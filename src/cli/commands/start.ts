@@ -89,10 +89,11 @@ export async function startCommand(options: StartOptions): Promise<void> {
     console.log(chalk.cyan("Server is ready to accept connections from AI agents."));
     console.log();
 
-    // Display configuration for AI agent
-    console.log(chalk.dim("MCP Configuration for Claude Desktop:"));
-    console.log(chalk.dim("Add this to your claude_desktop_config.json:"));
+    // Display configuration for AI agents
+    console.log(chalk.dim("MCP Configuration (stdio transport - recommended):"));
     console.log();
+    
+    console.log(chalk.dim("For Claude Code - Add to ~/.claude.json or .mcp.json:"));
     console.log(chalk.white(JSON.stringify({
       mcpServers: {
         [config.name]: {
@@ -102,6 +103,22 @@ export async function startCommand(options: StartOptions): Promise<void> {
         },
       },
     }, null, 2)));
+    console.log();
+    
+    console.log(chalk.dim("For Cursor - Add to .cursor/mcp.json or ~/.cursor/mcp.json:"));
+    console.log(chalk.white(JSON.stringify({
+      mcpServers: {
+        [config.name]: {
+          command: "code-synapse",
+          args: ["start"],
+          cwd: config.root,
+        },
+      },
+    }, null, 2)));
+    console.log();
+    
+    console.log(chalk.dim("Alternative: HTTP transport"));
+    console.log(chalk.dim(`  URL: http://localhost:${port}/mcp`));
     console.log();
 
     if (options.debug) {

@@ -1,6 +1,30 @@
 # 🧠 Code-Synapse
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
+[![pnpm](https://img.shields.io/badge/pnpm-9.0-orange.svg)](https://pnpm.io/)
+
 **An agent-first knowledge engine that bridges the gap between blind syntax generation and deep, intent-aware engineering.**
+
+Code-Synapse transforms your codebase into a structured Knowledge Graph optimized for AI reasoning. It runs locally as a sidecar alongside AI coding assistants (Claude Code, Cursor) via the Model Context Protocol (MCP), providing deep code understanding without sending your code to external services.
+
+---
+
+## Table of Contents
+
+- [The Problem](#-the-problem-vibe-coding-has-a-blind-spot)
+- [The Solution](#-the-solution-a-living-knowledge-graph)
+- [Key Features](#-key-features)
+- [Quick Start](#-quick-start)
+- [Documentation](#-documentation)
+- [CLI Commands](#-cli-commands)
+- [MCP Tools](#-mcp-tools-available)
+- [Architecture](#-architecture)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [Support](#-support)
+- [License](#-license)
 
 ---
 
@@ -43,23 +67,37 @@ Unlike standard tools (LSP, grep) that only see syntax, Code-Synapse builds a mu
 
 ---
 
+## 📋 Requirements
+
+- **Node.js**: v20.0.0 or higher (v25 recommended for development)
+- **Package Manager**: pnpm v9.0.0+ (recommended), npm, or yarn
+- **AI Agent**: Claude Code, Cursor, or any MCP-compliant tool
+- **RAM**: 2GB minimum (4GB+ recommended for LLM inference)
+- **Disk Space**: ~500MB for dependencies + model storage (varies by LLM model)
+
 ## 🚀 Quick Start
 
 ### 1. Installation
 
-Install the CLI globally via npm:
+**Option A: Install from npm (Recommended)**
 
 ```bash
 npm install -g code-synapse
 ```
 
-Or run from source:
+**Option B: Install from source**
 
 ```bash
-git clone https://github.com/your-org/code-synapse.git
+git clone https://github.com/code-synapse/code-synapse.git
 cd code-synapse
 pnpm install && pnpm build
 pnpm link --global
+```
+
+**Verify installation:**
+
+```bash
+code-synapse --version
 ```
 
 ### 2. Initialize & Index
@@ -73,27 +111,46 @@ code-synapse index             # Build the knowledge graph
 code-synapse status            # Verify indexing complete
 ```
 
-### 3. Start the MCP Server
+### 3. Connect Your AI Agent
 
-```bash
-code-synapse start             # Start on default port 3100
-code-synapse start --port 3200 # Or specify a custom port
-```
-
-### 4. Connect Your AI Agent
+Code-Synapse uses **stdio transport** (command execution) as the primary method. The AI agent will automatically start and manage the Code-Synapse server.
 
 #### Claude Code
 
-```bash
-# Add Code-Synapse as an HTTP MCP server
-claude mcp add --transport http code-synapse http://localhost:3100/mcp
+Add to `~/.claude.json` (user scope) or project-level `.mcp.json` (project scope):
 
-# Verify connection (within Claude Code)
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "command": "code-synapse",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
+```
+
+**Configuration Locations:**
+
+| Location | Scope | Use Case |
+|----------|-------|----------|
+| `~/.claude.json` | User | Available across all projects |
+| `.mcp.json` | Project | Project-specific, shared via source control |
+
+**Verify connection** (within Claude Code):
+```
 /mcp
 ```
 
-Or add to `~/.claude.json` or project `.mcp.json`:
+**Alternative: HTTP Transport**
 
+If you prefer HTTP transport, start the server manually:
+```bash
+code-synapse start --port 3100
+```
+
+Then configure:
 ```json
 {
   "mcpServers": {
@@ -107,8 +164,51 @@ Or add to `~/.claude.json` or project `.mcp.json`:
 
 #### Cursor
 
-Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+Add to `.cursor/mcp.json` (project-specific) or `~/.cursor/mcp.json` (global):
 
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "command": "code-synapse",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
+```
+
+**Configuration Locations:**
+
+| Location | Scope | Use Case |
+|----------|-------|----------|
+| `.cursor/mcp.json` | Project | Project-specific, shared via source control |
+| `~/.cursor/mcp.json` | Global | Available across all projects |
+
+**Using Code-Synapse:**
+
+1. **Agent Mode**: The AI agent automatically uses MCP tools when relevant
+2. **Toggle Tools**: Enable/disable specific tools in agent settings
+3. **Tool Approval**: Agent asks for approval before using tools (can enable auto-run)
+4. **View Responses**: Expandable views show tool arguments and responses
+
+**Available Tools:**
+- `search_code` - Search for code entities
+- `get_function` - Get function details with call graph
+- `get_class` - Get class with inheritance hierarchy
+- `get_file` - Get file contents and symbols
+- `get_callers` / `get_callees` - Function dependency analysis
+- `get_imports` - Module dependency chain
+- `get_project_stats` - Project statistics
+
+**Alternative: HTTP Transport**
+
+If you prefer HTTP transport, start the server manually:
+```bash
+code-synapse start --port 3100
+```
+
+Then configure:
 ```json
 {
   "mcpServers": {
@@ -119,13 +219,41 @@ Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
 }
 ```
 
+**Troubleshooting:**
+
+- **Tools not appearing**: Restart the AI agent after adding/updating MCP configuration
+- **Command not found**: Ensure Code-Synapse is in your PATH or use absolute path in `command`
+- **Permission errors**: Check file permissions on Code-Synapse binary
+- **Server not starting**: Verify project is initialized (`code-synapse status`)
+
 ### 5. Query Your Codebase
 
-Now ask complex, context-aware questions:
+Now ask complex, context-aware questions in your AI agent:
 
+**In Claude Code:**
 > *"How does the checkout process handle failed payments? Explain the business logic."*
 > *"Refactor the `UserAuth` class. First, check who calls it and what business features depend on it to ensure no regressions."*
+
+**In Cursor:**
+> *"Search for authentication functions"*
 > *"Find all functions that call the payment API and show their error handling."*
+> *"What classes extend BaseService and what methods do they implement?"*
+
+**Quick Setup:**
+1. Add to `.cursor/mcp.json` or `~/.claude.json`:
+   ```json
+   {
+     "mcpServers": {
+       "code-synapse": {
+         "command": "code-synapse",
+         "args": ["start"],
+         "cwd": "${workspaceFolder}"
+       }
+     }
+   }
+   ```
+2. Restart your AI agent (Cursor/Claude Code)
+3. Start asking questions!
 
 ---
 
@@ -133,6 +261,16 @@ Now ask complex, context-aware questions:
 
 - **[How It Works](./docs/HOW-IT-WORKS.md)** - Deep dive into architecture, data flow, MCP integration, and running from source
 - **[Architecture](./docs/ARCHITECTURE.md)** - Technical design decisions, implementation status, and technology references
+- **[Contributing](./CONTRIBUTING.md)** - Guidelines for contributing to Code-Synapse
+
+### Documentation Structure
+
+| Document | Audience | Purpose |
+|----------|----------|---------|
+| **README.md** | All users | Quick start, overview, installation |
+| **HOW-IT-WORKS.md** | Users & Developers | Operational details, workflows, examples |
+| **ARCHITECTURE.md** | Developers | Technical design, extension points, API reference |
+| **CONTRIBUTING.md** | Contributors | Contribution guidelines, development setup |
 
 ---
 
@@ -263,13 +401,86 @@ Embeddings (ONNX) → Vector Index (HNSW)
 
 ## 🤝 Contributing
 
-We are building the standard for how AI Agents understand code. Contributions are welcome!
+We welcome contributions! Code-Synapse is building the standard for how AI Agents understand code.
 
-1. Fork the repository.
-2. Install dependencies: `pnpm install`
-3. Run the dev server: `pnpm dev`
-4. Submit a Pull Request.
+### How to Contribute
+
+1. **Fork the repository** and clone your fork
+2. **Create a branch** for your feature: `git checkout -b feature/amazing-feature`
+3. **Install dependencies**: `pnpm install`
+4. **Make your changes** and add tests
+5. **Run tests**: `pnpm test`
+6. **Check code quality**: `pnpm lint && pnpm check-types`
+7. **Commit your changes**: `git commit -m 'Add amazing feature'`
+8. **Push to your fork**: `git push origin feature/amazing-feature`
+9. **Open a Pull Request**
+
+### Development Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/code-synapse/code-synapse.git
+cd code-synapse
+
+# Install dependencies
+pnpm install
+
+# Run in watch mode
+pnpm dev
+
+# Run tests
+pnpm test
+
+# Check types
+pnpm check-types
+
+# Lint code
+pnpm lint
+
+# Format code
+pnpm format
+```
+
+### Contribution Guidelines
+
+- Follow the existing code style (enforced by ESLint and Prettier)
+- Add tests for new features
+- Update documentation for user-facing changes
+- Keep commits atomic and well-described
+- Reference issues in PR descriptions
+
+### Areas for Contribution
+
+- 🐛 Bug fixes
+- ✨ New features
+- 📚 Documentation improvements
+- 🧪 Test coverage
+- 🌐 Language support (Python, Go, Rust, etc.)
+- 🎨 UI/UX improvements
+- ⚡ Performance optimizations
+
+See our [Contributing Guide](./CONTRIBUTING.md) for more details.
+
+## 🐛 Reporting Issues
+
+Found a bug or have a feature request? Please [open an issue](https://github.com/code-synapse/code-synapse/issues) with:
+
+- Clear description of the problem
+- Steps to reproduce
+- Expected vs actual behavior
+- Environment details (OS, Node version, etc.)
+- Relevant logs or error messages
+
+## 💬 Support
+
+- **GitHub Discussions**: [Ask questions and share ideas](https://github.com/code-synapse/code-synapse/discussions)
+- **GitHub Issues**: [Report bugs and request features](https://github.com/code-synapse/code-synapse/issues)
+- **Documentation**: Check [HOW-IT-WORKS.md](./docs/HOW-IT-WORKS.md) and [ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ## 📄 License
 
-Apache 2.0 - Open and free for everyone.
+Licensed under the [Apache License 2.0](LICENSE). See the [LICENSE](LICENSE) file for details.
+
+---
+
+**Made with ❤️ by the Code-Synapse Contributors**

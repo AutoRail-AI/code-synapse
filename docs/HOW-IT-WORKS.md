@@ -2,6 +2,8 @@
 
 A comprehensive guide to understanding Code-Synapse's architecture, data flow, and how to run it from source.
 
+> **Note**: This document focuses on technical details and operational workflows. For quick start instructions, see [README.md](../README.md). For architectural details, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ---
 
 ## Table of Contents
@@ -338,52 +340,19 @@ node dist/cli/index.js status
 
 ### MCP Server Integration (from Source)
 
-Code-Synapse runs as an HTTP MCP server, designed to work with Claude Code and Cursor.
+Code-Synapse uses **stdio transport** (command execution) as the primary method. The AI agent automatically starts and manages the Code-Synapse server process.
 
-#### Starting the HTTP MCP Server
+#### Primary Method: stdio Transport (Recommended)
 
-```bash
-# Start MCP server on default port (3100)
-cd /path/to/your/project
-node /path/to/code-synapse/dist/cli/index.js start
-
-# Start on a custom port
-node /path/to/code-synapse/dist/cli/index.js start --port 3200
-
-# Start with debug logging
-node /path/to/code-synapse/dist/cli/index.js start --debug
-```
-
-The server will output:
-```
-Code-Synapse MCP Server
-────────────────────────────────────
-  Project:    my-project
-  Transport:  HTTP (SSE)
-  Port:       3100
-  Status:     Running
-
-  Connect via: http://localhost:3100/sse
-```
+With stdio transport, the AI agent (Claude Code, Cursor) executes Code-Synapse directly and manages its lifecycle. This is the recommended approach as it:
+- Requires no manual server management
+- Automatically starts/stops with the agent
+- Works seamlessly across projects
+- No port conflicts or manual server processes
 
 #### Claude Code Integration
 
-**Option 1: Using Claude Code CLI (Recommended)**
-
-```bash
-# Add Code-Synapse as an HTTP MCP server
-claude mcp add --transport http code-synapse http://localhost:3100/mcp
-
-# Or add as SSE server (alternative transport)
-claude mcp add --transport sse code-synapse http://localhost:3100/sse
-
-# Add with specific scope
-claude mcp add --transport http code-synapse http://localhost:3100/mcp --scope user   # Available across all projects
-claude mcp add --transport http code-synapse http://localhost:3100/mcp --scope local  # Current project only (default)
-claude mcp add --transport http code-synapse http://localhost:3100/mcp --scope project # Shared via .mcp.json
-```
-
-**Option 2: Manual Configuration**
+**Step 1: Configure MCP Server**
 
 Add to `~/.claude.json` (user scope) or project-level `.mcp.json` (project scope):
 
@@ -391,11 +360,26 @@ Add to `~/.claude.json` (user scope) or project-level `.mcp.json` (project scope
 {
   "mcpServers": {
     "code-synapse": {
-      "type": "http",
-      "url": "http://localhost:3100/mcp"
+      "command": "code-synapse",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}"
     }
   }
 }
+```
+
+**Configuration Locations:**
+
+| Location | Scope | Use Case |
+|----------|-------|----------|
+| `~/.claude.json` | User | Available across all projects |
+| `.mcp.json` | Project | Project-specific, shared via source control |
+
+**Step 2: Verify Connection**
+
+Within Claude Code, check server status:
+```
+/mcp
 ```
 
 **Managing MCP Servers in Claude Code:**
@@ -409,25 +393,82 @@ claude mcp get code-synapse
 
 # Remove a server
 claude mcp remove code-synapse
-
-# Within Claude Code, check server status
-/mcp
 ```
 
 #### Cursor Integration
 
-Cursor supports MCP through three transport methods:
+**Step 1: Configure MCP Server**
 
-| Transport | Execution | Deployment | Use Case |
-|-----------|-----------|------------|----------|
-| **stdio** | Local | Cursor manages | Single user, local tools |
-| **SSE** | Local/Remote | Deploy as server | Multiple users |
-| **Streamable HTTP** | Local/Remote | Deploy as server | Multiple users, recommended |
+Add to `.cursor/mcp.json` (project-specific) or `~/.cursor/mcp.json` (global):
 
-**Option 1: Remote Server (HTTP) - Recommended for Code-Synapse**
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "command": "code-synapse",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
+```
 
-Create `.cursor/mcp.json` in your project root (project-specific) or `~/.cursor/mcp.json` (global):
+**Configuration Locations:**
 
+| Location | Scope | Use Case |
+|----------|-------|----------|
+| `.cursor/mcp.json` | Project | Project-specific, shared via source control |
+| `~/.cursor/mcp.json` | Global | Available across all projects |
+
+**Step 2: Restart Cursor**
+
+After adding/updating `mcp.json`, restart Cursor to load the MCP server.
+
+#### Alternative: HTTP Transport
+
+If you prefer HTTP transport (e.g., for remote access or multiple clients), you can start Code-Synapse as an HTTP server:
+
+**Step 1: Start HTTP Server**
+
+```bash
+# Start MCP server on default port (3100)
+cd /path/to/your/project
+code-synapse start --port 3100
+
+# Start on a custom port
+code-synapse start --port 3200
+
+# Start with debug logging
+code-synapse start --debug
+```
+
+The server will output:
+```
+Code-Synapse MCP Server
+────────────────────────────────────
+  Project:    my-project
+  Transport:  HTTP
+  Port:       3100
+  Status:     Running
+
+  Connect via: http://localhost:3100/mcp
+```
+
+**Step 2: Configure AI Agent**
+
+**For Claude Code:**
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "type": "http",
+      "url": "http://localhost:3100/mcp"
+    }
+  }
+}
+```
+
+**For Cursor:**
 ```json
 {
   "mcpServers": {
@@ -438,7 +479,66 @@ Create `.cursor/mcp.json` in your project root (project-specific) or `~/.cursor/
 }
 ```
 
-**Option 2: With Authentication Headers**
+**Transport Methods Comparison:**
+
+| Transport | Execution | Deployment | Use Case | Code-Synapse Support |
+|-----------|-----------|------------|----------|---------------------|
+| **stdio** | Local | Agent manages | Single user, local tools | ✅ **Recommended** |
+| **HTTP** | Local/Remote | Manual server | Multiple users, remote access | ✅ Alternative |
+| **SSE** | Local/Remote | Deploy as server | Multiple users | ⚠️ Planned |
+
+**With Environment Variables:**
+
+You can pass environment variables to the Code-Synapse process:
+
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "command": "code-synapse",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "LOG_LEVEL": "debug"
+      }
+    }
+  }
+}
+```
+
+**With Absolute Path:**
+
+If Code-Synapse is not in your PATH, use an absolute path:
+
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "command": "/usr/local/bin/code-synapse",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
+```
+
+**HTTP Transport with Environment Variables:**
+
+For HTTP transport, you can use environment variables in the URL:
+
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "url": "${env:CODE_SYNAPSE_URL:-http://localhost:3100}/mcp"
+    }
+  }
+}
+```
+
+**HTTP Transport with Authentication Headers:**
+
+If you add authentication in the future:
 
 ```json
 {
@@ -464,31 +564,27 @@ Create `.cursor/mcp.json` in your project root (project-specific) or `~/.cursor/
 
 Cursor supports variables in `mcp.json` for `command`, `args`, `env`, `url`, and `headers`:
 
-| Variable | Description |
-|----------|-------------|
-| `${env:NAME}` | Environment variable |
-| `${userHome}` | Path to home folder |
-| `${workspaceFolder}` | Project root directory |
-| `${workspaceFolderBasename}` | Name of project root |
-| `${pathSeparator}` or `${/}` | OS path separator |
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `${env:NAME}` | Environment variable | `${env:CODE_SYNAPSE_URL}` |
+| `${env:NAME:-default}` | Environment variable with default | `${env:PORT:-3100}` |
+| `${userHome}` | Path to home folder | `/Users/username` |
+| `${workspaceFolder}` | Project root directory | `/path/to/project` |
+| `${workspaceFolderBasename}` | Name of project root | `my-project` |
+| `${pathSeparator}` or `${/}` | OS path separator | `/` (Unix) or `\` (Windows) |
 
-Example with variables:
-```json
-{
-  "mcpServers": {
-    "code-synapse": {
-      "url": "${env:CODE_SYNAPSE_URL:-http://localhost:3100}/mcp"
-    }
-  }
-}
-```
+**Using Code-Synapse in Cursor:**
 
-**Using MCP in Cursor:**
-
-1. **Agent Mode**: Cursor's Agent automatically uses MCP tools when relevant
-2. **Toggle Tools**: Click a tool name in the tools list to enable/disable
-3. **Tool Approval**: Agent asks for approval before using MCP tools (can enable auto-run)
-4. **View Responses**: Expandable views show tool arguments and responses
+1. **Restart Cursor**: After adding/updating `mcp.json`, restart Cursor to load the MCP server
+2. **Agent Mode**: Cursor's Agent automatically uses Code-Synapse tools when relevant
+3. **Toggle Tools**: Click a tool name in the tools list to enable/disable specific tools
+4. **Tool Approval**: Agent asks for approval before using MCP tools (can enable auto-run in settings)
+5. **View Responses**: Expandable views show tool arguments and responses
+6. **Chat Integration**: Ask questions like:
+   - "Search for authentication functions"
+   - "How does the payment flow work?"
+   - "Find all callers of the validateToken function"
+   - "What classes extend BaseService?"
 
 **Cursor MCP Protocol Support:**
 
@@ -496,9 +592,113 @@ Example with variables:
 |---------|---------|-------------|
 | Tools | ✅ | Functions for the AI model to execute |
 | Prompts | ✅ | Templated messages and workflows |
-| Resources | ✅ | Structured data sources |
+| Resources | ✅ | Structured data sources (files, symbols, graph) |
 | Roots | ✅ | Server-initiated URI inquiries |
 | Elicitation | ✅ | Server-initiated requests for info |
+
+**Troubleshooting:**
+
+**Issue: Tools not appearing**
+- Restart the AI agent (Cursor/Claude Code) after adding/updating MCP configuration
+- Check agent's MCP server status in settings
+- Verify Code-Synapse is initialized: `code-synapse status`
+
+**Issue: Command not found (stdio transport)**
+- Ensure Code-Synapse is in your PATH: `which code-synapse`
+- Use absolute path in `command` field if needed
+- Verify installation: `code-synapse --version`
+
+**Issue: Permission errors**
+- Check file permissions on Code-Synapse binary
+- Ensure you have execute permissions
+- On Unix systems: `chmod +x $(which code-synapse)`
+
+**Issue: Server crashes or disconnects**
+- Check Code-Synapse logs: `.code-synapse/logs/combined.log`
+- Ensure project is indexed: `code-synapse index`
+- Verify project is initialized: `code-synapse status`
+
+**Issue: Server not connecting (HTTP transport)**
+- Ensure Code-Synapse HTTP server is running: `code-synapse start --port 3100`
+- Check the port matches in MCP configuration
+- Verify firewall isn't blocking localhost connections
+
+**Issue: Port conflicts (HTTP transport)**
+- Use a different port: `code-synapse start --port 3200`
+- Update the URL in MCP configuration accordingly
+
+**Debug Mode:**
+
+Enable debug logging for troubleshooting:
+
+**For stdio transport**, add environment variable:
+```json
+{
+  "mcpServers": {
+    "code-synapse": {
+      "command": "code-synapse",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "LOG_LEVEL": "debug"
+      }
+    }
+  }
+}
+```
+
+**For HTTP transport**, start with debug flag:
+```bash
+code-synapse start --port 3100 --debug
+```
+
+**Multiple Projects:**
+
+With stdio transport, each project automatically gets its own Code-Synapse instance. No manual configuration needed!
+
+For HTTP transport, run separate instances:
+
+```bash
+# Terminal 1: Project A
+cd /path/to/project-a
+code-synapse start --port 3100
+
+# Terminal 2: Project B
+cd /path/to/project-b
+code-synapse start --port 3200
+```
+
+Configure in global MCP settings:
+
+**Claude Code (`~/.claude.json`):**
+```json
+{
+  "mcpServers": {
+    "project-a": {
+      "type": "http",
+      "url": "http://localhost:3100/mcp"
+    },
+    "project-b": {
+      "type": "http",
+      "url": "http://localhost:3200/mcp"
+    }
+  }
+}
+```
+
+**Cursor (`~/.cursor/mcp.json`):**
+```json
+{
+  "mcpServers": {
+    "project-a": {
+      "url": "http://localhost:3100/mcp"
+    },
+    "project-b": {
+      "url": "http://localhost:3200/mcp"
+    }
+  }
+}
+```
 
 #### MCP Scopes Explained
 
@@ -517,24 +717,44 @@ Example with variables:
    code-synapse index
    ```
 
-2. **Start the MCP server**:
-   ```bash
-   code-synapse start --port 3100
+2. **Configure MCP Server** (stdio transport - recommended):
+   
+   **For Claude Code** - Add to `~/.claude.json` or `.mcp.json`:
+   ```json
+   {
+     "mcpServers": {
+       "code-synapse": {
+         "command": "code-synapse",
+         "args": ["start"],
+         "cwd": "${workspaceFolder}"
+       }
+     }
+   }
+   ```
+   
+   **For Cursor** - Add to `.cursor/mcp.json` or `~/.cursor/mcp.json`:
+   ```json
+   {
+     "mcpServers": {
+       "code-synapse": {
+         "command": "code-synapse",
+         "args": ["start"],
+         "cwd": "${workspaceFolder}"
+       }
+     }
+   }
    ```
 
-3. **Register with Claude Code**:
-   ```bash
-   claude mcp add --transport http code-synapse http://localhost:3100/mcp
-   ```
+3. **Restart your AI agent** (Cursor/Claude Code)
 
-4. **Verify connection** (within Claude Code):
-   ```
-   /mcp
-   ```
+4. **Verify connection**:
+   - **Claude Code**: Type `/mcp` in chat
+   - **Cursor**: Check MCP server status in settings
 
 5. **Query your codebase**:
-   - Ask Claude Code: "Search for authentication functions"
-   - Ask Claude Code: "How does the payment flow work?"
+   - "Search for authentication functions"
+   - "How does the payment flow work?"
+   - "Find all callers of the validateToken function"
 
 #### Running Multiple Projects
 
@@ -1060,9 +1280,67 @@ Logs are stored in `.code-synapse/logs/`:
 
 ---
 
+## Best Practices
+
+### Project Setup
+
+1. **Initialize Early**: Run `code-synapse init` when starting a new project
+2. **Index Regularly**: Run `code-synapse index` after major refactoring
+3. **Monitor Status**: Use `code-synapse status` to verify indexing health
+4. **Choose Right Model**: Use `code-synapse config --model balanced` for most projects
+
+### Performance Optimization
+
+- **Incremental Indexing**: Code-Synapse automatically detects changes, no need to re-index everything
+- **Model Selection**: Use smaller models (fastest/minimal) for large codebases
+- **File Patterns**: Configure `sourcePatterns` in config.json to exclude unnecessary files
+- **Batch Processing**: Indexing is automatically batched for efficiency
+
+### Common Use Cases
+
+**Use Case 1: Understanding Legacy Code**
+```bash
+# Initialize and index
+code-synapse init
+code-synapse index
+
+# Connect to AI agent and ask:
+# "What are the main entry points of this application?"
+# "How does authentication work in this codebase?"
+```
+
+**Use Case 2: Refactoring Safety**
+```bash
+# Before refactoring, ask your AI agent:
+# "Find all callers of the UserService class"
+# "What features depend on the payment module?"
+```
+
+**Use Case 3: Onboarding New Developers**
+```bash
+# New team member can quickly understand:
+# "Show me the architecture of this project"
+# "What are the main modules and how do they interact?"
+```
+
+**Use Case 4: Code Review**
+```bash
+# Review PRs with context:
+# "How does this change affect other parts of the codebase?"
+# "Are there any breaking changes in this refactor?"
+```
+
 ## Next Steps
 
 1. **Explore the codebase**: Use `code-synapse status -v` to see what's indexed
 2. **Query via MCP**: Connect Claude Code or Cursor and ask questions about your code
 3. **Customize models**: Use `code-synapse config --model` to change LLM
-4. **Contribute**: Fork the repo, run `pnpm install && pnpm dev`, and submit a PR
+4. **Read Architecture**: Check [ARCHITECTURE.md](./ARCHITECTURE.md) for technical details
+5. **Contribute**: Fork the repo, run `pnpm install && pnpm dev`, and submit a PR
+
+## Additional Resources
+
+- **MCP Protocol**: [Model Context Protocol Specification](https://modelcontextprotocol.io/specification)
+- **CozoDB**: [CozoDB Documentation](https://docs.cozodb.org/en/latest/)
+- **Tree-sitter**: [Tree-sitter Documentation](https://tree-sitter.github.io/tree-sitter/)
+- **GitHub Repository**: [code-synapse/code-synapse](https://github.com/code-synapse/code-synapse)

@@ -4,6 +4,8 @@
 
 A comprehensive guide to the architecture, design decisions, and implementation status of Code-Synapse - an agent-first knowledge engine that transforms raw code into a structured Knowledge Graph optimized for machine reasoning.
 
+> **Note**: This document is intended for developers who want to understand, extend, or contribute to Code-Synapse. For user-facing documentation, see [README.md](../README.md) and [HOW-IT-WORKS.md](./HOW-IT-WORKS.md).
+
 ---
 
 ## Table of Contents
@@ -35,6 +37,14 @@ Code-Synapse is a local CLI "sidecar" that runs alongside AI agents (Claude Code
 - **Semantic Search**: Combines vector embeddings, keyword search, and graph traversal
 - **Cross-File Intelligence**: Tracks function calls, type hierarchies, and module dependencies
 - **Local LLM Inference**: Uses small local models for business logic summarization
+
+### Design Goals
+
+1. **Privacy-First**: All processing happens locally, no external API calls
+2. **Zero-Config**: Works out of the box with minimal setup
+3. **Performance**: Sub-second indexing for typical projects
+4. **Extensibility**: Modular architecture for easy language support
+5. **Reliability**: Atomic transactions, incremental updates, error recovery
 
 ### What Makes It Different
 
@@ -564,6 +574,9 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 - Full GraphRAG hierarchical summarization
 - IDE Extensions (VS Code sidebar)
 - Additional LLM models via model registry
+- Web UI for graph visualization
+- Export/import knowledge graphs
+- Multi-language project support
 
 ### Scalability Considerations
 
@@ -571,8 +584,134 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 - Vector embeddings computed incrementally
 - LLM inference batched and prioritized
 - Telemetry enables identifying bottlenecks as codebases grow
+- Database size optimization (compression, pruning old data)
+
+## Extension Points
+
+### Adding Language Support
+
+To add support for a new language:
+
+1. **Add Tree-sitter Grammar**: Install the language grammar package
+2. **Extend Parser**: Add language-specific parsing logic in `src/core/parser/`
+3. **Update UCE Mapping**: Map language constructs to Universal Code Entities
+4. **Add Tests**: Create integration tests for the new language
+
+Example structure:
+```typescript
+// src/core/parser/python-parser.ts
+export class PythonParser implements IParser {
+  // Implement IParser interface
+  async parseCode(code: string, filePath: string): Promise<ParsedFile> {
+    // Parse Python code using tree-sitter-python
+  }
+}
+```
+
+### Adding Custom Extractors
+
+Extractors can be extended to capture domain-specific patterns:
+
+```typescript
+// src/core/extraction/custom-extractor.ts
+export class CustomExtractor implements IExtractor {
+  extract(parsedFile: ParsedFile): ExtractionResult {
+    // Extract custom entities and relationships
+  }
+}
+```
+
+### Adding MCP Tools
+
+New MCP tools can be added in `src/mcp/tools.ts`:
+
+```typescript
+export async function myCustomTool(
+  graphStore: GraphDatabase,
+  args: MyToolArgs
+): Promise<MyToolResult> {
+  // Implement tool logic
+  // Query graph database
+  // Return formatted results
+}
+```
+
+Then register in `src/mcp/server.ts`:
+```typescript
+case "my_custom_tool": {
+  const result = await myCustomTool(graphStore, args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+```
+
+## Security Considerations
+
+### Data Privacy
+
+- **Local Processing**: All code analysis happens on your machine
+- **No Network Calls**: No external API requests (except optional model downloads)
+- **Embedded Database**: CozoDB runs embedded, no external database server
+- **No Telemetry**: No usage data is sent to external services
+
+### Access Control
+
+- **File System**: Code-Synapse only reads files within the project directory
+- **Permissions**: Respects file system permissions
+- **Sandboxing**: Can be run in isolated environments (Docker, VMs)
+
+### Best Practices
+
+- Keep Code-Synapse updated for security patches
+- Review MCP server configuration before connecting
+- Use project-specific configurations for sensitive projects
+- Regularly audit indexed data in `.code-synapse/` directory
 
 ---
+
+## API Reference
+
+### Core Interfaces
+
+#### IParser
+
+Universal code parser interface for language-agnostic parsing:
+
+```typescript
+interface IParser {
+  parseCode(code: string, filePath: string): Promise<ParsedFile>;
+  initialize(): Promise<void>;
+  close(): Promise<void>;
+}
+```
+
+#### IGraphStore
+
+Graph database operations interface:
+
+```typescript
+interface IGraphStore {
+  query<T>(query: string): Promise<QueryResult<T>>;
+  writeBatch(batch: CozoBatch): Promise<void>;
+  hasSchema(): Promise<boolean>;
+  getSchemaVersion(): Promise<number>;
+  close(): Promise<void>;
+}
+```
+
+#### IScanner
+
+File discovery interface:
+
+```typescript
+interface IScanner {
+  scan(projectRoot: string): Promise<FileInfo[]>;
+  detectChanges(files: FileInfo[]): Promise<ChangeSet>;
+}
+```
+
+### Extension Points
+
+See [Extension Points](#extension-points) section for details on extending Code-Synapse.
 
 ## Technology References
 
