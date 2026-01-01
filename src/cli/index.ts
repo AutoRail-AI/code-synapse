@@ -5,6 +5,10 @@
  * User-facing command line interface for configuration and server management
  */
 
+// Set max listeners FIRST, before any imports that might add listeners
+// This prevents MaxListenersExceededWarning when multiple commands run
+process.setMaxListeners(30);
+
 import { Command } from "commander";
 import chalk from "chalk";
 import { initCommand } from "./commands/init.js";
@@ -12,6 +16,7 @@ import { startCommand } from "./commands/start.js";
 import { statusCommand } from "./commands/status.js";
 import { indexCommand } from "./commands/index.js";
 import { configCommand } from "./commands/config.js";
+import { defaultCommand } from "./commands/default.js";
 import { createLogger } from "../utils/logger.js";
 
 const logger = createLogger("cli");
@@ -28,7 +33,33 @@ program
   });
 
 // =============================================================================
-// Commands
+// Default Command (when no subcommand is provided)
+// =============================================================================
+
+// Add default action to main program
+program
+  .option("-p, --port <port>", "Port to run the server on", parseInt)
+  .option("-d, --debug", "Enable debug logging")
+  .option("--skip-index", "Skip indexing step")
+  .action(async (options) => {
+    // Only run default command if no subcommand was provided
+    // Commander.js will call this action if no subcommand matches
+    const args = process.argv.slice(2);
+    const hasSubcommand = args.some(arg => 
+      ["init", "start", "index", "status", "config"].includes(arg)
+    );
+    
+    if (!hasSubcommand) {
+      await defaultCommand({
+        port: options.port,
+        debug: options.debug,
+        skipIndex: options.skipIndex,
+      });
+    }
+  });
+
+// =============================================================================
+// Subcommands
 // =============================================================================
 
 program
@@ -87,56 +118,112 @@ function handleError(error: unknown): void {
   process.exit(1);
 }
 
-// Handle unhandled promise rejections
-process.on("unhandledRejection", (reason) => {
-  logger.error({ reason }, "Unhandled promise rejection");
-  handleError(reason);
-});
-
-// Handle uncaught exceptions
-process.on("uncaughtException", (error) => {
-  logger.error({ err: error }, "Uncaught exception");
-  handleError(error);
-});
-
 // =============================================================================
-// Signal Handlers
+// Process Event Listeners (register only once)
 // =============================================================================
 
-let isShuttingDown = false;
+// Track if listeners are already registered to prevent duplicates
+let listenersRegistered = false;
 
 /**
- * Graceful shutdown handler
+ * Register process event listeners (only once)
  */
-async function shutdown(signal: string): Promise<void> {
-  if (isShuttingDown) {
-    logger.warn("Forced shutdown");
-    process.exit(1);
+function registerProcessListeners(): void {
+  if (listenersRegistered) {
+    return;
   }
 
-  isShuttingDown = true;
-  logger.info({ signal }, "Received shutdown signal");
-  console.log(chalk.dim(`\nReceived ${signal}, shutting down gracefully...`));
+  // Increase max listeners BEFORE adding any listeners to prevent warnings
+  // This handles cases where multiple commands might add listeners
+  process.setMaxListeners(30);
 
-  // Give ongoing operations a chance to complete
-  setTimeout(() => {
-    logger.warn("Shutdown timeout, forcing exit");
-    process.exit(1);
-  }, 5000);
+  // Handle unhandled promise rejections
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ reason }, "Unhandled promise rejection");
+    handleError(reason);
+  });
 
-  // Cleanup will be handled by individual commands
-  process.exit(0);
+  // Handle uncaught exceptions
+  process.on("uncaughtException", (error) => {
+    logger.error({ err: error }, "Uncaught exception");
+    handleError(error);
+  });
+
+  // =============================================================================
+  // Signal Handlers
+  // =============================================================================
+
+  let isShuttingDown = false;
+
+  /**
+   * Graceful shutdown handler
+   */
+  async function shutdown(signal: string): Promise<void> {
+    if (isShuttingDown) {
+      logger.warn("Forced shutdown");
+      process.exit(1);
+    }
+
+    isShuttingDown = true;
+    logger.info({ signal }, "Received shutdown signal");
+    console.log(chalk.dim(`\nReceived ${signal}, shutting down gracefully...`));
+
+    // Give ongoing operations a chance to complete
+    setTimeout(() => {
+      logger.warn("Shutdown timeout, forcing exit");
+      process.exit(1);
+    }, 5000);
+
+    // Cleanup will be handled by individual commands
+    process.exit(0);
+  }
+
+  // Handle SIGINT (Ctrl+C)
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  // Handle SIGTERM (kill command)
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  listenersRegistered = true;
 }
 
-// Handle SIGINT (Ctrl+C)
-process.on("SIGINT", () => shutdown("SIGINT"));
-
-// Handle SIGTERM (kill command)
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+// Register listeners once
+registerProcessListeners();
 
 // =============================================================================
 // Parse and Execute
 // =============================================================================
 
-// Parse command line arguments
-program.parseAsync(process.argv).catch(handleError);
+// If no command provided, run default command
+// Otherwise, parse and execute the provided command
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  
+  // If no arguments or first argument is a flag (starts with -), run default command
+  if (args.length === 0 || (args[0]?.startsWith("-") && !args[0]?.startsWith("--"))) {
+    // Parse default command options manually
+    const defaultOptions: Parameters<typeof defaultCommand>[0] = {
+      debug: args.includes("--debug") || args.includes("-d"),
+      skipIndex: args.includes("--skip-index"),
+    };
+    
+    // Extract port if provided
+    const portIndex = args.findIndex(arg => arg === "-p" || arg === "--port");
+    if (portIndex !== -1 && portIndex + 1 < args.length) {
+      const portArg = args[portIndex + 1];
+      if (portArg) {
+        const port = parseInt(portArg, 10);
+        if (!isNaN(port)) {
+          defaultOptions.port = port;
+        }
+      }
+    }
+    
+    await defaultCommand(defaultOptions);
+  } else {
+    // Parse and execute subcommand
+    await program.parseAsync(process.argv);
+  }
+}
+
+main().catch(handleError);

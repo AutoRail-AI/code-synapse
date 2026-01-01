@@ -7,6 +7,7 @@ import * as path from "node:path";
 
 // Re-export logger module
 export * from "./logger.js";
+export * from "./port.js";
 
 // Re-export file system utilities
 export * from "./fs.js";

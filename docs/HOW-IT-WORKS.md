@@ -35,8 +35,11 @@ Code-Synapse is a **local knowledge engine** that transforms your codebase into 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              CODE-SYNAPSE CLI                                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │    init     │  │    index    │  │   status    │  │   config    │        │
+│  │   default   │  │    init     │  │    index    │  │   status    │        │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
+│  ┌─────────────┐  ┌─────────────┐                                          │
+│  │   config    │  │    start    │                                          │
+│  └─────────────┘  └─────────────┘                                          │
 │                              │                                               │
 │                              ▼                                               │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
@@ -85,8 +88,9 @@ Code-Synapse is a **local knowledge engine** that transforms your codebase into 
 ```
 src/
 ├── cli/                    # User-facing CLI (commander.js)
-│   ├── index.ts            # Entry point, signal handlers
+│   ├── index.ts            # Entry point, signal handlers, default command
 │   └── commands/
+│       ├── default.ts      # Default command (init + index + start)
 │       ├── init.ts         # Initialize project
 │       ├── index.ts        # Trigger indexing
 │       ├── status.ts       # Show project status
@@ -297,21 +301,16 @@ pnpm lint
 # Show help
 node dist/cli/index.js --help
 
-# Initialize in a project
+# Default command (auto-initialize, index, and start)
 cd /path/to/your/project
-node /path/to/code-synapse/dist/cli/index.js init
+node /path/to/code-synapse/dist/cli/index.js
 
-# Index the project
-node /path/to/code-synapse/dist/cli/index.js index
-
-# Check status
-node /path/to/code-synapse/dist/cli/index.js status
-
-# List available LLM models
-node /path/to/code-synapse/dist/cli/index.js config --list-models
-
-# Start MCP server
-node /path/to/code-synapse/dist/cli/index.js start
+# Or use individual commands
+node /path/to/code-synapse/dist/cli/index.js init      # Initialize only
+node /path/to/code-synapse/dist/cli/index.js index     # Index only
+node /path/to/code-synapse/dist/cli/index.js status    # Check status
+node /path/to/code-synapse/dist/cli/index.js config --list-models  # List models
+node /path/to/code-synapse/dist/cli/index.js start     # Start server only
 ```
 
 #### Option B: Using npm link (Recommended for Development)
@@ -814,6 +813,58 @@ Supported syntax:
 ---
 
 ## CLI Commands
+
+### Default Command: `code-synapse`
+
+Running `code-synapse` without any subcommand provides an all-in-one experience:
+
+```bash
+code-synapse [options]
+
+Options:
+  -p, --port <port>    Port to run the server on (auto-detects if not specified)
+  -d, --debug          Enable debug logging
+  --skip-index         Skip indexing step (if already indexed)
+```
+
+**What it does automatically:**
+1. **Checks initialization** - Runs `init` if project not initialized
+2. **Indexes codebase** - Runs `index` to build the knowledge graph
+3. **Finds available port** - Scans ports 3100-3200 for availability
+4. **Starts MCP server** - Launches server on available port (or prompts for port if none available)
+
+**Port Selection Behavior:**
+- Scans ports 3100-3200 for availability
+- Uses first available port found
+- If no port available in range, interactively prompts for a port
+- Use `--port` to specify a port directly (will check availability)
+
+**Example:**
+```bash
+# Simple - auto-initialize, index, and start
+code-synapse
+
+# With specific port
+code-synapse --port 3200
+
+# Skip indexing (if already indexed)
+code-synapse --skip-index
+
+# Debug mode
+code-synapse --debug
+```
+
+**Output:**
+```
+Checking project status...
+✔ Project already initialized
+Indexing project...
+✔ Project indexed
+Finding available port (3100-3200)...
+✔ Found available port: 3101
+Starting MCP server...
+✔ MCP server started on port 3101
+```
 
 ### `code-synapse init`
 

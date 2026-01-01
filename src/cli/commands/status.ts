@@ -39,31 +39,33 @@ async function getIndexStats(graphDbPath: string): Promise<{
   try {
     const graphStore = await createGraphStore({ path: graphDbPath });
 
-    // Query counts using CozoScript
-    const fileResult = await graphStore.query<{ count: number }>(
-      `?[count] := count = count(id), *file{id}`
+    // Query counts using CozoScript (correct syntax)
+    type CountResult = { "count(id)": number };
+    
+    const fileResult = await graphStore.query<CountResult>(
+      `?[count(id)] := *file{id}`
     );
-    const funcResult = await graphStore.query<{ count: number }>(
-      `?[count] := count = count(id), *function{id}`
+    const funcResult = await graphStore.query<CountResult>(
+      `?[count(id)] := *function{id}`
     );
-    const classResult = await graphStore.query<{ count: number }>(
-      `?[count] := count = count(id), *class{id}`
+    const classResult = await graphStore.query<CountResult>(
+      `?[count(id)] := *class{id}`
     );
-    const ifaceResult = await graphStore.query<{ count: number }>(
-      `?[count] := count = count(id), *interface{id}`
+    const ifaceResult = await graphStore.query<CountResult>(
+      `?[count(id)] := *interface{id}`
     );
-    const varResult = await graphStore.query<{ count: number }>(
-      `?[count] := count = count(id), *variable{id}`
+    const varResult = await graphStore.query<CountResult>(
+      `?[count(id)] := *variable{id}`
     );
 
     await graphStore.close();
 
     return {
-      fileCount: fileResult.rows[0]?.count ?? 0,
-      functionCount: funcResult.rows[0]?.count ?? 0,
-      classCount: classResult.rows[0]?.count ?? 0,
-      interfaceCount: ifaceResult.rows[0]?.count ?? 0,
-      variableCount: varResult.rows[0]?.count ?? 0,
+      fileCount: fileResult.rows[0]?.["count(id)"] ?? 0,
+      functionCount: funcResult.rows[0]?.["count(id)"] ?? 0,
+      classCount: classResult.rows[0]?.["count(id)"] ?? 0,
+      interfaceCount: ifaceResult.rows[0]?.["count(id)"] ?? 0,
+      variableCount: varResult.rows[0]?.["count(id)"] ?? 0,
     };
   } catch (error) {
     logger.debug({ error }, "Could not read stats from database");

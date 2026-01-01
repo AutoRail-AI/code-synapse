@@ -100,15 +100,31 @@ pnpm link --global
 code-synapse --version
 ```
 
-### 2. Initialize & Index
+### 2. Run Code-Synapse
 
-Navigate to your project and set up the knowledge graph:
+Navigate to your project and run Code-Synapse. It will automatically:
+- Initialize if not already set up
+- Index your codebase
+- Start the MCP server on an available port (3100-3200)
 
 ```bash
 cd my-project
-code-synapse init              # Initialize configuration
-code-synapse index             # Build the knowledge graph
-code-synapse status            # Verify indexing complete
+code-synapse                   # One command does it all!
+```
+
+**Options:**
+```bash
+code-synapse --port 3200       # Use specific port
+code-synapse --debug           # Enable debug logging
+code-synapse --skip-index      # Skip indexing (if already indexed)
+```
+
+**Or use individual commands:**
+```bash
+code-synapse init              # Initialize configuration only
+code-synapse index             # Build the knowledge graph only
+code-synapse start             # Start server only
+code-synapse status            # Check status
 ```
 
 ### 3. Connect Your AI Agent
@@ -276,14 +292,35 @@ Now ask complex, context-aware questions in your AI agent:
 
 ## 🔧 CLI Commands
 
+### Default Command
+
+Running `code-synapse` without any subcommand automatically:
+- Initializes the project (if not already initialized)
+- Indexes the codebase
+- Starts the MCP server on an available port (3100-3200)
+
+```bash
+code-synapse                   # All-in-one command
+code-synapse --port 3200       # Use specific port
+code-synapse --debug           # Enable debug logging
+code-synapse --skip-index      # Skip indexing step
+```
+
+**Port Selection:**
+- Automatically finds an available port in range 3100-3200
+- If no port available in range, prompts you to enter a port
+- Use `--port` to specify a port directly
+
+### Subcommands
+
 | Command | Description |
 |---------|-------------|
-| `code-synapse init` | Initialize project configuration |
-| `code-synapse index` | Build/rebuild the knowledge graph |
+| `code-synapse init` | Initialize project configuration only |
+| `code-synapse index` | Build/rebuild the knowledge graph only |
 | `code-synapse status` | Show project and index statistics |
 | `code-synapse config --list-models` | List available LLM models |
 | `code-synapse config --model <preset>` | Set LLM model (fastest/balanced/quality/maximum) |
-| `code-synapse start` | Start the MCP server |
+| `code-synapse start` | Start the MCP server only |
 | `code-synapse start --port 3200` | Start on custom port |
 
 ---

@@ -103,8 +103,8 @@ Code-Synapse is a local CLI "sidecar" that runs alongside AI agents (Claude Code
 ┌─────────────────────────────┐        ┌─────────────────────────────────────┐
 │         CLI Layer           │        │           MCP Layer                  │
 │   (commander.js + chalk)    │        │   (@modelcontextprotocol/sdk)       │
-│   init │ index │ status     │        │   Tools  │  Resources                │
-│   config │ start            │        │                                      │
+│   default │ init │ index    │        │   Tools  │  Resources                │
+│   status │ config │ start   │        │                                      │
 └─────────────────────────────┘        └─────────────────────────────────────┘
                     │                                    │
                     └──────────────┬─────────────────────┘
@@ -235,8 +235,8 @@ CozoDB provides both graph storage AND native vector search via HNSW indices. Th
 ```
 src/
 ├── cli/                    # User-facing CLI
-│   ├── index.ts            # Entry point, signal handlers
-│   └── commands/           # init, index, status, config, start
+│   ├── index.ts            # Entry point, signal handlers, default command
+│   └── commands/           # default, init, index, status, config, start
 │
 ├── mcp/                    # MCP Server
 │   ├── server.ts           # Server setup, tool handlers
