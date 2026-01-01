@@ -14,7 +14,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 // Core imports
-import { createGraphStore } from "../graph/index.js";
+import { createGraphStore, type IGraphStore } from "../graph/index.js";
 import { createIParser } from "../parser/index.js";
 import {
   createIndexerCoordinator,
@@ -483,34 +483,48 @@ describe("Checkpoint 4: Full System Integration", () => {
   // ===========================================================================
 
   describe("3. Graph Database Queries", () => {
-    it("should query indexed files", async () => {
-      const store = await createGraphStore({ path: graphDbPath });
+    let store: IGraphStore;
 
+    beforeAll(async () => {
+      // Open store once for all query tests to avoid RocksDB lock conflicts
+      // Add retry logic to handle any lingering RocksDB locks from previous tests
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          store = await createGraphStore({ path: graphDbPath });
+          break;
+        } catch (error) {
+          retries--;
+          if (retries === 0) throw error;
+          // Wait a bit before retrying (RocksDB lock might need time to release)
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+    });
+
+    afterAll(async () => {
+      // Close store after all query tests complete
+      await store.close();
+    });
+
+    it("should query indexed files", async () => {
       const result = await store.query<{ id: string; path: string }>(
         `?[id, path] := *file{id, path}`
       );
 
       expect(result.rows.length).toBeGreaterThan(0);
-
-      await store.close();
     });
 
     it("should query functions", async () => {
-      const store = await createGraphStore({ path: graphDbPath });
-
       const result = await store.query<{ id: string; name: string }>(
         `?[id, name] := *function{id, name}`
       );
 
       // Should have functions like main, findById, create, etc.
       expect(result.rows.length).toBeGreaterThan(0);
-
-      await store.close();
     });
 
     it("should query classes", async () => {
-      const store = await createGraphStore({ path: graphDbPath });
-
       const result = await store.query<{ id: string; name: string }>(
         `?[id, name] := *class{id, name}`
       );
@@ -520,21 +534,15 @@ describe("Checkpoint 4: Full System Integration", () => {
       expect(classNames).toContain("UserService");
       expect(classNames).toContain("AuthService");
       expect(classNames).toContain("Logger");
-
-      await store.close();
     });
 
     it("should query interfaces", async () => {
-      const store = await createGraphStore({ path: graphDbPath });
-
       const result = await store.query<{ id: string; name: string }>(
         `?[id, name] := *interface{id, name}`
       );
 
       // Should have User, AuthToken, LogEntry, Entity, Paginated, Result
       expect(result.rows.length).toBeGreaterThan(0);
-
-      await store.close();
     });
   });
 
