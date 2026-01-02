@@ -63,6 +63,9 @@ Unlike standard tools (LSP, grep) that only see syntax, Code-Synapse builds a mu
 * **🔌 Agent-First Design:** Built natively on the **Model Context Protocol (MCP)**. Works out-of-the-box with Claude Desktop, Cursor, and any MCP-compliant tool.
 * **🧠 Hybrid Intelligence:** Combines deterministic Static Analysis (Tree-sitter) for 100% accuracy with probabilistic AI Inference (Local LLM) for deep context.
 * **🎯 Business Justification:** Local LLM infers *why* code exists - its purpose, business value, and feature context.
+* **🏷️ Business Layer Classification:** Automatically categorizes code as **Domain** (business logic, user-facing) or **Infrastructure** (platform, cross-cutting).
+* **📜 Change Ledger:** Append-only event log tracks all system changes for time-travel debugging and observability.
+* **🔄 Adaptive Indexing:** Observes MCP queries and code changes, correlates them semantically, and triggers intelligent re-indexing.
 * **🔒 Privacy-First:** Your code never leaves your machine. We use an embedded database (**CozoDB** with RocksDB backend) and local models (**Qwen 2.5 Coder**) to keep everything offline.
 * **🔄 Incremental Indexing:** Smart file-watching ensures the graph is updated in milliseconds when you save a file.
 * **🔍 Natural Language Search:** Query your codebase in plain English - "most complex functions", "where is createParser", "what calls main".
@@ -547,6 +550,9 @@ Embeddings (ONNX) → Vector Index (HNSW)
 - [x] **Web Viewer**: Visual dashboard with REST API for exploring indexed code
 - [x] **Natural Language Search**: Query codebase in plain English
 - [x] **Business Justification**: LLM-powered inference of code purpose, business value, and feature context
+- [x] **Business Layer Classification**: Domain (business logic) vs Infrastructure (platform) categorization
+- [x] **Change Ledger**: Append-only event log for time-travel debugging and observability
+- [x] **Adaptive Indexing**: MCP query observation, semantic correlation, intelligent re-indexing
 
 ### Future
 

@@ -13,6 +13,11 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IGraphViewer } from "../interfaces/IGraphViewer.js";
 import type { CozoGraphViewer } from "../impl/CozoGraphViewer.js";
+import type { IClassificationStorage } from "../../core/classification/interfaces/IClassificationEngine.js";
+import type { IChangeLedger, LedgerQuery } from "../../core/ledger/interfaces/IChangeLedger.js";
+import type { IAdaptiveIndexer } from "../../core/adaptive-indexer/interfaces/IAdaptiveIndexer.js";
+import type { ClassificationCategory, DomainArea, InfrastructureLayer } from "../../core/classification/models/classification.js";
+import type { LedgerEventType, EventSource } from "../../core/ledger/models/ledger-events.js";
 
 // =============================================================================
 // Types
@@ -21,6 +26,12 @@ import type { CozoGraphViewer } from "../impl/CozoGraphViewer.js";
 interface ServerConfig {
   port: number;
   host?: string;
+}
+
+interface ViewerServerOptions {
+  classificationStorage?: IClassificationStorage;
+  changeLedger?: IChangeLedger;
+  adaptiveIndexer?: IAdaptiveIndexer;
 }
 
 interface RouteHandler {
@@ -64,9 +75,15 @@ export class ViewerServer {
   private server: http.Server | null = null;
   private routes: Route[] = [];
   private staticDir: string;
+  private classificationStorage?: IClassificationStorage;
+  private changeLedger?: IChangeLedger;
+  private adaptiveIndexer?: IAdaptiveIndexer;
 
-  constructor(viewer: IGraphViewer) {
+  constructor(viewer: IGraphViewer, options?: ViewerServerOptions) {
     this.viewer = viewer;
+    this.classificationStorage = options?.classificationStorage;
+    this.changeLedger = options?.changeLedger;
+    this.adaptiveIndexer = options?.adaptiveIndexer;
 
     // Get the directory where static files are located
     const __filename = fileURLToPath(import.meta.url);
@@ -122,6 +139,33 @@ export class ViewerServer {
     this.addRoute("GET", "/api/justifications/features", this.handleGetFeatureAreas.bind(this));
     this.addRoute("GET", "/api/justifications/search", this.handleSearchJustifications.bind(this));
     this.addRoute("GET", "/api/justifications/:entityId", this.handleGetJustification.bind(this));
+
+    // Classification (Domain/Infrastructure)
+    this.addRoute("GET", "/api/classifications/stats", this.handleClassificationStats.bind(this));
+    this.addRoute("GET", "/api/classifications", this.handleListClassifications.bind(this));
+    this.addRoute("GET", "/api/classifications/search", this.handleSearchClassifications.bind(this));
+    this.addRoute("GET", "/api/classifications/domain/:area", this.handleClassificationsByDomain.bind(this));
+    this.addRoute("GET", "/api/classifications/infrastructure/:layer", this.handleClassificationsByInfrastructure.bind(this));
+    this.addRoute("GET", "/api/classifications/:entityId", this.handleGetClassification.bind(this));
+
+    // Change Ledger (Observability)
+    this.addRoute("GET", "/api/ledger/stats", this.handleLedgerStats.bind(this));
+    this.addRoute("GET", "/api/ledger", this.handleQueryLedger.bind(this));
+    this.addRoute("GET", "/api/ledger/recent", this.handleRecentLedgerEntries.bind(this));
+    this.addRoute("GET", "/api/ledger/timeline", this.handleLedgerTimeline.bind(this));
+    this.addRoute("GET", "/api/ledger/aggregations", this.handleLedgerAggregations.bind(this));
+    this.addRoute("GET", "/api/ledger/entity/:entityId", this.handleLedgerForEntity.bind(this));
+    this.addRoute("GET", "/api/ledger/:id", this.handleGetLedgerEntry.bind(this));
+
+    // Adaptive Indexer
+    this.addRoute("GET", "/api/adaptive/stats", this.handleAdaptiveStats.bind(this));
+    this.addRoute("GET", "/api/adaptive/hot", this.handleHotEntities.bind(this));
+    this.addRoute("GET", "/api/adaptive/cold", this.handleColdEntities.bind(this));
+    this.addRoute("GET", "/api/adaptive/priority", this.handlePriorityQueue.bind(this));
+    this.addRoute("GET", "/api/adaptive/sessions", this.handleListSessions.bind(this));
+    this.addRoute("GET", "/api/adaptive/sessions/:id", this.handleGetSession.bind(this));
+    this.addRoute("GET", "/api/adaptive/queries/recent", this.handleRecentQueries.bind(this));
+    this.addRoute("GET", "/api/adaptive/changes/recent", this.handleRecentChanges.bind(this));
 
     // Health
     this.addRoute("GET", "/api/health", this.handleHealth.bind(this));
@@ -673,6 +717,525 @@ export class ViewerServer {
   }
 
   // ===========================================================================
+  // API Handlers - Classification (Domain/Infrastructure)
+  // ===========================================================================
+
+  private async handleClassificationStats(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.classificationStorage) {
+      this.sendJSON(res, { error: "Classification storage not available" }, 503);
+      return;
+    }
+
+    try {
+      const stats = await this.classificationStorage.getStats();
+      this.sendJSON(res, stats);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get classification stats", error);
+    }
+  }
+
+  private async handleListClassifications(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.classificationStorage) {
+      this.sendJSON(res, { error: "Classification storage not available" }, 503);
+      return;
+    }
+
+    const category = params.query.get("category") as ClassificationCategory | null;
+    const limit = parseInt(params.query.get("limit") || "100", 10);
+    const offset = parseInt(params.query.get("offset") || "0", 10);
+    const minConfidence = params.query.get("minConfidence")
+      ? parseFloat(params.query.get("minConfidence")!)
+      : undefined;
+
+    try {
+      if (category) {
+        const results = await this.classificationStorage.queryByCategory(category, {
+          limit,
+          offset,
+          minConfidence,
+        });
+        this.sendJSON(res, results);
+      } else {
+        // Get both domain and infrastructure
+        const [domain, infrastructure] = await Promise.all([
+          this.classificationStorage.queryByCategory("domain", { limit: Math.floor(limit / 2), offset }),
+          this.classificationStorage.queryByCategory("infrastructure", { limit: Math.floor(limit / 2), offset }),
+        ]);
+        this.sendJSON(res, { domain, infrastructure });
+      }
+    } catch (error) {
+      this.sendError(res, 500, "Failed to list classifications", error);
+    }
+  }
+
+  private async handleSearchClassifications(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.classificationStorage) {
+      this.sendJSON(res, { error: "Classification storage not available" }, 503);
+      return;
+    }
+
+    const query = params.query.get("q") || "";
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+    const category = params.query.get("category") as ClassificationCategory | undefined;
+
+    if (!query) {
+      this.sendJSON(res, []);
+      return;
+    }
+
+    try {
+      const results = await this.classificationStorage.search(query, { limit, category });
+      this.sendJSON(res, results);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to search classifications", error);
+    }
+  }
+
+  private async handleClassificationsByDomain(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.classificationStorage) {
+      this.sendJSON(res, { error: "Classification storage not available" }, 503);
+      return;
+    }
+
+    const area = params.pathParams.area as DomainArea;
+    const limit = parseInt(params.query.get("limit") || "100", 10);
+    const offset = parseInt(params.query.get("offset") || "0", 10);
+
+    try {
+      const results = await this.classificationStorage.queryDomainByArea(area, { limit, offset });
+      this.sendJSON(res, results);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get domain classifications", error);
+    }
+  }
+
+  private async handleClassificationsByInfrastructure(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.classificationStorage) {
+      this.sendJSON(res, { error: "Classification storage not available" }, 503);
+      return;
+    }
+
+    const layer = params.pathParams.layer as InfrastructureLayer;
+    const limit = parseInt(params.query.get("limit") || "100", 10);
+    const offset = parseInt(params.query.get("offset") || "0", 10);
+
+    try {
+      const results = await this.classificationStorage.queryInfrastructureByLayer(layer, { limit, offset });
+      this.sendJSON(res, results);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get infrastructure classifications", error);
+    }
+  }
+
+  private async handleGetClassification(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.classificationStorage) {
+      this.sendJSON(res, { error: "Classification storage not available" }, 503);
+      return;
+    }
+
+    const entityId = params.pathParams.entityId!;
+
+    try {
+      const classification = await this.classificationStorage.get(entityId);
+      if (!classification) {
+        this.sendJSON(res, null);
+        return;
+      }
+      this.sendJSON(res, classification);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get classification", error);
+    }
+  }
+
+  // ===========================================================================
+  // API Handlers - Change Ledger (Observability)
+  // ===========================================================================
+
+  private async handleLedgerStats(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.changeLedger) {
+      this.sendJSON(res, { error: "Change ledger not available" }, 503);
+      return;
+    }
+
+    try {
+      const [entryCount, oldest, newest] = await Promise.all([
+        this.changeLedger.getEntryCount(),
+        this.changeLedger.getOldestTimestamp(),
+        this.changeLedger.getNewestTimestamp(),
+      ]);
+
+      this.sendJSON(res, {
+        entryCount,
+        oldestTimestamp: oldest,
+        newestTimestamp: newest,
+        currentSequence: this.changeLedger.getCurrentSequence(),
+      });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get ledger stats", error);
+    }
+  }
+
+  private async handleQueryLedger(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.changeLedger) {
+      this.sendJSON(res, { error: "Change ledger not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "100", 10);
+    const offset = parseInt(params.query.get("offset") || "0", 10);
+    const eventTypes = params.query.get("eventTypes")?.split(",") as LedgerEventType[] | undefined;
+    const sources = params.query.get("sources")?.split(",") as EventSource[] | undefined;
+    const startTime = params.query.get("startTime") || undefined;
+    const endTime = params.query.get("endTime") || undefined;
+
+    const query: LedgerQuery = {
+      limit,
+      offset,
+      eventTypes,
+      sources,
+      startTime,
+      endTime,
+    };
+
+    try {
+      const entries = await this.changeLedger.query(query);
+      this.sendJSON(res, entries);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to query ledger", error);
+    }
+  }
+
+  private async handleRecentLedgerEntries(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.changeLedger) {
+      this.sendJSON(res, { error: "Change ledger not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+
+    try {
+      const entries = await this.changeLedger.getRecent(limit);
+      this.sendJSON(res, entries);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get recent ledger entries", error);
+    }
+  }
+
+  private async handleLedgerTimeline(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.changeLedger) {
+      this.sendJSON(res, { error: "Change ledger not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "100", 10);
+    const offset = parseInt(params.query.get("offset") || "0", 10);
+    const startTime = params.query.get("startTime") || undefined;
+    const endTime = params.query.get("endTime") || undefined;
+
+    try {
+      const timeline = await this.changeLedger.getTimeline({
+        limit,
+        offset,
+        startTime,
+        endTime,
+      });
+      this.sendJSON(res, timeline);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get ledger timeline", error);
+    }
+  }
+
+  private async handleLedgerAggregations(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.changeLedger) {
+      this.sendJSON(res, { error: "Change ledger not available" }, 503);
+      return;
+    }
+
+    const startTime = params.query.get("startTime") || undefined;
+    const endTime = params.query.get("endTime") || undefined;
+
+    try {
+      const aggregations = await this.changeLedger.getAggregations({
+        startTime,
+        endTime,
+      });
+      this.sendJSON(res, aggregations);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get ledger aggregations", error);
+    }
+  }
+
+  private async handleLedgerForEntity(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.changeLedger) {
+      this.sendJSON(res, { error: "Change ledger not available" }, 503);
+      return;
+    }
+
+    const entityId = params.pathParams.entityId!;
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+
+    try {
+      const entries = await this.changeLedger.getForEntity(entityId, limit);
+      this.sendJSON(res, entries);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get ledger entries for entity", error);
+    }
+  }
+
+  private async handleGetLedgerEntry(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.changeLedger) {
+      this.sendJSON(res, { error: "Change ledger not available" }, 503);
+      return;
+    }
+
+    const id = params.pathParams.id!;
+
+    try {
+      const entry = await this.changeLedger.getEntry(id);
+      if (!entry) {
+        this.sendError(res, 404, "Ledger entry not found");
+        return;
+      }
+      this.sendJSON(res, entry);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get ledger entry", error);
+    }
+  }
+
+  // ===========================================================================
+  // API Handlers - Adaptive Indexer
+  // ===========================================================================
+
+  private async handleAdaptiveStats(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.adaptiveIndexer) {
+      this.sendJSON(res, { error: "Adaptive indexer not available" }, 503);
+      return;
+    }
+
+    try {
+      const stats = await this.adaptiveIndexer.getStats();
+      this.sendJSON(res, {
+        ...stats,
+        isPaused: this.adaptiveIndexer.isPaused(),
+        config: this.adaptiveIndexer.getConfig(),
+      });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get adaptive indexer stats", error);
+    }
+  }
+
+  private async handleHotEntities(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.adaptiveIndexer) {
+      this.sendJSON(res, { error: "Adaptive indexer not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "20", 10);
+
+    try {
+      const hotEntities = await this.adaptiveIndexer.getHotEntities(limit);
+      this.sendJSON(res, hotEntities);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get hot entities", error);
+    }
+  }
+
+  private async handleColdEntities(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.adaptiveIndexer) {
+      this.sendJSON(res, { error: "Adaptive indexer not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "20", 10);
+
+    try {
+      const coldEntities = await this.adaptiveIndexer.getColdEntities(limit);
+      this.sendJSON(res, coldEntities);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get cold entities", error);
+    }
+  }
+
+  private async handlePriorityQueue(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.adaptiveIndexer) {
+      this.sendJSON(res, { error: "Adaptive indexer not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+
+    try {
+      const queue = await this.adaptiveIndexer.getPriorityQueue(limit);
+      this.sendJSON(res, queue);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get priority queue", error);
+    }
+  }
+
+  private async handleListSessions(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.adaptiveIndexer) {
+      this.sendJSON(res, { error: "Adaptive indexer not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "20", 10);
+
+    try {
+      const sessions = await this.adaptiveIndexer.listSessions(limit);
+      this.sendJSON(res, sessions);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to list sessions", error);
+    }
+  }
+
+  private async handleGetSession(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.adaptiveIndexer) {
+      this.sendJSON(res, { error: "Adaptive indexer not available" }, 503);
+      return;
+    }
+
+    const id = params.pathParams.id!;
+
+    try {
+      const session = await this.adaptiveIndexer.getSession(id);
+      if (!session) {
+        this.sendError(res, 404, "Session not found");
+        return;
+      }
+
+      // Get associated queries and changes for the session
+      const [queries, changes] = await Promise.all([
+        this.adaptiveIndexer.getQueriesForSession(id),
+        this.adaptiveIndexer.getChangesForSession(id),
+      ]);
+
+      this.sendJSON(res, {
+        ...session,
+        queries,
+        changes,
+      });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get session", error);
+    }
+  }
+
+  private async handleRecentQueries(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.adaptiveIndexer) {
+      this.sendJSON(res, { error: "Adaptive indexer not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+
+    try {
+      const queries = await this.adaptiveIndexer.getRecentQueries(limit);
+      this.sendJSON(res, queries);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get recent queries", error);
+    }
+  }
+
+  private async handleRecentChanges(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.adaptiveIndexer) {
+      this.sendJSON(res, { error: "Adaptive indexer not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+
+    try {
+      const changes = await this.adaptiveIndexer.getRecentChanges(limit);
+      this.sendJSON(res, changes);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get recent changes", error);
+    }
+  }
+
+  // ===========================================================================
   // Server Lifecycle
   // ===========================================================================
 
@@ -726,13 +1289,20 @@ export class ViewerServer {
  * @param viewer - The IGraphViewer instance
  * @param port - Port to listen on (default: 3100)
  * @param host - Host to bind to (default: 127.0.0.1)
+ * @param options - Optional services for extended functionality
  */
 export async function startViewerServer(
   viewer: IGraphViewer,
   port: number = 3100,
-  host: string = "127.0.0.1"
+  host: string = "127.0.0.1",
+  options?: ViewerServerOptions
 ): Promise<ViewerServer> {
-  const server = new ViewerServer(viewer);
+  const server = new ViewerServer(viewer, options);
   await server.start({ port, host });
   return server;
 }
+
+/**
+ * Options for starting viewer server with extended services
+ */
+export type { ViewerServerOptions };

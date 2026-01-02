@@ -267,6 +267,21 @@ src/
 │   ├── graph-builder/      # Graph construction
 │   ├── embeddings/         # Vector embeddings
 │   ├── llm/                # Local LLM inference
+│   │   └── interfaces/     # ILLMService interface
+│   ├── justification/      # Business purpose inference (V13)
+│   ├── classification/     # Domain/Infrastructure classification (V14)
+│   │   ├── models/         # Classification data models
+│   │   ├── interfaces/     # IClassificationEngine, IClassificationStorage
+│   │   ├── storage/        # CozoDB classification operations
+│   │   └── impl/           # LLMClassificationEngine
+│   ├── ledger/             # Change Ledger & Observability (V15)
+│   │   ├── models/         # LedgerEntry, event types
+│   │   ├── interfaces/     # IChangeLedger interface
+│   │   └── impl/           # CozoChangeLedger implementation
+│   ├── adaptive-indexer/   # MCP-Driven Adaptive Indexing (V16)
+│   │   ├── models/         # Query/Change observation, correlations
+│   │   ├── interfaces/     # IAdaptiveIndexer interface
+│   │   └── impl/           # AdaptiveIndexerService
 │   └── interfaces/         # Contract interfaces
 │
 ├── types/                  # Type definitions
@@ -283,6 +298,7 @@ src/
 │                           VERTICALS (Features)                               │
 │  V1 Graph → V2 Scanner → V3 Parser → V4 Semantic → V5 Extract              │
 │  → V6 Refactor → V7 Build → V8 Indexer → V9 MCP → V10 LLM → V11 CLI        │
+│  → V12 Viewer → V13 Justify → V14 Classify → V15 Ledger → V16 Adaptive     │
 └─────────────────────────────────────────────────────────────────────────────┘
                               ▲
                               │ depends on
@@ -319,6 +335,9 @@ src/
 | **V11: CLI Commands** | User interface | Full command implementations |
 | **V12: Web Viewer** | Visual dashboard | REST API, NL Search, statistics |
 | **V13: Justification** | Business purpose inference | LLM prompts, context propagation, clarification |
+| **V14: Classification** | Domain/Infrastructure categorization | LLM classification, pattern matching, confidence |
+| **V15: Change Ledger** | Append-only event log | Observability, time-travel debugging, correlation |
+| **V16: Adaptive Indexer** | MCP-driven re-indexing | Query observation, semantic correlation, priorities |
 
 ### Interface Contracts
 
@@ -333,6 +352,10 @@ The codebase uses explicit interface contracts for testability and modularity:
 | **IExtractor** | Entity extraction abstraction |
 | **IGraphViewer** | Read-only graph exploration and statistics |
 | **IJustificationService** | Business justification inference and storage |
+| **IClassificationEngine** | Domain/Infrastructure classification logic |
+| **IClassificationStorage** | Classification persistence and queries |
+| **IChangeLedger** | Append-only event logging and queries |
+| **IAdaptiveIndexer** | MCP query observation and intelligent re-indexing |
 
 ---
 
@@ -642,6 +665,9 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 | V11 | CLI Commands | ✅ Complete |
 | V12 | Web Viewer & NL Search | ✅ Complete |
 | V13 | Business Justification Layer | ✅ Complete |
+| V14 | Business Layer Classification | ✅ Complete |
+| V15 | Change Ledger & Observability | ✅ Complete |
+| V16 | Adaptive MCP-Driven Indexing | ✅ Complete |
 
 ---
 
@@ -649,8 +675,8 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 
 ### Test Summary
 
-- **Total Tests**: 407+ passing
-- **Test Files**: 16
+- **Total Tests**: 336+ passing
+- **Test Files**: 16+
 - **Skipped**: 6 (MCP transport tests, tested manually)
 
 ### Key Verifications
@@ -665,6 +691,9 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 - LLM model registry functional with 12 models
 - Web Viewer with REST API and NL Search
 - Business Justification with LLM inference and clarification
+- Business Layer Classification with Domain/Infrastructure categorization
+- Change Ledger with append-only event logging and queries
+- Adaptive Indexer with query observation and semantic correlation
 - Performance benchmarks pass (100 parses <5s, 50 queries <2s)
 
 ---
@@ -925,4 +954,4 @@ See [Extension Points](#extension-points) section for details on extending Code-
 
 ---
 
-*Last Updated: January 2, 2026*
+*Last Updated: January 3, 2026*

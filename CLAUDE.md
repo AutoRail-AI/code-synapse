@@ -105,6 +105,7 @@ src/
 │   ├── interfaces/         # Core interface definitions
 │   ├── embeddings/         # HuggingFace transformers
 │   ├── llm/                # node-llama-cpp inference
+│   │   └── interfaces/     # ILLMService interface
 │   ├── justification/      # Business justification layer (V13)
 │   │   ├── models/         # Justification data models
 │   │   ├── interfaces/     # IJustificationService interface
@@ -113,6 +114,19 @@ src/
 │   │   ├── storage/        # CozoDB justification operations
 │   │   ├── clarification/  # Question generation engine
 │   │   └── impl/           # LLMJustificationService
+│   ├── classification/     # Business layer classification (V14)
+│   │   ├── models/         # Domain/Infrastructure classification models
+│   │   ├── interfaces/     # IClassificationEngine, IClassificationStorage
+│   │   ├── storage/        # CozoDB classification operations
+│   │   └── impl/           # LLMClassificationEngine
+│   ├── ledger/             # Change Ledger + Observability (V15)
+│   │   ├── models/         # LedgerEntry, event types
+│   │   ├── interfaces/     # IChangeLedger interface
+│   │   └── impl/           # CozoChangeLedger implementation
+│   ├── adaptive-indexer/   # Adaptive MCP-Driven Indexing (V16)
+│   │   ├── models/         # Query/Change observation, correlations
+│   │   ├── interfaces/     # IAdaptiveIndexer interface
+│   │   └── impl/           # AdaptiveIndexerService
 │   ├── indexer/            # Orchestrates all core modules
 │   └── telemetry/          # Tracing and metrics
 │
@@ -274,6 +288,9 @@ User                          AI Agent
 | `embeddings` | Vector embeddings | `@huggingface/transformers` |
 | `llm` | Intent inference (Business Logic Layer) | `node-llama-cpp` (12 models) |
 | `justification` | Business purpose inference (V13) | `llm` module |
+| `classification` | Domain/Infrastructure classification (V14) | `llm` module |
+| `ledger` | Change ledger + observability (V15) | `graph` module |
+| `adaptive-indexer` | MCP-driven adaptive re-indexing (V16) | `ledger`, `indexer` |
 | `indexer` | Pipeline orchestration, file watching | `chokidar` |
 | `interfaces` | Core contracts (IParser, IGraphStore) | - |
 | `telemetry` | Tracing and metrics | - |
@@ -444,17 +461,23 @@ See `docs/implementation-plan.md` for detailed implementation steps and `docs/im
 | **V11** | CLI Commands | ✅ Complete |
 | **V12** | Web Viewer & NL Search | ✅ Complete |
 | **V13** | Business Justification Layer | ✅ Complete |
+| **V14** | Business Layer Classification (Domain/Infrastructure) | ✅ Complete |
+| **V15** | Change Ledger + Observability | ✅ Complete |
+| **V16** | Adaptive MCP-Driven Indexing | ✅ Complete |
 
 ### Current Architecture
 
-- **407+ tests passing** across all modules
+- **336+ tests passing** across all modules
 - **CozoDB** with RocksDB backend for unified graph + vector storage
-- **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor, IJustificationService)
+- **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor, IJustificationService, IClassificationEngine, IChangeLedger, IAdaptiveIndexer)
 - **Incremental indexing** with file hash-based change detection
 - **File watching** with event debouncing and batching
 - **MCP Server** with stdio transport (primary) and HTTP transport (optional)
 - **Full CLI** with all commands implemented (init, index, justify, status, config, viewer, start)
 - **Business Justification** with LLM-powered inference and interactive clarification
+- **Business Layer Classification** categorizing code as Domain (business logic) or Infrastructure (platform)
+- **Change Ledger** for append-only event logging with time-travel debugging
+- **Adaptive Indexing** that observes MCP queries and triggers intelligent re-indexing
 - **Multi-language parsing** with support for 24 languages including TypeScript, JavaScript, Go, Rust, Python, Java, C/C++, C#, Kotlin, Ruby, PHP, Bash, Scala, Haskell, and data formats (JSON, YAML, TOML)
 
 ### Supported Languages

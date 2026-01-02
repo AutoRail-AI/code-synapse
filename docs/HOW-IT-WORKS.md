@@ -17,6 +17,9 @@ A comprehensive guide to understanding Code-Synapse's architecture, data flow, a
 7. [Web Viewer & NL Search](#web-viewer--nl-search)
 8. [Database Schema](#database-schema)
 9. [LLM Integration](#llm-integration)
+10. [Business Layer Classification](#business-layer-classification)
+11. [Change Ledger & Observability](#change-ledger--observability)
+12. [Adaptive MCP-Driven Indexing](#adaptive-mcp-driven-indexing)
 
 ---
 
@@ -1688,6 +1691,204 @@ code-synapse index
 # "How does this change affect other parts of the codebase?"
 # "Are there any breaking changes in this refactor?"
 ```
+
+---
+
+## Business Layer Classification
+
+Code-Synapse automatically categorizes code entities into two primary classifications:
+
+### Classification Categories
+
+| Category | Description | Examples |
+|----------|-------------|----------|
+| **Domain** | Business logic, user-facing features, product functionality | Authentication, Payments, Billing, User Management |
+| **Infrastructure** | Platform services, utilities, cross-cutting concerns | Database, Cache, Logging, HTTP clients, SDKs |
+
+### Domain Subcategories
+
+Code classified as "Domain" is further categorized:
+- `authentication` - Login, logout, session management
+- `authorization` - Permissions, roles, access control
+- `user-management` - User CRUD, profiles, preferences
+- `billing` / `payments` - Transactions, invoices, subscriptions
+- `notifications` / `messaging` - Email, SMS, push notifications
+- `reporting` / `analytics` - Dashboards, metrics, reports
+- `content-management` - CMS, file management
+- `workflow` / `scheduling` - Job queues, cron tasks
+- `api-gateway` - API routing, rate limiting
+
+### Infrastructure Subcategories
+
+Code classified as "Infrastructure" is further categorized:
+- `database` - ORM, query builders, migrations
+- `cache` - Redis, Memcached clients
+- `message-queue` - RabbitMQ, Kafka, SQS
+- `http-client` / `http-server` - REST clients, Express middleware
+- `logging` / `monitoring` / `tracing` - Observability tools
+- `security` - Encryption, hashing, token validation
+- `validation` - Schema validation, input sanitization
+- `sdk-client` - Third-party SDK wrappers (Stripe, AWS, etc.)
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/classifications` | GET | List all classifications |
+| `/api/classifications/:entityId` | GET | Get classification for entity |
+| `/api/classifications/stats` | GET | Classification statistics |
+| `/api/classifications/by-category/:category` | GET | Filter by domain/infrastructure |
+| `/api/classifications/by-area/:area` | GET | Filter by domain area |
+| `/api/classifications/by-layer/:layer` | GET | Filter by infrastructure layer |
+
+---
+
+## Change Ledger & Observability
+
+The Change Ledger is an append-only event log that tracks all meaningful system events for debugging, time-travel analysis, and observability.
+
+### Event Types
+
+| Event Category | Events | Description |
+|----------------|--------|-------------|
+| **MCP Events** | `mcp:query:received`, `mcp:query:completed` | AI agent queries |
+| **Indexing Events** | `index:scan:started`, `index:file:added` | File system changes |
+| **Classification Events** | `classify:domain:detected`, `classify:updated` | Entity classification |
+| **Justification Events** | `justify:started`, `justify:completed` | Business purpose inference |
+| **Adaptive Events** | `adaptive:query:observed`, `adaptive:reindex:triggered` | Adaptive indexing |
+| **Graph Events** | `graph:node:created`, `graph:edge:deleted` | Database changes |
+| **System Events** | `system:startup`, `system:error` | System lifecycle |
+
+### Ledger Entry Structure
+
+Each ledger entry contains:
+- **Identity**: Unique ID, timestamp, sequence number
+- **Event classification**: Event type, source
+- **Impact tracking**: Affected files, entities, domains
+- **Classification changes**: Before/after category, confidence
+- **Graph diff summary**: Nodes/edges created/updated/deleted
+- **MCP context**: Tool name, query, response time
+- **Correlation**: Links related events together
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/ledger/entries` | GET | Query ledger entries with filters |
+| `/api/ledger/entry/:id` | GET | Get specific entry |
+| `/api/ledger/aggregate` | GET | Aggregated statistics |
+| `/api/ledger/timeline` | GET | Timeline view of events |
+| `/api/ledger/entity/:entityId` | GET | Events for specific entity |
+| `/api/ledger/session/:sessionId` | GET | Events for MCP session |
+| `/api/ledger/correlation/:correlationId` | GET | Correlated events |
+
+### Query Parameters
+
+```bash
+# Filter by time range
+curl "/api/ledger/entries?startTime=2024-01-01T00:00:00Z&endTime=2024-01-02T00:00:00Z"
+
+# Filter by event types
+curl "/api/ledger/entries?eventTypes=classify:domain:detected,classify:updated"
+
+# Filter by source
+curl "/api/ledger/entries?sources=classification-engine,adaptive-indexer"
+
+# Pagination
+curl "/api/ledger/entries?limit=50&offset=100"
+```
+
+---
+
+## Adaptive MCP-Driven Indexing
+
+The Adaptive Indexer observes MCP queries and code changes to intelligently trigger re-indexing based on usage patterns.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. QUERY OBSERVATION                                             │
+│    - Records all MCP tool calls (search_code, get_function)     │
+│    - Tracks returned entities and response times                 │
+│    - Infers query intent and related domains                    │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. CHANGE OBSERVATION                                            │
+│    - Monitors file system changes (create, modify, delete)      │
+│    - Tracks AI-generated vs user-edited code                    │
+│    - Calculates change significance                              │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. SEMANTIC CORRELATION                                          │
+│    - Links queries to subsequent code changes                   │
+│    - Identifies patterns: query-then-edit, iterative refinement │
+│    - Calculates correlation strength and confidence             │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. INTELLIGENT RE-INDEXING                                       │
+│    - Prioritizes entities based on query frequency + recency    │
+│    - Triggers re-indexing with appropriate scope                │
+│    - Batches requests to avoid performance impact               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Correlation Types
+
+| Type | Description |
+|------|-------------|
+| `query-then-edit` | User queried, then edited returned results |
+| `query-then-create` | User queried, then created related code |
+| `query-then-delete` | User queried, then deleted code |
+| `iterative-refinement` | Multiple queries refining same area |
+| `exploration` | Queries exploring related areas |
+
+### Re-indexing Triggers
+
+| Reason | Priority | Scope |
+|--------|----------|-------|
+| `query-correlation` | High | Related entities |
+| `change-cascade` | High | Entity + dependents |
+| `semantic-drift` | Normal | Entity only |
+| `stale-classification` | Normal | File |
+| `dependency-update` | Low | Related entities |
+| `scheduled` | Low | Entity only |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/adaptive/queries` | GET | List observed queries |
+| `/api/adaptive/changes` | GET | List observed changes |
+| `/api/adaptive/correlations` | GET | Semantic correlations |
+| `/api/adaptive/priorities` | GET | Indexing priorities |
+| `/api/adaptive/sessions` | GET | Active sessions |
+| `/api/adaptive/sessions/:id` | GET | Specific session |
+| `/api/adaptive/reindex-requests` | GET | Pending reindex requests |
+| `/api/adaptive/config` | GET | Configuration |
+
+### Configuration Options
+
+```typescript
+interface AdaptiveIndexerConfig {
+  observeQueries: boolean;       // Enable query observation
+  observeChanges: boolean;       // Enable change observation
+  enableCorrelation: boolean;    // Enable semantic correlation
+  correlationWindowMs: number;   // Time window for correlation (default: 60s)
+  minCorrelationStrength: number; // Min strength to trigger reindex (default: 0.5)
+  reindexBatchSize: number;      // Batch size for reindexing (default: 10)
+  reindexDebounceMs: number;     // Debounce delay (default: 2s)
+  sessionTimeoutMs: number;      // Session timeout (default: 30 min)
+}
+```
+
+---
 
 ## Next Steps
 

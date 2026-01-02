@@ -20,7 +20,7 @@
  * Current schema version. Increment when making breaking changes.
  * Used by the migration system to track schema evolution.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 // =============================================================================
 // Property Type Definitions
@@ -306,6 +306,187 @@ export const SCHEMA = {
       businessGoals: { type: "JSON" }, // string[]
       updatedAt: { type: "TIMESTAMP" },
     },
+
+    // =========================================================================
+    // Classification Layer (V14) - Domain vs Infrastructure
+    // =========================================================================
+
+    /**
+     * EntityClassification - stores domain/infrastructure classification
+     */
+    EntityClassification: {
+      id: { type: "STRING", primary: true },
+      entityId: { type: "STRING", index: true },
+      entityType: { type: "STRING" }, // 'function' | 'class' | 'interface' | 'type' | 'variable' | 'module' | 'file'
+      entityName: { type: "STRING", index: true },
+      filePath: { type: "STRING", index: true },
+      category: { type: "STRING", index: true }, // 'domain' | 'infrastructure' | 'unknown'
+      // Domain metadata (JSON for flexibility)
+      domainMetadata: { type: "JSON", nullable: true },
+      // Infrastructure metadata (JSON for flexibility)
+      infrastructureMetadata: { type: "JSON", nullable: true },
+      confidence: { type: "FLOAT" },
+      classificationMethod: { type: "STRING" }, // 'llm' | 'pattern' | 'dependency' | 'heuristic' | 'user'
+      reasoning: { type: "STRING", fulltext: true },
+      indicators: { type: "JSON" }, // string[]
+      relatedEntities: { type: "JSON" }, // string[]
+      dependsOn: { type: "JSON" }, // string[]
+      usedBy: { type: "JSON" }, // string[]
+      classifiedAt: { type: "TIMESTAMP" },
+      classifiedBy: { type: "STRING" },
+      lastUpdated: { type: "TIMESTAMP", nullable: true },
+      version: { type: "INT32" },
+    },
+
+    // =========================================================================
+    // Change Ledger (V14) - Observability Layer
+    // =========================================================================
+
+    /**
+     * LedgerEntry - append-only log of system events
+     */
+    LedgerEntry: {
+      id: { type: "STRING", primary: true },
+      timestamp: { type: "TIMESTAMP", index: true },
+      sequence: { type: "INT64", index: true },
+      eventType: { type: "STRING", index: true },
+      source: { type: "STRING", index: true },
+      impactedFiles: { type: "JSON" }, // string[]
+      impactedEntities: { type: "JSON" }, // string[]
+      domainsInvolved: { type: "JSON" }, // string[]
+      infrastructureInvolved: { type: "JSON" }, // string[]
+      classificationChanges: { type: "JSON" }, // ClassificationChange[]
+      indexGraphDiffSummary: { type: "JSON", nullable: true },
+      confidenceAdjustments: { type: "JSON" }, // ConfidenceAdjustment[]
+      userInteraction: { type: "JSON", nullable: true },
+      mcpContext: { type: "JSON", nullable: true },
+      metadata: { type: "JSON" },
+      summary: { type: "STRING", fulltext: true },
+      details: { type: "STRING", nullable: true },
+      errorCode: { type: "STRING", nullable: true },
+      errorMessage: { type: "STRING", nullable: true },
+      stackTrace: { type: "STRING", nullable: true },
+      correlationId: { type: "STRING", nullable: true, index: true },
+      parentEventId: { type: "STRING", nullable: true },
+      sessionId: { type: "STRING", nullable: true, index: true },
+    },
+
+    // =========================================================================
+    // Adaptive Indexing (V14) - MCP-Driven Intelligence
+    // =========================================================================
+
+    /**
+     * AdaptiveSession - tracks coding sessions
+     */
+    AdaptiveSession: {
+      id: { type: "STRING", primary: true },
+      startedAt: { type: "TIMESTAMP" },
+      lastActivityAt: { type: "TIMESTAMP" },
+      endedAt: { type: "TIMESTAMP", nullable: true },
+      queryCount: { type: "INT32" },
+      changeCount: { type: "INT32" },
+      correlationCount: { type: "INT32" },
+      activeFiles: { type: "JSON" }, // string[]
+      activeEntities: { type: "JSON" }, // string[]
+      activeDomains: { type: "JSON" }, // string[]
+      triggeredReindexCount: { type: "INT32" },
+      entitiesReindexed: { type: "INT32" },
+    },
+
+    /**
+     * ObservedQuery - tracks MCP queries
+     */
+    ObservedQuery: {
+      id: { type: "STRING", primary: true },
+      timestamp: { type: "TIMESTAMP", index: true },
+      sessionId: { type: "STRING", index: true },
+      toolName: { type: "STRING", index: true },
+      query: { type: "STRING", fulltext: true },
+      parameters: { type: "JSON" },
+      resultCount: { type: "INT32" },
+      returnedEntityIds: { type: "JSON" }, // string[]
+      returnedFiles: { type: "JSON" }, // string[]
+      responseTimeMs: { type: "INT32" },
+      cacheHit: { type: "BOOLEAN" },
+      inferredIntent: { type: "STRING", nullable: true },
+      intentConfidence: { type: "FLOAT", nullable: true },
+      relatedDomains: { type: "JSON" }, // string[]
+    },
+
+    /**
+     * ObservedChange - tracks code changes
+     */
+    ObservedChange: {
+      id: { type: "STRING", primary: true },
+      timestamp: { type: "TIMESTAMP", index: true },
+      sessionId: { type: "STRING", nullable: true, index: true },
+      changeType: { type: "STRING" }, // 'created' | 'modified' | 'deleted' | 'renamed' | 'moved'
+      filePath: { type: "STRING", index: true },
+      previousFilePath: { type: "STRING", nullable: true },
+      entitiesAdded: { type: "JSON" }, // string[]
+      entitiesModified: { type: "JSON" }, // string[]
+      entitiesDeleted: { type: "JSON" }, // string[]
+      linesAdded: { type: "INT32" },
+      linesDeleted: { type: "INT32" },
+      significanceScore: { type: "FLOAT" },
+      source: { type: "STRING" }, // 'filesystem' | 'ai-generated' | 'user-edit' | 'refactor'
+      aiGeneratedBy: { type: "STRING", nullable: true },
+      triggeredByQueryId: { type: "STRING", nullable: true },
+      relatedQueryIds: { type: "JSON" }, // string[]
+    },
+
+    /**
+     * SemanticCorrelation - links queries to resulting changes
+     */
+    SemanticCorrelation: {
+      id: { type: "STRING", primary: true },
+      timestamp: { type: "TIMESTAMP", index: true },
+      queryId: { type: "STRING", index: true },
+      changeIds: { type: "JSON" }, // string[]
+      correlationType: { type: "STRING" }, // 'query-then-edit' | 'query-then-create' | etc.
+      correlationStrength: { type: "FLOAT" },
+      confidence: { type: "FLOAT" },
+      sharedConcepts: { type: "JSON" }, // string[]
+      sharedEntities: { type: "JSON" }, // string[]
+      sharedFiles: { type: "JSON" }, // string[]
+      suggestedReindexing: { type: "JSON" }, // string[]
+      priorityBoost: { type: "FLOAT" },
+    },
+
+    /**
+     * AdaptiveReindexRequest - pending reindex requests
+     */
+    AdaptiveReindexRequest: {
+      id: { type: "STRING", primary: true },
+      timestamp: { type: "TIMESTAMP", index: true },
+      sessionId: { type: "STRING", nullable: true, index: true },
+      entityIds: { type: "JSON" }, // string[]
+      filePaths: { type: "JSON" }, // string[]
+      reason: { type: "STRING" }, // 'query-correlation' | 'change-cascade' | etc.
+      triggerEventId: { type: "STRING", nullable: true },
+      priority: { type: "STRING" }, // 'immediate' | 'high' | 'normal' | 'low'
+      priorityScore: { type: "FLOAT" },
+      reindexScope: { type: "STRING" }, // 'entity-only' | 'file' | 'related' | 'cascade'
+      status: { type: "STRING", index: true }, // 'pending' | 'processing' | 'completed' | 'failed'
+      completedAt: { type: "TIMESTAMP", nullable: true },
+      error: { type: "STRING", nullable: true },
+    },
+
+    /**
+     * IndexingPriority - entity priority queue for adaptive indexing
+     */
+    IndexingPriority: {
+      entityId: { type: "STRING", primary: true },
+      filePath: { type: "STRING", index: true },
+      priorityScore: { type: "FLOAT", index: true },
+      factors: { type: "JSON" }, // PriorityFactor[]
+      lastIndexed: { type: "TIMESTAMP", nullable: true },
+      lastQueried: { type: "TIMESTAMP", nullable: true },
+      lastModified: { type: "TIMESTAMP", nullable: true },
+      queryCount: { type: "INT32" },
+      modificationCount: { type: "INT32" },
+      correlationCount: { type: "INT32" },
+    },
   },
 
   relationships: {
@@ -458,6 +639,92 @@ export const SCHEMA = {
     HAS_CLARIFICATION: {
       from: ["Justification"],
       to: ["ClarificationQuestion"],
+      properties: {},
+    },
+
+    // =========================================================================
+    // Classification Relationships (V14)
+    // =========================================================================
+
+    /**
+     * HAS_CLASSIFICATION - Entity has a domain/infrastructure classification
+     */
+    HAS_CLASSIFICATION: {
+      from: ["File", "Function", "Class", "Interface", "TypeAlias", "Variable", "Module"],
+      to: ["EntityClassification"],
+      properties: {},
+    },
+
+    /**
+     * CLASSIFICATION_DEPENDS_ON - Classification depends on another entity
+     */
+    CLASSIFICATION_DEPENDS_ON: {
+      from: ["EntityClassification"],
+      to: ["EntityClassification"],
+      properties: {
+        dependencyType: { type: "STRING" }, // 'imports' | 'calls' | 'extends' | 'uses'
+      },
+    },
+
+    // =========================================================================
+    // Adaptive Indexing Relationships (V14)
+    // =========================================================================
+
+    /**
+     * QUERY_RETURNED - Query returned an entity
+     */
+    QUERY_RETURNED: {
+      from: ["ObservedQuery"],
+      to: ["Function", "Class", "Interface", "File"],
+      properties: {
+        rank: { type: "INT32" },
+      },
+    },
+
+    /**
+     * CHANGE_AFFECTED - Change affected an entity
+     */
+    CHANGE_AFFECTED: {
+      from: ["ObservedChange"],
+      to: ["Function", "Class", "Interface", "File"],
+      properties: {
+        changeType: { type: "STRING" }, // 'added' | 'modified' | 'deleted'
+      },
+    },
+
+    /**
+     * CORRELATION_QUERY - Correlation links to query
+     */
+    CORRELATION_QUERY: {
+      from: ["SemanticCorrelation"],
+      to: ["ObservedQuery"],
+      properties: {},
+    },
+
+    /**
+     * CORRELATION_CHANGE - Correlation links to change
+     */
+    CORRELATION_CHANGE: {
+      from: ["SemanticCorrelation"],
+      to: ["ObservedChange"],
+      properties: {},
+    },
+
+    /**
+     * SESSION_QUERY - Session contains query
+     */
+    SESSION_QUERY: {
+      from: ["AdaptiveSession"],
+      to: ["ObservedQuery"],
+      properties: {},
+    },
+
+    /**
+     * SESSION_CHANGE - Session contains change
+     */
+    SESSION_CHANGE: {
+      from: ["AdaptiveSession"],
+      to: ["ObservedChange"],
       properties: {},
     },
   },
