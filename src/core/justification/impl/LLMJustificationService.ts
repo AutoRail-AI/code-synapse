@@ -10,12 +10,11 @@
 
 import { createLogger } from "../../../utils/logger.js";
 import type { IGraphStore } from "../../interfaces/IGraphStore.js";
-import type { LLMService, InferenceOptions } from "../../llm/llm-service.js";
+import type { LLMService } from "../../llm/llm-service.js";
 import type {
   IJustificationService,
   JustifyOptions,
   JustificationResult,
-  JustificationProgress,
   JustificationHierarchy,
   SearchOptions,
   UserJustificationInput,
@@ -53,7 +52,6 @@ import {
   generateJustificationPrompt,
   parseJustificationResponse,
   createDefaultResponse,
-  generateAggregationPrompt,
 } from "../prompts/justification-prompts.js";
 
 const logger = createLogger("justification-service");
@@ -767,7 +765,7 @@ export class LLMJustificationService implements IJustificationService {
   // ===========================================================================
 
   async getNextClarificationBatch(
-    maxQuestions?: number
+    _maxQuestions?: number
   ): Promise<ClarificationBatch> {
     return this.clarificationEngine.getNextBatch();
   }

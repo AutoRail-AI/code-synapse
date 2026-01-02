@@ -318,6 +318,7 @@ src/
 | **V10: LLM Integration** | Business logic | Model registry, GBNF grammars, inference |
 | **V11: CLI Commands** | User interface | Full command implementations |
 | **V12: Web Viewer** | Visual dashboard | REST API, NL Search, statistics |
+| **V13: Justification** | Business purpose inference | LLM prompts, context propagation, clarification |
 
 ### Interface Contracts
 
@@ -331,6 +332,7 @@ The codebase uses explicit interface contracts for testability and modularity:
 | **ISemanticAnalyzer** | Type resolution abstraction |
 | **IExtractor** | Entity extraction abstraction |
 | **IGraphViewer** | Read-only graph exploration and statistics |
+| **IJustificationService** | Business justification inference and storage |
 
 ---
 
@@ -339,13 +341,13 @@ The codebase uses explicit interface contracts for testability and modularity:
 ### Indexing Pipeline
 
 ```
-┌────────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
-│   SCAN     │──►│  PARSE   │──►│ EXTRACT  │──►│  WRITE   │──►│ COMPLETE │
-│            │   │          │   │          │   │          │   │          │
-│ fast-glob  │   │tree-sitter│  │ pipeline │   │  CozoDB  │   │  stats   │
-│ project    │   │   UCE    │   │ entities │   │  batch   │   │ report   │
-│ detection  │   │ transform │   │ relations│   │ atomic   │   │          │
-└────────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘
+┌────────────┐   ┌────────────┐   ┌────────────┐   ┌────────────┐   ┌────────────┐   ┌────────────┐
+│   SCAN     │──►│   PARSE    │──►│  EXTRACT   │──►│  JUSTIFY   │──►│   WRITE    │──►│  COMPLETE  │
+│            │   │            │   │            │   │            │   │            │   │            │
+│ fast-glob  │   │tree-sitter │   │  pipeline  │   │ Local LLM  │   │   CozoDB   │   │   stats    │
+│  project   │   │    UCE     │   │  entities  │   │  business  │   │   batch    │   │   report   │
+│ detection  │   │ transform  │   │ relations  │   │  purpose   │   │   atomic   │   │            │
+└────────────┘   └────────────┘   └────────────┘   └────────────┘   └────────────┘   └────────────┘
 ```
 
 **Phase Details:**
@@ -353,7 +355,8 @@ The codebase uses explicit interface contracts for testability and modularity:
 1. **Scanning**: ProjectDetector analyzes package.json/tsconfig.json, FileScanner uses fast-glob to find source files
 2. **Parsing**: TypeScriptParser loads tree-sitter WASM, walks AST to extract functions, classes, interfaces
 3. **Extraction**: EntityPipeline creates unique IDs, extracts relationships (CONTAINS, CALLS, IMPORTS, etc.)
-4. **Writing**: GraphWriter batches entities into CozoDB transactions atomically
+4. **Justification**: Local LLM infers business purpose, feature context, and value for each entity
+5. **Writing**: GraphWriter batches entities and justifications into CozoDB transactions atomically
 
 ### Query Flow (Hybrid Search)
 
@@ -638,6 +641,7 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 | V10 | LLM Integration | ✅ Complete |
 | V11 | CLI Commands | ✅ Complete |
 | V12 | Web Viewer & NL Search | ✅ Complete |
+| V13 | Business Justification Layer | ✅ Complete |
 
 ---
 
@@ -645,13 +649,13 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 
 ### Test Summary
 
-- **Total Tests**: 377+ passing
-- **Test Files**: 12
+- **Total Tests**: 407+ passing
+- **Test Files**: 16
 - **Skipped**: 6 (MCP transport tests, tested manually)
 
 ### Key Verifications
 
-- CLI commands execute without errors (init, index, status, config, start, viewer)
+- CLI commands execute without errors (init, index, justify, status, config, start, viewer)
 - File scanner discovers project files correctly
 - Parser extracts functions, classes, imports for 24 languages
 - Graph database CRUD operations work
@@ -660,6 +664,7 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 - MCP tools respond correctly
 - LLM model registry functional with 12 models
 - Web Viewer with REST API and NL Search
+- Business Justification with LLM inference and clarification
 - Performance benchmarks pass (100 parses <5s, 50 queries <2s)
 
 ---

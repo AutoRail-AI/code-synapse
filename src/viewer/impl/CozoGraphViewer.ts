@@ -33,6 +33,9 @@ import type {
   IndexHealth,
   ListOptions,
   EntityType,
+  JustificationStats,
+  JustificationInfo,
+  FeatureAreaSummary,
 } from "../interfaces/IGraphViewer.js";
 import type { NLSearchResponse, NLSearchConfig } from "../nl-search/types.js";
 import { createNLSearchService, type NaturalLanguageSearchService } from "../nl-search/nl-search-service.js";
@@ -91,11 +94,12 @@ export class CozoGraphViewer implements IGraphViewer {
   // ===========================================================================
 
   async getOverviewStats(): Promise<OverviewStats> {
-    const [entities, relationships, languages, embeddings] = await Promise.all([
+    const [entities, relationships, languages, embeddings, justificationStats] = await Promise.all([
       this.getEntityCounts(),
       this.getRelationshipCounts(),
       this.getLanguageDistribution(),
       this.getEmbeddingCount(),
+      this.getJustificationStats(),
     ]);
 
     const totalRelationships =
@@ -121,6 +125,8 @@ export class CozoGraphViewer implements IGraphViewer {
       embeddingCoverage: entities.functions > 0 ? embeddings / entities.functions : 0,
       totalSizeBytes: totalSize,
       languages: languages.map((l) => l.language),
+      justificationCoverage: justificationStats.coveragePercentage,
+      justifiedEntities: justificationStats.justifiedEntities,
     };
   }
 
@@ -1124,7 +1130,7 @@ export class CozoGraphViewer implements IGraphViewer {
 
   async searchNatural(
     query: string,
-    options?: {
+    _options?: {
       entityType?: EntityType;
       limit?: number;
       useEmbeddings?: boolean;
@@ -1425,6 +1431,318 @@ export class CozoGraphViewer implements IGraphViewer {
       },
       issues,
       lastChecked: new Date(),
+    };
+  }
+
+  // ===========================================================================
+  // Business Justifications
+  // ===========================================================================
+
+  async getJustificationStats(): Promise<JustificationStats> {
+    type CountRow = Record<string, number>;
+
+    try {
+      // Total justifications
+      const totalResult = await this.store.query<CountRow>(
+        `?[count(id)] := *Justification{id}`
+      );
+
+      // By confidence level
+      const highResult = await this.store.query<CountRow>(
+        `?[count(id)] := *Justification{id, confidenceScore}, confidenceScore >= 0.8`
+      );
+
+      const mediumResult = await this.store.query<CountRow>(
+        `?[count(id)] := *Justification{id, confidenceScore}, confidenceScore >= 0.5, confidenceScore < 0.8`
+      );
+
+      const lowResult = await this.store.query<CountRow>(
+        `?[count(id)] := *Justification{id, confidenceScore}, confidenceScore < 0.5`
+      );
+
+      const pendingResult = await this.store.query<CountRow>(
+        `?[count(id)] := *Justification{id, clarificationPending}, clarificationPending = true`
+      );
+
+      const confirmedResult = await this.store.query<CountRow>(
+        `?[count(id)] := *Justification{id, lastConfirmedByUser}, lastConfirmedByUser != null`
+      );
+
+      // Total justifiable entities
+      const entityCountResult = await this.store.query<CountRow>(`
+        functions[count(id)] := *function{id}
+        classes[count(id)] := *class{id}
+        interfaces[count(id)] := *interface{id}
+        files[count(id)] := *file{id}
+        ?[sum(c)] := functions[c]; classes[c]; interfaces[c]; files[c]
+      `);
+
+      const getCount = (row?: CountRow): number => {
+        if (!row) return 0;
+        const values = Object.values(row);
+        return typeof values[0] === "number" ? values[0] : 0;
+      };
+
+      const totalJustifications = getCount(totalResult.rows[0]);
+      const totalEntities = getCount(entityCountResult.rows[0]);
+
+      return {
+        totalEntities,
+        justifiedEntities: totalJustifications,
+        highConfidence: getCount(highResult.rows[0]),
+        mediumConfidence: getCount(mediumResult.rows[0]),
+        lowConfidence: getCount(lowResult.rows[0]),
+        pendingClarification: getCount(pendingResult.rows[0]),
+        userConfirmed: getCount(confirmedResult.rows[0]),
+        coveragePercentage: totalEntities > 0 ? (totalJustifications / totalEntities) * 100 : 0,
+      };
+    } catch {
+      return {
+        totalEntities: 0,
+        justifiedEntities: 0,
+        highConfidence: 0,
+        mediumConfidence: 0,
+        lowConfidence: 0,
+        pendingClarification: 0,
+        userConfirmed: 0,
+        coveragePercentage: 0,
+      };
+    }
+  }
+
+  async getJustification(entityId: string): Promise<JustificationInfo | null> {
+    try {
+      const result = await this.store.query<{
+        id: string;
+        entityId: string;
+        entityType: string;
+        name: string;
+        filePath: string;
+        purposeSummary: string;
+        businessValue: string;
+        featureContext: string;
+        detailedDescription: string | null;
+        tags: string;
+        inferredFrom: string;
+        confidenceScore: number;
+        confidenceLevel: string;
+        clarificationPending: boolean;
+        createdAt: number;
+        updatedAt: number;
+      }>(
+        `?[id, entityId, entityType, name, filePath, purposeSummary, businessValue,
+          featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
+          confidenceLevel, clarificationPending, createdAt, updatedAt] :=
+          *Justification{id, entityId, entityType, name, filePath, purposeSummary, businessValue,
+            featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
+            confidenceLevel, clarificationPending, createdAt, updatedAt},
+          entityId = $entityId`,
+        { entityId }
+      );
+
+      if (result.rows.length === 0) return null;
+
+      const row = result.rows[0]!;
+      return this.rowToJustificationInfo(row);
+    } catch {
+      return null;
+    }
+  }
+
+  async listJustifications(options?: ListOptions): Promise<JustificationInfo[]> {
+    const limit = options?.limit ?? 100;
+    const offset = options?.offset ?? 0;
+    const orderBy = options?.orderBy ?? "name";
+    const orderDir = options?.orderDirection === "desc" ? "-" : "";
+
+    try {
+      const result = await this.store.query<{
+        id: string;
+        entityId: string;
+        entityType: string;
+        name: string;
+        filePath: string;
+        purposeSummary: string;
+        businessValue: string;
+        featureContext: string;
+        detailedDescription: string | null;
+        tags: string;
+        inferredFrom: string;
+        confidenceScore: number;
+        confidenceLevel: string;
+        clarificationPending: boolean;
+        createdAt: number;
+        updatedAt: number;
+      }>(
+        `?[id, entityId, entityType, name, filePath, purposeSummary, businessValue,
+          featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
+          confidenceLevel, clarificationPending, createdAt, updatedAt] :=
+          *Justification{id, entityId, entityType, name, filePath, purposeSummary, businessValue,
+            featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
+            confidenceLevel, clarificationPending, createdAt, updatedAt}
+        :order ${orderDir}${orderBy}
+        :limit ${limit}
+        :offset ${offset}`
+      );
+
+      return result.rows.map((row) => this.rowToJustificationInfo(row));
+    } catch {
+      return [];
+    }
+  }
+
+  async searchJustifications(query: string, limit: number = 50): Promise<JustificationInfo[]> {
+    try {
+      const result = await this.store.query<{
+        id: string;
+        entityId: string;
+        entityType: string;
+        name: string;
+        filePath: string;
+        purposeSummary: string;
+        businessValue: string;
+        featureContext: string;
+        detailedDescription: string | null;
+        tags: string;
+        inferredFrom: string;
+        confidenceScore: number;
+        confidenceLevel: string;
+        clarificationPending: boolean;
+        createdAt: number;
+        updatedAt: number;
+      }>(
+        `?[id, entityId, entityType, name, filePath, purposeSummary, businessValue,
+          featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
+          confidenceLevel, clarificationPending, createdAt, updatedAt] :=
+          *Justification{id, entityId, entityType, name, filePath, purposeSummary, businessValue,
+            featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
+            confidenceLevel, clarificationPending, createdAt, updatedAt},
+          or(
+            str_includes(lowercase(purposeSummary), lowercase($query)),
+            str_includes(lowercase(businessValue), lowercase($query)),
+            str_includes(lowercase(featureContext), lowercase($query)),
+            str_includes(lowercase(name), lowercase($query))
+          )
+        :limit $limit`,
+        { query, limit }
+      );
+
+      return result.rows.map((row) => this.rowToJustificationInfo(row));
+    } catch {
+      return [];
+    }
+  }
+
+  async getFeatureAreas(): Promise<FeatureAreaSummary[]> {
+    try {
+      // Group justifications by featureContext
+      const result = await this.store.query<{
+        featureContext: string;
+        "count(id)": number;
+      }>(
+        `?[featureContext, count(id)] :=
+          *Justification{id, featureContext},
+          featureContext != ""
+        :order -count(id)`
+      );
+
+      // For each feature area, calculate average confidence and collect tags
+      const features: FeatureAreaSummary[] = [];
+      for (const row of result.rows) {
+        const featureArea = row.featureContext;
+        const entityCount = row["count(id)"] ?? 0;
+
+        // Get average confidence for this feature
+        const confidenceResult = await this.store.query<{ confidenceScore: number }>(
+          `?[confidenceScore] := *Justification{confidenceScore, featureContext}, featureContext = $featureArea`,
+          { featureArea }
+        );
+
+        const scores = confidenceResult.rows.map((r) => r.confidenceScore);
+        const avgConfidence = scores.length > 0
+          ? scores.reduce((a, b) => a + b, 0) / scores.length
+          : 0;
+
+        // Get unique tags for this feature
+        const tagsResult = await this.store.query<{ tags: string }>(
+          `?[tags] := *Justification{tags, featureContext}, featureContext = $featureArea`,
+          { featureArea }
+        );
+
+        const allTags = new Set<string>();
+        for (const tagRow of tagsResult.rows) {
+          try {
+            const parsed = JSON.parse(tagRow.tags);
+            if (Array.isArray(parsed)) {
+              parsed.forEach((t: string) => allTags.add(t));
+            }
+          } catch {
+            // Ignore invalid JSON
+          }
+        }
+
+        features.push({
+          featureArea,
+          entityCount,
+          avgConfidence,
+          tags: Array.from(allTags).slice(0, 10), // Limit tags
+        });
+      }
+
+      return features;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Convert database row to JustificationInfo
+   */
+  private rowToJustificationInfo(row: {
+    id: string;
+    entityId: string;
+    entityType: string;
+    name: string;
+    filePath: string;
+    purposeSummary: string;
+    businessValue: string;
+    featureContext: string;
+    detailedDescription: string | null;
+    tags: string;
+    inferredFrom: string;
+    confidenceScore: number;
+    confidenceLevel: string;
+    clarificationPending: boolean;
+    createdAt: number;
+    updatedAt: number;
+  }): JustificationInfo {
+    let parsedTags: string[] = [];
+    try {
+      const parsed = JSON.parse(row.tags);
+      if (Array.isArray(parsed)) {
+        parsedTags = parsed;
+      }
+    } catch {
+      // Ignore invalid JSON
+    }
+
+    return {
+      id: row.id,
+      entityId: row.entityId,
+      entityType: row.entityType,
+      name: row.name,
+      filePath: row.filePath,
+      purposeSummary: row.purposeSummary,
+      businessValue: row.businessValue,
+      featureContext: row.featureContext,
+      detailedDescription: row.detailedDescription ?? "",
+      tags: parsedTags,
+      inferredFrom: row.inferredFrom,
+      confidenceScore: row.confidenceScore,
+      confidenceLevel: row.confidenceLevel,
+      clarificationPending: row.clarificationPending,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
     };
   }
 }

@@ -36,11 +36,11 @@ Code-Synapse is a **local knowledge engine** that transforms your codebase into 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              CODE-SYNAPSE CLI                                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │   default   │  │    init     │  │    index    │  │   status    │        │
+│  │   default   │  │    init     │  │    index    │  │   justify   │        │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                         │
-│  │   config    │  │    start    │  │   viewer    │                         │
-│  └─────────────┘  └─────────────┘  └─────────────┘                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │   status    │  │   config    │  │    start    │  │   viewer    │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
 │                              │                                               │
 │                              ▼                                               │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
@@ -91,9 +91,10 @@ src/
 ├── cli/                    # User-facing CLI (commander.js)
 │   ├── index.ts            # Entry point, signal handlers, default command
 │   └── commands/
-│       ├── default.ts      # Default command (init + index + start + viewer)
+│       ├── default.ts      # Default command (init + index + justify + start + viewer)
 │       ├── init.ts         # Initialize project
 │       ├── index.ts        # Trigger indexing
+│       ├── justify.ts      # Generate business justifications
 │       ├── status.ts       # Show project status
 │       ├── config.ts       # Model configuration
 │       ├── start.ts        # Start MCP server
@@ -139,10 +140,19 @@ src/
 │   ├── embeddings/         # Vector embeddings (ONNX)
 │   │   └── embedding-service.ts
 │   │
-│   └── llm/                # Local LLM inference
-│       ├── llm-service.ts  # llama.cpp wrapper
-│       ├── models.ts       # Model registry (12 models)
-│       └── business-logic-inferrer.ts
+│   ├── llm/                # Local LLM inference
+│   │   ├── llm-service.ts  # llama.cpp wrapper
+│   │   ├── models.ts       # Model registry (12 models)
+│   │   └── business-logic-inferrer.ts
+│   │
+│   └── justification/      # Business justification layer
+│       ├── models.ts       # Justification data models
+│       ├── interfaces.ts   # IJustificationService
+│       ├── prompts.ts      # LLM prompt templates
+│       ├── context-propagator.ts  # Hierarchy context propagation
+│       ├── storage.ts      # Database operations
+│       ├── clarification-engine.ts  # Interactive clarification
+│       └── llm-justification-service.ts  # Main service implementation
 │
 ├── types/                  # TypeScript type definitions
 │   └── index.ts
@@ -164,7 +174,8 @@ src/
 | **Indexer** | Pipeline orchestration | Custom coordinator |
 | **Extraction** | Entity & relationship extraction | Custom pipeline |
 | **Embeddings** | Vector generation | @huggingface/transformers |
-| **LLM** | Business logic inference | node-llama-cpp |
+| **LLM** | Local model inference | node-llama-cpp |
+| **Justification** | Business purpose inference | LLM prompts, context propagation |
 
 ---
 
@@ -218,14 +229,28 @@ src/
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ PHASE 4: WRITING                                                          │
+│ PHASE 4: JUSTIFICATION                                                    │
+│ ─────────────────────                                                     │
+│ Input: Extracted entities                                                 │
+│ Process:                                                                  │
+│   1. JustificationService loads local LLM (Qwen 2.5 Coder)               │
+│   2. For each entity, extracts context (signature, JSDoc, parent)        │
+│   3. Generates prompt and infers business purpose                        │
+│   4. Propagates context through hierarchy (file → class → method)        │
+│ Output: Justification { purpose, featureArea, businessValue, confidence }│
+└──────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ PHASE 5: WRITING                                                          │
 │ ─────────────────                                                         │
-│ Input: ExtractionResult                                                   │
+│ Input: ExtractionResult + Justifications                                  │
 │ Process:                                                                  │
 │   1. GraphWriter batches entities into CozoDB transactions               │
 │   2. Inserts nodes: file, function, class, interface, variable           │
 │   3. Inserts edges: contains, calls, imports, extends, implements        │
-│   4. Updates vector index for semantic search                            │
+│   4. Stores justifications linked to entities                            │
+│   5. Updates vector index for semantic search                            │
 │ Output: WriteResult { entitiesWritten, relationshipsWritten }            │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -841,14 +866,18 @@ Options:
   -d, --debug             Enable debug logging
   --skip-index            Skip indexing step (if already indexed)
   --skip-viewer           Skip starting the Web Viewer
+  --skip-justify          Skip business justification step
+  --justify-only          Run only justification (skip indexing)
+  -m, --model <preset>    LLM model preset (fastest|minimal|balanced|quality|maximum)
 ```
 
 **What it does automatically:**
 1. **Checks initialization** - Runs `init` if project not initialized
 2. **Indexes codebase** - Runs `index` to build the knowledge graph
-3. **Finds available ports** - Scans ports 3100-3300 for MCP and Viewer
-4. **Starts Web Viewer** - Launches the visual dashboard with NL Search API
-5. **Starts MCP server** - Launches server on available port for AI agent communication
+3. **Runs justification** - Infers business purpose for code entities using local LLM
+4. **Finds available ports** - Scans ports 3100-3300 for MCP and Viewer
+5. **Starts Web Viewer** - Launches the visual dashboard with NL Search API
+6. **Starts MCP server** - Launches server on available port for AI agent communication
 
 **Port Selection Behavior:**
 - MCP server: Scans ports 3100-3200 for availability
@@ -858,7 +887,7 @@ Options:
 
 **Example:**
 ```bash
-# Simple - auto-initialize, index, start viewer and MCP server
+# Simple - auto-initialize, index, justify, start viewer and MCP server
 code-synapse
 
 # With specific ports
@@ -870,6 +899,15 @@ code-synapse --skip-index
 # Skip the web viewer (MCP server only)
 code-synapse --skip-viewer
 
+# Skip justification (faster startup)
+code-synapse --skip-justify
+
+# Run only justification on already-indexed codebase
+code-synapse --justify-only
+
+# Use a specific model for justification
+code-synapse --model quality
+
 # Debug mode
 code-synapse --debug
 ```
@@ -880,6 +918,8 @@ Checking project status...
 ✔ Project already initialized
 Indexing project...
 ✔ Project indexed
+Running business justification...
+✔ Business justification complete
 Finding available MCP port (3100-3200)...
 ✔ Found available MCP port: 3100
 Finding available Viewer port...
@@ -1087,6 +1127,122 @@ Options:
 3. Starts MCP server on stdio (or HTTP if port specified)
 4. Registers tools and resources
 5. Waits for AI agent connections
+
+### `code-synapse justify`
+
+Generates business justifications for code entities using a local LLM.
+
+```bash
+code-synapse justify [options]
+
+Options:
+  -f, --force           Force re-justification of all entities
+  -i, --interactive     Interactive mode for clarification
+  --skip-llm            Skip LLM inference, use code analysis only
+  -m, --model <preset>  LLM model preset (fastest|minimal|balanced|quality|maximum)
+  --file <path>         Justify a specific file only
+  --stats               Show justification statistics only
+```
+
+**What it does:**
+1. Loads indexed code entities from the graph database
+2. Processes each entity through the justification pipeline:
+   - Extracts code context (signature, JSDoc, parent class/file)
+   - Generates LLM prompt with context
+   - Infers business purpose and feature area
+   - Calculates confidence scores
+3. Stores justifications in the database
+
+**How Business Justification Works:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 1: CONTEXT EXTRACTION                                                   │
+│ ─────────────────────────                                                   │
+│ For each function/class, gather:                                            │
+│   • Function name and signature                                             │
+│   • JSDoc comments                                                          │
+│   • Parent class/file name                                                  │
+│   • Async/exported flags                                                    │
+│   • Location (file, line numbers)                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 2: PROMPT GENERATION                                                    │
+│ ─────────────────────────                                                   │
+│ Build structured prompt:                                                    │
+│   "You are analyzing code for business purpose..."                          │
+│   - Code signature                                                          │
+│   - Parent context (if any)                                                 │
+│   - Questions: What is this code's purpose? What feature area?              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 3: LLM INFERENCE                                                        │
+│ ─────────────────────────                                                   │
+│ Local LLM (Qwen 2.5 Coder) analyzes and returns:                           │
+│   {                                                                         │
+│     "purpose": "Validates user authentication tokens",                      │
+│     "featureArea": "Authentication",                                        │
+│     "businessValue": "Security - prevents unauthorized access",             │
+│     "confidence": 0.85                                                      │
+│   }                                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 4: CONTEXT PROPAGATION                                                  │
+│ ─────────────────────────                                                   │
+│ Propagate context through hierarchy:                                        │
+│   File → Class → Method                                                     │
+│   - Methods inherit class context                                           │
+│   - Classes inherit file/module context                                     │
+│   - Confidence weighted by inheritance depth                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Example Output:**
+```
+Business Justification
+────────────────────────────────────────
+
+📊 Processing entities...
+
+  validateToken (function)
+    → Purpose: Validates JWT tokens for API authentication
+    → Feature: Authentication
+    → Value: Security - prevents unauthorized access
+    → Confidence: 85%
+
+  UserService (class)
+    → Purpose: Manages user data and operations
+    → Feature: User Management
+    → Value: Core business logic for user accounts
+    → Confidence: 92%
+
+✔ Justification complete!
+
+Results:
+  Entities processed:  145
+  Justifications:      142
+  Skipped (cached):    3
+  Avg confidence:      87%
+  Duration:            12.3s
+```
+
+**Interactive Mode:**
+
+Use `-i, --interactive` to enable clarification prompts for ambiguous code:
+
+```bash
+code-synapse justify --interactive
+```
+
+The system may ask questions like:
+- "Is `processPayment` related to billing or refunds?"
+- "What domain does `syncData` belong to?"
 
 ---
 

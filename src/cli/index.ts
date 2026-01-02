@@ -46,6 +46,9 @@ program
   .option("-d, --debug", "Enable debug logging")
   .option("--skip-index", "Skip indexing step")
   .option("--skip-viewer", "Skip starting the Web Viewer")
+  .option("--skip-justify", "Skip business justification step")
+  .option("--justify-only", "Run only justification (skip indexing)")
+  .option("-m, --model <preset>", "LLM model preset for justification (fastest, minimal, balanced, quality, maximum)")
   .action(async (options) => {
     // Only run default command if no subcommand was provided
     // Commander.js will call this action if no subcommand matches
@@ -61,6 +64,9 @@ program
         debug: options.debug,
         skipIndex: options.skipIndex,
         skipViewer: options.skipViewer,
+        skipJustify: options.skipJustify,
+        justifyOnly: options.justifyOnly,
+        model: options.model,
       });
     }
   });
@@ -232,6 +238,8 @@ async function main(): Promise<void> {
       debug: args.includes("--debug") || args.includes("-d"),
       skipIndex: args.includes("--skip-index"),
       skipViewer: args.includes("--skip-viewer"),
+      skipJustify: args.includes("--skip-justify"),
+      justifyOnly: args.includes("--justify-only"),
     };
 
     // Extract port if provided
@@ -255,6 +263,15 @@ async function main(): Promise<void> {
         if (!isNaN(viewerPort)) {
           defaultOptions.viewerPort = viewerPort;
         }
+      }
+    }
+
+    // Extract model preset if provided
+    const modelIndex = args.findIndex(arg => arg === "-m" || arg === "--model");
+    if (modelIndex !== -1 && modelIndex + 1 < args.length) {
+      const modelArg = args[modelIndex + 1];
+      if (modelArg) {
+        defaultOptions.model = modelArg as Parameters<typeof defaultCommand>[0]["model"];
       }
     }
 

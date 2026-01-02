@@ -289,7 +289,7 @@ export class ClarificationEngine {
   /**
    * Generate suggested answers for business value question
    */
-  private generateBusinessValueSuggestions(justification: EntityJustification): string[] {
+  private generateBusinessValueSuggestions(_justification: EntityJustification): string[] {
     return [
       "Core business logic",
       "Infrastructure/plumbing",

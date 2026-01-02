@@ -40,6 +40,10 @@ export interface OverviewStats {
   totalSizeBytes: number;
   /** Languages detected in the codebase */
   languages: string[];
+  /** Business justification coverage percentage (0-100) */
+  justificationCoverage: number;
+  /** Number of entities with justifications */
+  justifiedEntities: number;
 }
 
 /**
@@ -286,6 +290,84 @@ export interface IndexHealth {
   lastChecked: Date;
 }
 
+// =============================================================================
+// Justification Types
+// =============================================================================
+
+/**
+ * Business justification statistics
+ */
+export interface JustificationStats {
+  /** Total entities that can be justified */
+  totalEntities: number;
+  /** Number of entities with justifications */
+  justifiedEntities: number;
+  /** High confidence (>= 0.8) justifications */
+  highConfidence: number;
+  /** Medium confidence (0.5-0.8) justifications */
+  mediumConfidence: number;
+  /** Low confidence (< 0.5) justifications */
+  lowConfidence: number;
+  /** Entities pending user clarification */
+  pendingClarification: number;
+  /** User-confirmed justifications */
+  userConfirmed: number;
+  /** Overall coverage percentage */
+  coveragePercentage: number;
+}
+
+/**
+ * Business justification for a code entity
+ */
+export interface JustificationInfo {
+  /** Justification ID */
+  id: string;
+  /** Entity this justifies */
+  entityId: string;
+  /** Entity type (function, class, etc.) */
+  entityType: string;
+  /** Entity name */
+  name: string;
+  /** File path */
+  filePath: string;
+  /** One-line purpose summary */
+  purposeSummary: string;
+  /** Business value explanation */
+  businessValue: string;
+  /** Feature/domain context */
+  featureContext: string;
+  /** Detailed description */
+  detailedDescription: string;
+  /** Categorization tags */
+  tags: string[];
+  /** How this was inferred */
+  inferredFrom: string;
+  /** Confidence score (0-1) */
+  confidenceScore: number;
+  /** Confidence level (high/medium/low/uncertain) */
+  confidenceLevel: string;
+  /** Whether clarification is needed */
+  clarificationPending: boolean;
+  /** When created */
+  createdAt: Date;
+  /** When last updated */
+  updatedAt: Date;
+}
+
+/**
+ * Feature area grouping of justifications
+ */
+export interface FeatureAreaSummary {
+  /** Feature area name */
+  featureArea: string;
+  /** Number of entities in this feature */
+  entityCount: number;
+  /** Average confidence for this feature */
+  avgConfidence: number;
+  /** Tags used in this feature */
+  tags: string[];
+}
+
 /**
  * Options for listing entities
  */
@@ -524,6 +606,39 @@ export interface IGraphViewer {
    * Get the health status of the index
    */
   getIndexHealth(): Promise<IndexHealth>;
+
+  // ===========================================================================
+  // Business Justifications
+  // ===========================================================================
+
+  /**
+   * Get business justification statistics
+   */
+  getJustificationStats(): Promise<JustificationStats>;
+
+  /**
+   * Get justification for a specific entity
+   * @param entityId - The entity ID
+   */
+  getJustification(entityId: string): Promise<JustificationInfo | null>;
+
+  /**
+   * List all justifications with pagination
+   * @param options - List options
+   */
+  listJustifications(options?: ListOptions): Promise<JustificationInfo[]>;
+
+  /**
+   * Search justifications by text (purpose, business value, feature)
+   * @param query - Search text
+   * @param limit - Maximum results
+   */
+  searchJustifications(query: string, limit?: number): Promise<JustificationInfo[]>;
+
+  /**
+   * Get feature area summary (grouping of justifications by feature)
+   */
+  getFeatureAreas(): Promise<FeatureAreaSummary[]>;
 
   // ===========================================================================
   // Lifecycle

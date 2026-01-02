@@ -14,7 +14,6 @@ import type {
   JustificationStats,
   ConfidenceLevel,
 } from "../models/justification.js";
-import { scoreToConfidenceLevel } from "../models/justification.js";
 
 // =============================================================================
 // Types
@@ -180,7 +179,7 @@ export class JustificationStorage {
     // Try each entity type - CozoDB will only succeed for the correct type
     const entityTypes = ["File", "Function", "Class", "Interface", "TypeAlias", "Variable", "Module"];
 
-    for (const entityType of entityTypes) {
+    for (const _entityType of entityTypes) {
       try {
         const query = `
           ?[from_id, to_id] <- [[$entityId, $justificationId]]

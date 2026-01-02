@@ -11,7 +11,6 @@ import type {
   JustificationContext,
   EntityForJustification,
   LLMJustificationResponse,
-  JustifiableEntityType,
 } from "../models/justification.js";
 
 // =============================================================================

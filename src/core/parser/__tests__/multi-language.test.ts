@@ -1217,7 +1217,7 @@ end
 # Mixin module for logging
 module Loggable
   def log(message)
-    puts "[LOG] \#{message}"
+    puts "[LOG] #{message}"
   end
 end
 
@@ -1234,7 +1234,7 @@ class UserService
 
   def create_user(name, email)
     user = User.create(name, email)
-    log("Created user: \#{user.name}")
+    log("Created user: #{user.name}")
     user
   end
 end

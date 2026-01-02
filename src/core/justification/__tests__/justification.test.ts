@@ -22,10 +22,8 @@ import {
   generateJustificationPrompt,
   JUSTIFICATION_SYSTEM_PROMPT,
 } from "../prompts/justification-prompts.js";
-import {
-  ClarificationEngine,
-  createClarificationEngine,
-} from "../clarification/clarification-engine.js";
+import { createClarificationEngine } from "../clarification/clarification-engine.js";
+import type { JustificationStorage } from "../storage/justification-storage.js";
 
 // =============================================================================
 // Data Model Tests
@@ -388,8 +386,13 @@ describe("Justification Prompts", () => {
 // =============================================================================
 
 describe("ClarificationEngine", () => {
-  // Mock storage
-  const mockStorage = {
+  // Mock storage type that exposes both the JustificationStorage interface
+  // and the vitest mock functions for testing
+  type MockedJustificationStorage = {
+    [K in keyof JustificationStorage]: ReturnType<typeof vi.fn>;
+  };
+
+  const createMockStorage = (): MockedJustificationStorage => ({
     getByEntityId: vi.fn(),
     getById: vi.fn(),
     getByEntityIds: vi.fn(),
@@ -397,6 +400,7 @@ describe("ClarificationEngine", () => {
     getPendingClarifications: vi.fn(),
     getEntitiesNeedingClarification: vi.fn(),
     storeJustification: vi.fn(),
+    storeJustifications: vi.fn(),
     storeClarificationQuestion: vi.fn(),
     answerClarificationQuestion: vi.fn(),
     getStats: vi.fn(),
@@ -405,15 +409,18 @@ describe("ClarificationEngine", () => {
     deleteByFilePath: vi.fn(),
     clearAll: vi.fn(),
     updateProjectContext: vi.fn(),
-  };
+  });
+
+  let mockStorage: MockedJustificationStorage;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStorage = createMockStorage();
   });
 
   describe("generateQuestionsForJustification", () => {
     it("should not generate questions for high confidence justifications", () => {
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
 
       const justification = createEntityJustification({
         id: "just-1",
@@ -432,7 +439,7 @@ describe("ClarificationEngine", () => {
     });
 
     it("should generate questions for low confidence justifications", () => {
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
 
       const justification = createEntityJustification({
         id: "just-1",
@@ -449,7 +456,7 @@ describe("ClarificationEngine", () => {
     });
 
     it("should generate purpose question for empty purposeSummary", () => {
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
 
       const justification = createEntityJustification({
         id: "just-1",
@@ -470,7 +477,7 @@ describe("ClarificationEngine", () => {
     });
 
     it("should prioritize questions correctly", () => {
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
 
       // File-level entity (higher priority = lower number)
       const fileJustification = createEntityJustification({
@@ -502,7 +509,7 @@ describe("ClarificationEngine", () => {
     });
 
     it("should generate suggestions based on naming patterns", () => {
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
 
       const justification = createEntityJustification({
         id: "just-1",
@@ -525,7 +532,7 @@ describe("ClarificationEngine", () => {
     it("should return empty batch when no entities need clarification", async () => {
       mockStorage.getEntitiesNeedingClarification.mockResolvedValue([]);
 
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
       const batch = await engine.getNextBatch();
 
       expect(batch.questions).toHaveLength(0);
@@ -556,7 +563,7 @@ describe("ClarificationEngine", () => {
 
       mockStorage.getEntitiesNeedingClarification.mockResolvedValue(entities);
 
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
       const batch = await engine.getNextBatch();
 
       // Questions should be sorted by priority (file first)
@@ -583,7 +590,7 @@ describe("ClarificationEngine", () => {
       mockStorage.storeJustification.mockResolvedValue(undefined);
       mockStorage.answerClarificationQuestion.mockResolvedValue(undefined);
 
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
       const answers = new Map([["just-1-purpose", "Handles user authentication"]]);
 
       await engine.applyAnswers(answers);
@@ -613,7 +620,7 @@ describe("ClarificationEngine", () => {
       mockStorage.getByEntityId.mockResolvedValue(justification);
       mockStorage.storeJustification.mockResolvedValue(undefined);
 
-      const engine = createClarificationEngine(mockStorage as any);
+      const engine = createClarificationEngine(mockStorage as unknown as JustificationStorage);
       await engine.skipEntity("func-1");
 
       expect(mockStorage.storeJustification).toHaveBeenCalled();

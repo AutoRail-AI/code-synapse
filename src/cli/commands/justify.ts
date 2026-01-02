@@ -242,7 +242,7 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
         llmService = createLLMServiceWithPreset(preset);
         await llmService.initialize();
         spinner.text = `LLM model loaded (${preset})`;
-      } catch (error) {
+      } catch {
         spinner.warn(chalk.yellow("LLM not available, using code analysis only"));
         llmService = undefined;
       }

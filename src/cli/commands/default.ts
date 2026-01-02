@@ -18,8 +18,10 @@ import { findAvailablePort, isPortAvailable } from "../../utils/port.js";
 import { initCommand } from "./init.js";
 import { indexCommand } from "./index.js";
 import { startCommand } from "./start.js";
+import { justifyCommand } from "./justify.js";
 import { createGraphStore } from "../../core/graph/index.js";
 import { createGraphViewer, startViewerServer } from "../../viewer/index.js";
+import type { ModelPreset } from "../../core/llm/index.js";
 
 const logger = createLogger("default");
 
@@ -29,6 +31,12 @@ export interface DefaultOptions {
   debug?: boolean;
   skipIndex?: boolean;
   skipViewer?: boolean;
+  /** Skip business justification step */
+  skipJustify?: boolean;
+  /** Run only business justification (skip index) */
+  justifyOnly?: boolean;
+  /** LLM model preset for justification */
+  model?: ModelPreset;
 }
 
 const PORT_RANGE_START = 3100;
@@ -96,16 +104,36 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       spinner.succeed(chalk.green("Project already initialized"));
     }
 
-    // Step 2: Run indexing (unless skipped)
-    if (!options.skipIndex) {
+    // Step 2: Run indexing (unless skipped or justify-only)
+    if (!options.skipIndex && !options.justifyOnly) {
       spinner.start("Indexing project...");
       await indexCommand({});
       spinner.succeed(chalk.green("Project indexed"));
+    } else if (options.justifyOnly) {
+      spinner.info(chalk.dim("Skipping indexing (--justify-only flag)"));
     } else {
       spinner.info(chalk.dim("Skipping indexing (--skip-index flag)"));
     }
 
-    // Step 3: Find available ports (one for MCP, one for Viewer)
+    // Step 3: Run business justification (unless skipped)
+    if (!options.skipJustify) {
+      spinner.start("Running business justification...");
+      try {
+        await justifyCommand({
+          model: options.model,
+          skipLlm: false,
+        });
+        spinner.succeed(chalk.green("Business justification complete"));
+      } catch (error) {
+        // Don't fail the entire command if justification fails
+        spinner.warn(chalk.yellow("Business justification skipped (LLM not available)"));
+        logger.warn({ err: error }, "Justification failed, continuing...");
+      }
+    } else {
+      spinner.info(chalk.dim("Skipping justification (--skip-justify flag)"));
+    }
+
+    // Step 4: Find available ports (one for MCP, one for Viewer)
     let mcpPort: number;
     let viewerPort: number;
 
@@ -170,7 +198,7 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       viewerPort = 0; // Not used
     }
 
-    // Step 4: Start the Web Viewer (if not skipped)
+    // Step 5: Start the Web Viewer (if not skipped)
     if (!options.skipViewer) {
       spinner.start("Starting Web Viewer...");
 
@@ -222,7 +250,7 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       }
     }
 
-    // Step 5: Setup cleanup handler for viewer
+    // Step 6: Setup cleanup handler for viewer
     const cleanup = async () => {
       if (viewerServer) {
         logger.info("Stopping Viewer server...");
@@ -245,7 +273,7 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
     process.once("SIGINT", handleShutdown);
     process.once("SIGTERM", handleShutdown);
 
-    // Step 6: Start the MCP server (this blocks until shutdown)
+    // Step 7: Start the MCP server (this blocks until shutdown)
     console.log();
     await startCommand({
       port: mcpPort,

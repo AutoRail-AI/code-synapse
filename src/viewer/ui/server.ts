@@ -116,6 +116,13 @@ export class ViewerServer {
     this.addRoute("GET", "/api/nl-search", this.handleNLSearch.bind(this));
     this.addRoute("GET", "/api/nl-search/patterns", this.handleNLSearchPatterns.bind(this));
 
+    // Justifications (Business Context)
+    this.addRoute("GET", "/api/stats/justifications", this.handleStatsJustifications.bind(this));
+    this.addRoute("GET", "/api/justifications", this.handleListJustifications.bind(this));
+    this.addRoute("GET", "/api/justifications/features", this.handleGetFeatureAreas.bind(this));
+    this.addRoute("GET", "/api/justifications/search", this.handleSearchJustifications.bind(this));
+    this.addRoute("GET", "/api/justifications/:entityId", this.handleGetJustification.bind(this));
+
     // Health
     this.addRoute("GET", "/api/health", this.handleHealth.bind(this));
   }
@@ -589,6 +596,80 @@ export class ViewerServer {
   ): Promise<void> {
     const health = await this.viewer.getIndexHealth();
     this.sendJSON(res, health);
+  }
+
+  // ===========================================================================
+  // API Handlers - Justifications (Business Context)
+  // ===========================================================================
+
+  private async handleStatsJustifications(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    const stats = await this.viewer.getJustificationStats();
+    this.sendJSON(res, stats);
+  }
+
+  private async handleListJustifications(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const limit = parseInt(params.query.get("limit") || "100", 10);
+    const offset = parseInt(params.query.get("offset") || "0", 10);
+    const orderBy = params.query.get("orderBy") || "name";
+    const orderDirection = params.query.get("orderDirection") as "asc" | "desc" || "asc";
+
+    const justifications = await this.viewer.listJustifications({
+      limit,
+      offset,
+      orderBy,
+      orderDirection,
+    });
+    this.sendJSON(res, justifications);
+  }
+
+  private async handleGetJustification(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const entityId = params.pathParams.entityId!;
+    const justification = await this.viewer.getJustification(entityId);
+
+    if (!justification) {
+      this.sendJSON(res, null);
+      return;
+    }
+
+    this.sendJSON(res, justification);
+  }
+
+  private async handleSearchJustifications(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const query = params.query.get("q") || "";
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+
+    if (!query) {
+      this.sendJSON(res, []);
+      return;
+    }
+
+    const results = await this.viewer.searchJustifications(query, limit);
+    this.sendJSON(res, results);
+  }
+
+  private async handleGetFeatureAreas(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    const features = await this.viewer.getFeatureAreas();
+    this.sendJSON(res, features);
   }
 
   // ===========================================================================

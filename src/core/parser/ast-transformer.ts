@@ -146,8 +146,9 @@ const INTERFACE_NODE_TYPES: Record<string, string[]> = {
 
 /**
  * Language-specific node type mappings for import extraction
+ * Note: Prefixed with underscore as currently unused but kept for reference
  */
-const IMPORT_NODE_TYPES: Record<string, string[]> = {
+const _IMPORT_NODE_TYPES: Record<string, string[]> = {
   typescript: ["import_statement"],
   javascript: ["import_statement"],
   tsx: ["import_statement"],
@@ -176,8 +177,9 @@ const IMPORT_NODE_TYPES: Record<string, string[]> = {
 
 /**
  * Language-specific node type mappings for variable extraction
+ * Note: Prefixed with underscore as currently unused but kept for reference
  */
-const VARIABLE_NODE_TYPES: Record<string, string[]> = {
+const _VARIABLE_NODE_TYPES: Record<string, string[]> = {
   typescript: ["lexical_declaration", "variable_declaration"],
   javascript: ["lexical_declaration", "variable_declaration"],
   tsx: ["lexical_declaration", "variable_declaration"],
@@ -2794,7 +2796,7 @@ export class ASTTransformer {
     const bodyNode = node.children.find((c) => c.type === "class_body");
     const methods: UCEMethod[] = [];
     const properties: UCEProperty[] = [];
-    let constructorMethod: UCEMethod | null = null;
+    const constructorMethod: UCEMethod | null = null;
 
     // Parse primary constructor parameters as properties
     const primaryConstructor = node.children.find((c) => c.type === "primary_constructor");
@@ -4109,7 +4111,7 @@ export class ASTTransformer {
     // Extract methods and properties
     const methods: UCEMethod[] = [];
     const properties: UCEProperty[] = [];
-    let constructorMethod: UCEMethod | null = null;
+    const constructorMethod: UCEMethod | null = null;
 
     const bodyNode = node.childForFieldName("body");
     if (bodyNode) {

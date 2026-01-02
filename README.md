@@ -62,10 +62,30 @@ Unlike standard tools (LSP, grep) that only see syntax, Code-Synapse builds a mu
 * **⚡ Zero-Config "Sidecar":** Runs locally on your machine. No Docker required. Just `code-synapse` to get started.
 * **🔌 Agent-First Design:** Built natively on the **Model Context Protocol (MCP)**. Works out-of-the-box with Claude Desktop, Cursor, and any MCP-compliant tool.
 * **🧠 Hybrid Intelligence:** Combines deterministic Static Analysis (Tree-sitter) for 100% accuracy with probabilistic AI Inference (Local LLM) for deep context.
+* **🎯 Business Justification:** Local LLM infers *why* code exists - its purpose, business value, and feature context.
 * **🔒 Privacy-First:** Your code never leaves your machine. We use an embedded database (**CozoDB** with RocksDB backend) and local models (**Qwen 2.5 Coder**) to keep everything offline.
 * **🔄 Incremental Indexing:** Smart file-watching ensures the graph is updated in milliseconds when you save a file.
 * **🔍 Natural Language Search:** Query your codebase in plain English - "most complex functions", "where is createParser", "what calls main".
 * **📊 Web Viewer:** Visual dashboard with REST API for exploring indexed code, statistics, and call graphs.
+
+### 🎯 How Business Justification Works
+
+Code-Synapse doesn't just index *what* your code does - it understands *why* it exists:
+
+```
+Your Code                          What Code-Synapse Understands
+─────────────────────────────────────────────────────────────────────
+function validateCreditCard()  →   Purpose: "Validates credit card numbers"
+  in src/payments/processor.ts     Business Value: "Ensures PCI compliance"
+                                   Feature: "Payment Processing"
+                                   Confidence: 85%
+```
+
+**The process:**
+1. **Analyze** - Examines code structure, naming patterns, file paths, and doc comments
+2. **Infer** - Local LLM determines purpose, business value, and feature area
+3. **Propagate** - Context flows up/down the hierarchy (file → class → method)
+4. **Clarify** - Generates questions for low-confidence entities (interactive mode)
 
 ### 🌐 Supported Languages (24 total)
 
@@ -338,10 +358,11 @@ Now ask complex, context-aware questions in your AI agent:
 ### Default Command
 
 Running `code-synapse` without any subcommand automatically:
-- Initializes the project (if not already initialized)
-- Indexes the codebase
-- Starts the Web Viewer with REST API and NL Search
-- Starts the MCP server for AI agent communication
+1. **Initializes** the project (if not already initialized)
+2. **Indexes** the codebase (SCAN → PARSE → EXTRACT → WRITE)
+3. **Justifies** code entities using local LLM (infers business purpose)
+4. **Starts Web Viewer** with REST API and NL Search
+5. **Starts MCP server** for AI agent communication
 
 ```bash
 code-synapse                      # All-in-one command
@@ -349,8 +370,24 @@ code-synapse --port 3200          # Use specific MCP port
 code-synapse --viewer-port 3201   # Use specific viewer port
 code-synapse --debug              # Enable debug logging
 code-synapse --skip-index         # Skip indexing step
+code-synapse --skip-justify       # Skip business justification
+code-synapse --justify-only       # Run only justification (skip indexing)
 code-synapse --skip-viewer        # Skip web viewer
+code-synapse -m balanced          # Set LLM model preset
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-p, --port <port>` | Port for MCP server (default: auto-detect 3100-3200) |
+| `--viewer-port <port>` | Port for Web Viewer (default: auto-detect) |
+| `-d, --debug` | Enable debug logging |
+| `--skip-index` | Skip the indexing step |
+| `--skip-justify` | Skip business justification (LLM inference) |
+| `--justify-only` | Run only justification (assumes already indexed) |
+| `-m, --model <preset>` | LLM model preset: `fastest`, `minimal`, `balanced`, `quality`, `maximum` |
+| `--skip-viewer` | Skip starting the Web Viewer |
 
 **Port Selection:**
 - MCP server: Finds available port in range 3100-3200
@@ -364,13 +401,35 @@ code-synapse --skip-viewer        # Skip web viewer
 |---------|-------------|
 | `code-synapse init` | Initialize project configuration only |
 | `code-synapse index` | Build/rebuild the knowledge graph only |
+| `code-synapse justify` | Generate business justifications for code entities |
+| `code-synapse justify --interactive` | Interactive clarification mode |
+| `code-synapse justify --stats` | Show justification statistics |
 | `code-synapse status` | Show project and index statistics |
 | `code-synapse viewer` | Start the Web Viewer only |
-| `code-synapse viewer --port 3200` | Start viewer on custom port |
 | `code-synapse config --list-models` | List available LLM models |
 | `code-synapse config --model <preset>` | Set LLM model (fastest/balanced/quality/maximum) |
 | `code-synapse start` | Start the MCP server only |
-| `code-synapse start --port 3200` | Start MCP server on custom port |
+
+### Justify Command Options
+
+The `justify` command analyzes code and infers business purpose using a local LLM:
+
+```bash
+code-synapse justify                  # Justify all code entities
+code-synapse justify --interactive    # Answer clarification questions
+code-synapse justify --stats          # View justification statistics
+code-synapse justify --file src/api.ts # Justify a specific file
+code-synapse justify --skip-llm       # Use code analysis only (no LLM)
+code-synapse justify -m quality       # Use higher quality model
+code-synapse justify --force          # Re-justify all entities
+```
+
+**What it does:**
+- Analyzes code structure (names, paths, doc comments)
+- Uses local LLM to infer: purpose, business value, feature area
+- Propagates context up/down the hierarchy (file → class → method)
+- Generates clarification questions for low-confidence entities
+- Stores justifications in the knowledge graph
 
 ---
 
@@ -455,10 +514,17 @@ graph LR
 ```
 File System → Scanner → Parser (Tree-sitter) → Semantic Analyzer (TS Compiler)
      ↓
-Entity Extraction → Graph Writer → CozoDB (RocksDB)
+Entity Extraction → Business Justification (Local LLM) → Graph Writer → CozoDB
      ↓
 Embeddings (ONNX) → Vector Index (HNSW)
 ```
+
+**Pipeline stages:**
+1. **SCAN** - Discover source files, detect project type
+2. **PARSE** - Generate AST using Tree-sitter WASM
+3. **EXTRACT** - Extract functions, classes, relationships
+4. **JUSTIFY** - Infer business purpose using local LLM
+5. **WRITE** - Persist to CozoDB graph database
 
 ---
 
@@ -477,9 +543,10 @@ Embeddings (ONNX) → Vector Index (HNSW)
 - [x] **Indexer & Watcher**: Pipeline orchestration, file watching
 - [x] **MCP Server**: AI agent communication interface (stdio transport, HTTP optional)
 - [x] **LLM Integration**: Business logic inference with local models (12 models supported)
-- [x] **CLI Commands**: Full command implementations (init, index, status, config, start, viewer)
+- [x] **CLI Commands**: Full command implementations (init, index, status, config, start, viewer, justify)
 - [x] **Web Viewer**: Visual dashboard with REST API for exploring indexed code
 - [x] **Natural Language Search**: Query codebase in plain English
+- [x] **Business Justification**: LLM-powered inference of code purpose, business value, and feature context
 
 ### Future
 

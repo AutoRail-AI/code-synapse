@@ -82,7 +82,13 @@ src/
 ├── cli/                    # CLI entry point (user-facing)
 │   ├── index.ts            # Main CLI entry (commander)
 │   └── commands/           # CLI command implementations
+│       ├── default.ts      # Default command (init + index + justify + start)
 │       ├── init.ts         # Initialize project
+│       ├── index.ts        # Trigger indexing
+│       ├── justify.ts      # Business justification command
+│       ├── status.ts       # Show status
+│       ├── config.ts       # LLM model configuration
+│       ├── viewer.ts       # Web viewer
 │       └── start.ts        # Start MCP server
 │
 ├── mcp/                    # MCP server (AI agent communication)
@@ -99,8 +105,23 @@ src/
 │   ├── interfaces/         # Core interface definitions
 │   ├── embeddings/         # HuggingFace transformers
 │   ├── llm/                # node-llama-cpp inference
+│   ├── justification/      # Business justification layer (V13)
+│   │   ├── models/         # Justification data models
+│   │   ├── interfaces/     # IJustificationService interface
+│   │   ├── prompts/        # LLM prompts with GBNF grammar
+│   │   ├── hierarchy/      # Context propagation (up/down)
+│   │   ├── storage/        # CozoDB justification operations
+│   │   ├── clarification/  # Question generation engine
+│   │   └── impl/           # LLMJustificationService
 │   ├── indexer/            # Orchestrates all core modules
 │   └── telemetry/          # Tracing and metrics
+│
+├── viewer/                 # Web viewer & NL search
+│   ├── index.ts            # Module exports
+│   ├── interfaces/         # IGraphViewer interface
+│   ├── impl/               # CozoGraphViewer implementation
+│   ├── ui/                 # HTTP server, REST API
+│   └── nl-search/          # Natural language search
 │
 ├── types/                  # Shared TypeScript types
 │   └── index.ts
@@ -252,6 +273,7 @@ User                          AI Agent
 | `graph-builder` | Atomic writes, incremental updates | - |
 | `embeddings` | Vector embeddings | `@huggingface/transformers` |
 | `llm` | Intent inference (Business Logic Layer) | `node-llama-cpp` (12 models) |
+| `justification` | Business purpose inference (V13) | `llm` module |
 | `indexer` | Pipeline orchestration, file watching | `chokidar` |
 | `interfaces` | Core contracts (IParser, IGraphStore) | - |
 | `telemetry` | Tracing and metrics | - |
@@ -303,11 +325,23 @@ getModelSelectionGuide();                       // Human-readable guide
 ## CLI Commands
 
 ```bash
+# Default command (all-in-one)
+code-synapse                # Auto: init → index → justify → viewer → start
+code-synapse --skip-justify # Skip business justification
+code-synapse --justify-only # Run only justification
+code-synapse -m balanced    # Set LLM model preset
+
+# Individual commands
 code-synapse init           # Initialize project
+code-synapse index          # Build knowledge graph
+code-synapse justify        # Generate business justifications
+code-synapse justify -i     # Interactive clarification mode
+code-synapse justify --stats # Show justification statistics
+code-synapse status         # Show project status
+code-synapse viewer         # Start web viewer
+code-synapse config --list-models  # List available LLM models
 code-synapse start          # Start MCP server
 code-synapse start -p 3100  # Start on specific port
-code-synapse index          # Manual full index
-code-synapse status         # Show status
 ```
 
 ## TypeScript Guidelines
@@ -408,16 +442,19 @@ See `docs/implementation-plan.md` for detailed implementation steps and `docs/im
 | **V9** | MCP Server Implementation | ✅ Complete |
 | **V10** | LLM Integration (12 models) | ✅ Complete |
 | **V11** | CLI Commands | ✅ Complete |
+| **V12** | Web Viewer & NL Search | ✅ Complete |
+| **V13** | Business Justification Layer | ✅ Complete |
 
 ### Current Architecture
 
-- **377+ tests passing** across all modules
+- **407+ tests passing** across all modules
 - **CozoDB** with RocksDB backend for unified graph + vector storage
-- **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor)
+- **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor, IJustificationService)
 - **Incremental indexing** with file hash-based change detection
 - **File watching** with event debouncing and batching
 - **MCP Server** with stdio transport (primary) and HTTP transport (optional)
-- **Full CLI** with all commands implemented (init, index, status, config, start)
+- **Full CLI** with all commands implemented (init, index, justify, status, config, viewer, start)
+- **Business Justification** with LLM-powered inference and interactive clarification
 - **Multi-language parsing** with support for 24 languages including TypeScript, JavaScript, Go, Rust, Python, Java, C/C++, C#, Kotlin, Ruby, PHP, Bash, Scala, Haskell, and data formats (JSON, YAML, TOML)
 
 ### Supported Languages
