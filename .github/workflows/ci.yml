@@ -21,10 +21,6 @@ jobs:
         node-version: [20, 22, 24, 25]
       fail-fast: false
 
-    env:
-      # Skip tests requiring native CozoDB bindings (not available on GitHub Actions Linux)
-      SKIP_NATIVE_TESTS: true
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,7 +58,7 @@ jobs:
         run: pnpm lint
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm test:ci
 
       - name: Build
         run: pnpm build

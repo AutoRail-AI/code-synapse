@@ -41,7 +41,8 @@
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
-    "test": "vitest"
+    "test": "vitest",
+    "test:ci": "vitest --exclude 'src/core/__tests__/*.integration.test.ts' --exclude 'src/mcp/__tests__/tools.test.ts' --exclude 'src/viewer/__tests__/viewer.integration.test.ts' --exclude 'src/core/graph-builder/__tests__/*.test.ts' --exclude 'src/core/indexer/__tests__/coordinator.test.ts' --exclude 'src/core/interfaces/__tests__/IGraphStore.contract.test.ts' --exclude 'src/core/interfaces/__tests__/integration.smoke.test.ts'"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.5.1",
