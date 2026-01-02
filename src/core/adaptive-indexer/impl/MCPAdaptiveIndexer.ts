@@ -613,7 +613,7 @@ export class MCPAdaptiveIndexer implements IAdaptiveIndexer, IMCPObserver {
       .slice(0, limit);
   }
 
-  async getColdEntities(limit = 10): Promise<ColdEntity[]> {
+  async getColdEntities(_limit = 10): Promise<ColdEntity[]> {
     // Would need to query the graph for entities not in our hot list
     return [];
   }
