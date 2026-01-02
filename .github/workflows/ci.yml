@@ -12,13 +12,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  lint-typecheck-test:
+    name: Lint, Type Check & Test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
         node-version: [20, 22, 24, 25]
       fail-fast: false
+
+    env:
+      # Skip tests requiring native CozoDB bindings (not available on GitHub Actions Linux)
+      SKIP_NATIVE_TESTS: true
 
     steps:
       - name: Checkout repository

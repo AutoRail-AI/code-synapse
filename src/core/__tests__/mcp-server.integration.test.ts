@@ -1,16 +1,20 @@
 /**
- * Checkpoint 3: MCP Server Integration Test
+ * MCP Server Integration Tests
  *
- * Goal: Verify AI agents can connect and query via MCP
- *
- * Tests:
+ * Verifies AI agents can connect and query via MCP:
  * 1. MCP Server Startup - Server creation and configuration
  * 2. MCP Tools - search_code, get_function, get_dependencies
  * 3. MCP Resources - File access, symbol listing
  * 4. End-to-End Integration - Full workflow simulation
+ *
+ * NOTE: These tests require native CozoDB bindings and are skipped in CI.
+ * Run locally with: pnpm test src/core/__tests__/mcp-server.integration.test.ts
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+
+// Skip tests in CI where native CozoDB bindings are not available
+const SKIP_NATIVE_TESTS = process.env.SKIP_NATIVE_TESTS === "true";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -51,7 +55,7 @@ function getResourceContents(result: unknown): ResourceContent[] {
   return (result as ResourceReadResult).contents;
 }
 
-describe("Checkpoint 3: MCP Server Integration", () => {
+describe.skipIf(SKIP_NATIVE_TESTS)("MCP Server Integration", () => {
   let tempDir: string;
   let db: GraphDatabase;
   let mcpServer: ReturnType<typeof createMcpServer>;

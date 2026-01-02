@@ -1,16 +1,20 @@
 /**
- * Checkpoint 2: Indexing Pipeline Integration Test
+ * Indexing Pipeline Integration Tests
  *
- * Goal: Verify complete file indexing works end-to-end
- *
- * Tests:
+ * Verifies complete file indexing works end-to-end:
  * 1. Full Project Indexing - Parse all files, write to graph
  * 2. Incremental Updates - Modify file, verify re-indexed
  * 3. File Watcher - Auto-detect changes, process batches
  * 4. Query Verification - Functions by name, call relationships, imports
+ *
+ * NOTE: These tests require native CozoDB bindings and are skipped in CI.
+ * Run locally with: pnpm test src/core/__tests__/indexing-pipeline.integration.test.ts
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+
+// Skip tests in CI where native CozoDB bindings are not available
+const SKIP_NATIVE_TESTS = process.env.SKIP_NATIVE_TESTS === "true";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -22,7 +26,7 @@ import { IndexerCoordinator, type IndexingProgressEvent } from "../indexer/coord
 import { FileWatcher, type FileChangeBatch } from "../indexer/watcher.js";
 import type { DetectedProject } from "../indexer/project-detector.js";
 
-describe("Checkpoint 2: Indexing Pipeline", () => {
+describe.skipIf(SKIP_NATIVE_TESTS)("Indexing Pipeline Integration", () => {
   let tempDir: string;
   let projectDir: string;
   let project: DetectedProject;

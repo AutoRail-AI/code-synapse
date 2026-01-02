@@ -1,14 +1,20 @@
 /**
- * Checkpoint 4: Full System Integration Tests
+ * Full System Integration Tests
  *
  * Verifies complete end-to-end functionality:
  * 1. Complete CLI - All commands with full functionality
  * 2. LLM Integration - Model registry, presets, configuration
  * 3. Performance - Indexing pipeline efficiency
  * 4. Reliability - Error handling, edge cases
+ *
+ * NOTE: These tests require native CozoDB bindings and are skipped in CI.
+ * Run locally with: pnpm test src/core/__tests__/full-system.integration.test.ts
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+
+// Skip tests in CI where native CozoDB bindings are not available
+const SKIP_NATIVE_TESTS = process.env.SKIP_NATIVE_TESTS === "true";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -340,7 +346,7 @@ export function err<E>(error: E): Result<never, E> {
 // Test Suites
 // =============================================================================
 
-describe("Checkpoint 4: Full System Integration", () => {
+describe.skipIf(SKIP_NATIVE_TESTS)("Full System Integration", () => {
   let tempDir: string;
   let projectDir: string;
   let graphDbPath: string;
