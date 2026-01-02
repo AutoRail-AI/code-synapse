@@ -35,8 +35,28 @@ pnpm test             # Run tests (vitest)
 | `node-llama-cpp` | Local LLM inference | `core/llm` |
 | `ora` | CLI spinners | `cli/` |
 | `pino` | Structured logging | All modules |
+| `tree-sitter-bash` | Bash grammar for parsing | `core/parser` |
+| `tree-sitter-c` | C grammar for parsing | `core/parser` |
+| `tree-sitter-c-sharp` | C# grammar for parsing | `core/parser` |
+| `tree-sitter-cpp` | C++ grammar for parsing | `core/parser` |
+| `tree-sitter-dart` | Dart grammar for parsing | `core/parser` |
+| `tree-sitter-elixir` | Elixir grammar for parsing | `core/parser` |
+| `tree-sitter-go` | Go grammar for parsing | `core/parser` |
+| `tree-sitter-haskell` | Haskell grammar for parsing | `core/parser` |
+| `tree-sitter-java` | Java grammar for parsing | `core/parser` |
 | `tree-sitter-javascript` | JS grammar for parsing | `core/parser` |
+| `tree-sitter-kotlin` | Kotlin grammar for parsing | `core/parser` |
+| `tree-sitter-lua` | Lua grammar for parsing | `core/parser` |
+| `tree-sitter-php` | PHP grammar for parsing | `core/parser` |
+| `tree-sitter-python` | Python grammar for parsing | `core/parser` |
+| `tree-sitter-ruby` | Ruby grammar for parsing | `core/parser` |
+| `tree-sitter-rust` | Rust grammar for parsing | `core/parser` |
+| `tree-sitter-scala` | Scala grammar for parsing | `core/parser` |
+| `tree-sitter-swift` | Swift grammar for parsing | `core/parser` |
 | `tree-sitter-typescript` | TS grammar for parsing | `core/parser` |
+| `tree-sitter-json` | JSON grammar for parsing | `core/parser` |
+| `@tree-sitter-grammars/tree-sitter-yaml` | YAML grammar for parsing | `core/parser` |
+| `@tree-sitter-grammars/tree-sitter-toml` | TOML grammar for parsing | `core/parser` |
 | `web-tree-sitter` | Code parsing (WASM) | `core/parser` |
 | `zod` | Schema validation | `types/`, `core/` |
 
@@ -391,13 +411,21 @@ See `docs/implementation-plan.md` for detailed implementation steps and `docs/im
 
 ### Current Architecture
 
-- **155+ tests passing** across all modules
+- **377+ tests passing** across all modules
 - **CozoDB** with RocksDB backend for unified graph + vector storage
 - **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor)
 - **Incremental indexing** with file hash-based change detection
 - **File watching** with event debouncing and batching
 - **MCP Server** with stdio transport (primary) and HTTP transport (optional)
 - **Full CLI** with all commands implemented (init, index, status, config, start)
+- **Multi-language parsing** with support for 24 languages including TypeScript, JavaScript, Go, Rust, Python, Java, C/C++, C#, Kotlin, Ruby, PHP, Bash, Scala, Haskell, and data formats (JSON, YAML, TOML)
+
+### Supported Languages
+
+See [README.md](README.md#-supported-languages-24-total) for the full list of 24 supported languages including:
+- **Full code analysis**: TypeScript, JavaScript, Go, Rust, Python, Java, C, C++, C#, Kotlin, Ruby, PHP, Bash, Scala, Haskell
+- **Syntax validation**: Swift, Dart, Elixir, Lua (WASM pending)
+- **Data formats**: JSON, YAML, TOML
 
 ### Next Steps (Post-Beta)
 

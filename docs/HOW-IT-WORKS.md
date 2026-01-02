@@ -14,8 +14,9 @@ A comprehensive guide to understanding Code-Synapse's architecture, data flow, a
 4. [Running from Source](#running-from-source)
 5. [CLI Commands](#cli-commands)
 6. [MCP Integration](#mcp-integration)
-7. [Database Schema](#database-schema)
-8. [LLM Integration](#llm-integration)
+7. [Web Viewer & NL Search](#web-viewer--nl-search)
+8. [Database Schema](#database-schema)
+9. [LLM Integration](#llm-integration)
 
 ---
 
@@ -37,9 +38,9 @@ Code-Synapse is a **local knowledge engine** that transforms your codebase into 
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
 │  │   default   │  │    init     │  │    index    │  │   status    │        │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
-│  ┌─────────────┐  ┌─────────────┐                                          │
-│  │   config    │  │    start    │                                          │
-│  └─────────────┘  └─────────────┘                                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                         │
+│  │   config    │  │    start    │  │   viewer    │                         │
+│  └─────────────┘  └─────────────┘  └─────────────┘                         │
 │                              │                                               │
 │                              ▼                                               │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
@@ -90,17 +91,29 @@ src/
 ├── cli/                    # User-facing CLI (commander.js)
 │   ├── index.ts            # Entry point, signal handlers, default command
 │   └── commands/
-│       ├── default.ts      # Default command (init + index + start)
+│       ├── default.ts      # Default command (init + index + start + viewer)
 │       ├── init.ts         # Initialize project
 │       ├── index.ts        # Trigger indexing
 │       ├── status.ts       # Show project status
 │       ├── config.ts       # Model configuration
-│       └── start.ts        # Start MCP server
+│       ├── start.ts        # Start MCP server
+│       └── viewer.ts       # Start Web Viewer
 │
 ├── mcp/                    # MCP Server (AI agent interface)
 │   ├── server.ts           # Server setup, tool handlers
 │   ├── tools.ts            # MCP tool definitions
 │   └── resources.ts        # MCP resource handlers
+│
+├── viewer/                 # Web Viewer & NL Search
+│   ├── index.ts            # Module exports
+│   ├── interfaces/         # IGraphViewer interface
+│   ├── impl/               # CozoGraphViewer implementation
+│   ├── ui/                 # HTTP server and REST API
+│   │   └── server.ts       # ViewerServer class
+│   └── nl-search/          # Natural Language Search
+│       ├── types.ts        # SearchIntent, NLSearchResult
+│       ├── intent-classifier.ts
+│       └── query-builder.ts
 │
 ├── core/                   # Business logic (shared by CLI & MCP)
 │   ├── parser/             # Tree-sitter AST parsing
@@ -145,6 +158,7 @@ src/
 |--------|---------------|----------|
 | **CLI** | User commands, configuration | Commander.js, Chalk, Ora |
 | **MCP** | AI agent communication | @modelcontextprotocol/sdk |
+| **Viewer** | Web dashboard, REST API, NL Search | Node HTTP |
 | **Parser** | AST generation from source | web-tree-sitter (WASM) |
 | **Graph** | Persistent storage, queries | CozoDB with RocksDB |
 | **Indexer** | Pipeline orchestration | Custom coordinator |
@@ -822,33 +836,39 @@ Running `code-synapse` without any subcommand provides an all-in-one experience:
 code-synapse [options]
 
 Options:
-  -p, --port <port>    Port to run the server on (auto-detects if not specified)
-  -d, --debug          Enable debug logging
-  --skip-index         Skip indexing step (if already indexed)
+  -p, --port <port>       Port to run the MCP server on (auto-detects if not specified)
+  --viewer-port <port>    Port to run the Web Viewer on (auto-detects if not specified)
+  -d, --debug             Enable debug logging
+  --skip-index            Skip indexing step (if already indexed)
+  --skip-viewer           Skip starting the Web Viewer
 ```
 
 **What it does automatically:**
 1. **Checks initialization** - Runs `init` if project not initialized
 2. **Indexes codebase** - Runs `index` to build the knowledge graph
-3. **Finds available port** - Scans ports 3100-3200 for availability
-4. **Starts MCP server** - Launches server on available port (or prompts for port if none available)
+3. **Finds available ports** - Scans ports 3100-3300 for MCP and Viewer
+4. **Starts Web Viewer** - Launches the visual dashboard with NL Search API
+5. **Starts MCP server** - Launches server on available port for AI agent communication
 
 **Port Selection Behavior:**
-- Scans ports 3100-3200 for availability
-- Uses first available port found
+- MCP server: Scans ports 3100-3200 for availability
+- Web Viewer: Uses next available port after MCP
 - If no port available in range, interactively prompts for a port
-- Use `--port` to specify a port directly (will check availability)
+- Use `--port` and `--viewer-port` to specify ports directly
 
 **Example:**
 ```bash
-# Simple - auto-initialize, index, and start
+# Simple - auto-initialize, index, start viewer and MCP server
 code-synapse
 
-# With specific port
-code-synapse --port 3200
+# With specific ports
+code-synapse --port 3200 --viewer-port 3201
 
 # Skip indexing (if already indexed)
 code-synapse --skip-index
+
+# Skip the web viewer (MCP server only)
+code-synapse --skip-viewer
 
 # Debug mode
 code-synapse --debug
@@ -860,10 +880,27 @@ Checking project status...
 ✔ Project already initialized
 Indexing project...
 ✔ Project indexed
-Finding available port (3100-3200)...
-✔ Found available port: 3101
+Finding available MCP port (3100-3200)...
+✔ Found available MCP port: 3100
+Finding available Viewer port...
+✔ Found available Viewer port: 3101
+
+Index Statistics:
+────────────────────────────────────────
+  Files:         92
+  Functions:     951
+  Classes:       64
+  Interfaces:    259
+  Relationships: 1474
+  Embeddings:    0%
+────────────────────────────────────────
+
+Web Viewer is running!
+  → Dashboard: http://127.0.0.1:3101
+  → NL Search: http://127.0.0.1:3101/api/nl-search?q=your+query
+
 Starting MCP server...
-✔ MCP server started on port 3101
+✔ MCP server started on port 3100
 ```
 
 ### `code-synapse init`
@@ -1104,6 +1141,121 @@ Options:
   }
 }
 ```
+
+---
+
+## Web Viewer & NL Search
+
+### Overview
+
+The Web Viewer provides a visual dashboard and REST API for exploring your indexed codebase without requiring an AI agent. It includes Natural Language Search that lets you query your code using plain English.
+
+### `code-synapse viewer`
+
+Starts the Web Viewer as a standalone server.
+
+```bash
+code-synapse viewer [options]
+
+Options:
+  -p, --port <port>   Port to run the viewer on (default: 3100)
+  -H, --host <host>   Host to bind to (default: 127.0.0.1)
+  --json              Output stats as JSON (no server)
+```
+
+**Example:**
+```bash
+# Start viewer on default port
+code-synapse viewer
+
+# Start on custom port
+code-synapse viewer --port 3200
+
+# Get stats as JSON
+code-synapse viewer --json
+```
+
+### REST API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/stats/overview` | GET | Index statistics (files, functions, etc.) |
+| `/api/stats/languages` | GET | Language distribution |
+| `/api/stats/complexity` | GET | Complexity distribution by function |
+| `/api/files` | GET | List indexed files (pagination supported) |
+| `/api/files/:id` | GET | Get file details with functions |
+| `/api/functions` | GET | List indexed functions |
+| `/api/functions/most-called` | GET | Most frequently called functions |
+| `/api/functions/most-complex` | GET | Highest complexity functions |
+| `/api/functions/:id` | GET | Get function details |
+| `/api/functions/:id/callers` | GET | Functions that call this function |
+| `/api/functions/:id/callees` | GET | Functions called by this function |
+| `/api/classes` | GET | List indexed classes |
+| `/api/classes/:id/hierarchy` | GET | Class inheritance tree |
+| `/api/interfaces` | GET | List indexed interfaces |
+| `/api/search?q=term` | GET | Search by name |
+| `/api/nl-search?q=query` | GET | Natural language search |
+| `/api/nl-search/patterns` | GET | Supported NL query patterns |
+| `/api/health` | GET | Index health status |
+
+### Natural Language Search
+
+Query your codebase using plain English. The NL Search engine classifies your intent and generates the appropriate database query.
+
+**Example Queries:**
+
+| Query | Intent | Description |
+|-------|--------|-------------|
+| `most complex functions` | rank_complexity | Find highest cyclomatic complexity |
+| `largest files` | rank_size | Rank files by byte size |
+| `where is createParser` | find_location | Find symbol location |
+| `functions in src/cli/` | filter_scope | Filter by directory |
+| `what calls createParser` | show_callers | Find calling functions |
+| `what does main call` | show_callees | Find called functions |
+| `classes extending Error` | show_hierarchy | Class inheritance |
+| `external dependencies` | find_dependencies | External packages |
+
+**API Usage:**
+
+```bash
+# Query using curl
+curl "http://localhost:3101/api/nl-search?q=most%20complex%20functions"
+
+# Response
+{
+  "query": "most complex functions",
+  "intent": {
+    "intent": "rank_complexity",
+    "confidence": 0.9,
+    "keywords": ["most", "complex", "functions"]
+  },
+  "results": [
+    {
+      "id": "func_abc123",
+      "name": "writeBatchToDb",
+      "complexity": 33,
+      "file_path": "src/core/graph/operations.ts"
+    }
+  ],
+  "totalCount": 45,
+  "executionTimeMs": 12
+}
+```
+
+**Get Supported Patterns:**
+
+```bash
+curl "http://localhost:3101/api/nl-search/patterns"
+
+# Returns list of all supported query patterns with examples
+```
+
+### Using the Dashboard
+
+1. Start Code-Synapse: `code-synapse` or `code-synapse viewer`
+2. Open in browser: `http://127.0.0.1:3101`
+3. View index statistics, browse files, functions, and classes
+4. Use the NL Search bar to query your codebase
 
 ---
 

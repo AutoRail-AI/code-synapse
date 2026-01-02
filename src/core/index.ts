@@ -16,6 +16,7 @@ export * from "./indexer/index.js";
 export * from "./telemetry/index.js";
 export * from "./extraction/index.js";
 export * from "./graph-builder/index.js";
+export * from "./justification/index.js";
 
 // Re-export semantic types (using 'export type' for isolatedModules)
 export type {

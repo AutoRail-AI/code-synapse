@@ -54,6 +54,156 @@ const DEFAULT_OPTIONS: Required<TransformOptions> = {
   calculateComplexity: true,
 };
 
+/**
+ * Language-specific node type mappings for function extraction
+ */
+const FUNCTION_NODE_TYPES: Record<string, string[]> = {
+  typescript: ["function_declaration", "generator_function_declaration", "arrow_function", "function_expression"],
+  javascript: ["function_declaration", "generator_function_declaration", "arrow_function", "function_expression"],
+  tsx: ["function_declaration", "generator_function_declaration", "arrow_function", "function_expression"],
+  jsx: ["function_declaration", "generator_function_declaration", "arrow_function", "function_expression"],
+  go: ["function_declaration", "method_declaration"],
+  rust: ["function_item"],
+  python: ["function_definition"],
+  java: ["method_declaration", "constructor_declaration"],
+  c: ["function_definition"],
+  cpp: ["function_definition"],
+  csharp: ["method_declaration", "constructor_declaration"],
+  kotlin: ["function_declaration"],
+  swift: ["function_declaration"],
+  dart: ["function_signature", "method_signature"],
+  ruby: ["method", "singleton_method"],
+  php: ["function_definition", "method_declaration"],
+  bash: ["function_definition"],
+  scala: ["function_definition", "function_declaration"],
+  haskell: ["function", "signature"],
+  elixir: ["call"], // Elixir uses def/defp which are macro calls
+  lua: ["function_declaration", "function_definition"],
+  json: [], // JSON doesn't have functions
+  yaml: [], // YAML doesn't have functions
+  toml: [], // TOML doesn't have functions
+};
+
+/**
+ * Language-specific node type mappings for class extraction
+ */
+const CLASS_NODE_TYPES: Record<string, string[]> = {
+  typescript: ["class_declaration"],
+  javascript: ["class_declaration"],
+  tsx: ["class_declaration"],
+  jsx: ["class_declaration"],
+  go: ["type_spec"], // Go structs are defined via type_spec
+  rust: ["struct_item", "impl_item"],
+  python: ["class_definition"],
+  java: ["class_declaration"],
+  c: ["struct_specifier"], // C structs
+  cpp: ["class_specifier", "struct_specifier"], // C++ classes and structs
+  csharp: ["class_declaration", "struct_declaration"], // C# classes and structs
+  kotlin: ["class_declaration", "object_declaration"], // Kotlin classes and objects
+  swift: ["class_declaration", "struct_declaration"], // Swift classes and structs
+  dart: ["class_definition"], // Dart classes
+  ruby: ["class", "module"], // Ruby classes and modules
+  php: ["class_declaration"], // PHP classes
+  bash: [], // Bash doesn't have classes
+  scala: ["class_definition", "object_definition", "trait_definition"], // Scala classes, objects, traits
+  haskell: ["data_type", "newtype"], // Haskell algebraic data types
+  elixir: ["call"], // Elixir modules are defmodule calls
+  lua: [], // Lua doesn't have classes (uses tables/metatables)
+  json: [], // JSON doesn't have classes
+  yaml: [], // YAML doesn't have classes
+  toml: [], // TOML doesn't have classes
+};
+
+/**
+ * Language-specific node type mappings for interface extraction
+ */
+const INTERFACE_NODE_TYPES: Record<string, string[]> = {
+  typescript: ["interface_declaration"],
+  javascript: [],
+  tsx: ["interface_declaration"],
+  jsx: [],
+  go: ["type_spec"], // Go interfaces are also type_spec
+  rust: ["trait_item"],
+  python: [], // Python doesn't have formal interfaces (ABCs are classes)
+  java: ["interface_declaration"],
+  c: [], // C doesn't have interfaces
+  cpp: [], // C++ uses abstract classes, no dedicated interface type
+  csharp: ["interface_declaration"], // C# interfaces
+  kotlin: ["class_declaration"], // Kotlin interfaces (use class_declaration with interface keyword)
+  swift: ["protocol_declaration"], // Swift protocols
+  dart: [], // Dart uses abstract classes
+  ruby: [], // Ruby doesn't have interfaces (uses duck typing/mixins)
+  php: ["interface_declaration"], // PHP interfaces
+  bash: [], // Bash doesn't have interfaces
+  scala: ["trait_definition"], // Scala traits act as interfaces
+  haskell: ["class"], // Haskell type classes
+  elixir: ["call"], // Elixir behaviours are macro calls
+  lua: [], // Lua doesn't have interfaces
+  json: [], // JSON doesn't have interfaces
+  yaml: [], // YAML doesn't have interfaces
+  toml: [], // TOML doesn't have interfaces
+};
+
+/**
+ * Language-specific node type mappings for import extraction
+ */
+const IMPORT_NODE_TYPES: Record<string, string[]> = {
+  typescript: ["import_statement"],
+  javascript: ["import_statement"],
+  tsx: ["import_statement"],
+  jsx: ["import_statement"],
+  go: ["import_declaration"],
+  rust: ["use_declaration"],
+  python: ["import_statement", "import_from_statement"],
+  java: ["import_declaration"],
+  c: ["preproc_include"], // C uses #include
+  cpp: ["preproc_include"], // C++ uses #include
+  csharp: ["using_directive"], // C# uses using
+  kotlin: ["import_header"], // Kotlin imports
+  swift: ["import_declaration"], // Swift imports
+  dart: ["import_or_export"], // Dart imports
+  ruby: ["call"], // Ruby require/require_relative are method calls
+  php: ["namespace_use_declaration"], // PHP use statements
+  bash: ["command"], // Bash source/. commands
+  scala: ["import_declaration"], // Scala imports
+  haskell: ["import"], // Haskell imports
+  elixir: ["call"], // Elixir import/require/use are macro calls
+  lua: ["call"], // Lua require() calls
+  json: [], // JSON doesn't have imports
+  yaml: [], // YAML doesn't have imports
+  toml: [], // TOML doesn't have imports
+};
+
+/**
+ * Language-specific node type mappings for variable extraction
+ */
+const VARIABLE_NODE_TYPES: Record<string, string[]> = {
+  typescript: ["lexical_declaration", "variable_declaration"],
+  javascript: ["lexical_declaration", "variable_declaration"],
+  tsx: ["lexical_declaration", "variable_declaration"],
+  jsx: ["lexical_declaration", "variable_declaration"],
+  go: ["var_declaration", "const_declaration", "short_var_declaration"],
+  rust: ["let_declaration", "const_item", "static_item"],
+  python: ["expression_statement"], // Python assignments are expression statements
+  java: ["local_variable_declaration", "field_declaration"],
+  c: ["declaration"], // C variable declarations
+  cpp: ["declaration"], // C++ variable declarations
+  csharp: ["field_declaration", "local_declaration_statement"], // C# variable declarations
+  kotlin: ["property_declaration"], // Kotlin val/var
+  swift: ["property_declaration", "variable_declaration"], // Swift let/var
+  dart: ["initialized_variable_definition"], // Dart variables
+  ruby: ["assignment"], // Ruby variable assignments
+  php: ["property_declaration"], // PHP class properties
+  bash: ["variable_assignment"], // Bash variable assignments
+  scala: ["val_definition", "var_definition"], // Scala val/var
+  haskell: ["function"], // Haskell bindings
+  elixir: ["call"], // Elixir module attributes are @ calls
+  lua: ["assignment_statement", "local_variable_declaration"], // Lua local/assignment
+  json: [], // JSON doesn't have variables (keys are extracted differently)
+  yaml: [], // YAML doesn't have variables (keys are extracted differently)
+  toml: [], // TOML doesn't have variables (keys are extracted differently)
+};
+
 // =============================================================================
 // AST Transformer Class
 // =============================================================================
@@ -73,6 +223,7 @@ export class ASTTransformer {
   private options: Required<TransformOptions>;
   private sourceCode: string = "";
   private filePath: string = "";
+  private language: string = "";
 
   constructor(options: TransformOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -89,6 +240,7 @@ export class ASTTransformer {
   ): UCEFile {
     this.sourceCode = sourceCode;
     this.filePath = filePath;
+    this.language = language;
 
     const rootNode = tree.rootNode;
     const errors: UCEParseError[] = this.collectErrors(rootNode);
@@ -116,16 +268,12 @@ export class ASTTransformer {
    */
   private extractFunctions(rootNode: SyntaxNode): UCEFunction[] {
     const functions: UCEFunction[] = [];
+    const nodeTypes = FUNCTION_NODE_TYPES[this.language] ?? FUNCTION_NODE_TYPES["typescript"] ?? [];
 
-    // Find function declarations
-    this.findNodes(rootNode, [
-      "function_declaration",
-      "generator_function_declaration",
-      "arrow_function",
-      "function_expression",
-    ]).forEach((node) => {
-      // Skip if inside a class
-      if (this.isInsideClass(node)) return;
+    // Find function declarations based on language
+    this.findNodes(rootNode, nodeTypes).forEach((node) => {
+      // Skip if inside a class (for TypeScript/JavaScript/Java)
+      if (this.isInsideClass(node) && !["go", "rust"].includes(this.language)) return;
 
       const fn = this.parseFunctionNode(node);
       if (fn) {
@@ -133,25 +281,27 @@ export class ASTTransformer {
       }
     });
 
-    // Find exported arrow functions assigned to variables
-    this.findNodes(rootNode, ["lexical_declaration", "variable_declaration"]).forEach(
-      (node) => {
-        if (this.isInsideClass(node)) return;
+    // For TypeScript/JavaScript, also find exported arrow functions assigned to variables
+    if (["typescript", "javascript", "tsx", "jsx"].includes(this.language)) {
+      this.findNodes(rootNode, ["lexical_declaration", "variable_declaration"]).forEach(
+        (node) => {
+          if (this.isInsideClass(node)) return;
 
-        const declarator = node.childForFieldName("declarator") ||
-          node.children.find((c: SyntaxNode) => c.type === "variable_declarator");
+          const declarator = node.childForFieldName("declarator") ||
+            node.children.find((c: SyntaxNode) => c.type === "variable_declarator");
 
-        if (declarator) {
-          const value = declarator.childForFieldName("value");
-          if (value?.type === "arrow_function" || value?.type === "function_expression") {
-            const fn = this.parseArrowFunctionVariable(node, declarator, value);
-            if (fn) {
-              functions.push(fn);
+          if (declarator) {
+            const value = declarator.childForFieldName("value");
+            if (value?.type === "arrow_function" || value?.type === "function_expression") {
+              const fn = this.parseArrowFunctionVariable(node, declarator, value);
+              if (fn) {
+                functions.push(fn);
+              }
             }
           }
         }
-      }
-    );
+      );
+    }
 
     return functions;
   }
@@ -160,6 +310,51 @@ export class ASTTransformer {
    * Parses a function declaration node.
    */
   private parseFunctionNode(node: SyntaxNode): UCEFunction | null {
+    // Handle language-specific function parsing
+    switch (this.language) {
+      case "go":
+        return this.parseGoFunction(node);
+      case "rust":
+        return this.parseRustFunction(node);
+      case "python":
+        return this.parsePythonFunction(node);
+      case "java":
+        return this.parseJavaFunction(node);
+      case "c":
+        return this.parseCFunction(node);
+      case "cpp":
+        return this.parseCppFunction(node);
+      case "csharp":
+        return this.parseCSharpFunction(node);
+      case "kotlin":
+        return this.parseKotlinFunction(node);
+      case "swift":
+        return this.parseSwiftFunction(node);
+      case "dart":
+        return this.parseDartFunction(node);
+      case "ruby":
+        return this.parseRubyFunction(node);
+      case "php":
+        return this.parsePhpFunction(node);
+      case "bash":
+        return this.parseBashFunction(node);
+      case "scala":
+        return this.parseScalaFunction(node);
+      case "haskell":
+        return this.parseHaskellFunction(node);
+      case "elixir":
+        return this.parseElixirFunction(node);
+      case "lua":
+        return this.parseLuaFunction(node);
+      default:
+        return this.parseTypeScriptFunction(node);
+    }
+  }
+
+  /**
+   * Parses a TypeScript/JavaScript function node.
+   */
+  private parseTypeScriptFunction(node: SyntaxNode): UCEFunction | null {
     const nameNode = node.childForFieldName("name");
     const name = nameNode?.text ?? "";
 
@@ -199,6 +394,784 @@ export class ASTTransformer {
       signature,
       complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
     };
+  }
+
+  /**
+   * Parses a Go function node.
+   */
+  private parseGoFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Go uses "parameters" field for function params
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parseGoParameters(paramsNode) : [];
+
+    // Go return type is in "result" field
+    const resultNode = node.childForFieldName("result");
+    const returnType = resultNode ? this.getNodeText(resultNode) : null;
+
+    // Go doesn't have type parameters in the same way (generics added in 1.18)
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Check if this is a method (has receiver)
+    const receiverNode = node.childForFieldName("receiver");
+    const modifiers: UCEModifier[] = [];
+    if (receiverNode) {
+      modifiers.push("public"); // Go methods on exported types
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = `func ${name}(${params.map(p => `${p.name} ${p.type || ""}`).join(", ")})${returnType ? " " + returnType : ""}`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams,
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses Go function parameters.
+   */
+  private parseGoParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "parameter_declaration") {
+        // Go parameter_declaration can have multiple names with one type
+        const nameNodes = child.children.filter((c) => c.type === "identifier");
+        const typeNode = child.children.find((c) =>
+          c.type === "type_identifier" ||
+          c.type === "pointer_type" ||
+          c.type === "slice_type" ||
+          c.type === "array_type" ||
+          c.type === "map_type" ||
+          c.type === "channel_type" ||
+          c.type === "qualified_type"
+        );
+        const type = typeNode ? this.getNodeText(typeNode) : null;
+
+        for (const nameNode of nameNodes) {
+          params.push({
+            name: nameNode.text,
+            type,
+            isOptional: false,
+            isRest: false,
+            defaultValue: null,
+          });
+        }
+      } else if (child.type === "variadic_parameter_declaration") {
+        const nameNode = child.children.find((c) => c.type === "identifier");
+        const typeNode = child.children.find((c) => c.type !== "identifier" && c.type !== "...");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: false,
+          isRest: true,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a Rust function node.
+   */
+  private parseRustFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parseRustParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("return_type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode).replace(/^->\s*/, "") : null;
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Check visibility modifiers
+    const modifiers: UCEModifier[] = [];
+    if (node.children.some((c: SyntaxNode) => c.type === "visibility_modifier")) {
+      modifiers.push("public");
+    }
+    if (node.children.some((c: SyntaxNode) => c.text === "async")) {
+      modifiers.push("async");
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = `fn ${name}(${params.map(p => `${p.name}: ${p.type || "_"}`).join(", ")})${returnType ? " -> " + returnType : ""}`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams,
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses Rust function parameters.
+   */
+  private parseRustParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "parameter") {
+        const patternNode = child.childForFieldName("pattern");
+        const typeNode = child.childForFieldName("type");
+
+        params.push({
+          name: patternNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: false,
+          isRest: false,
+          defaultValue: null,
+        });
+      } else if (child.type === "self_parameter") {
+        params.push({
+          name: "self",
+          type: child.text.includes("&mut") ? "&mut Self" : child.text.includes("&") ? "&Self" : "Self",
+          isOptional: false,
+          isRest: false,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a Python function node.
+   */
+  private parsePythonFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parsePythonParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("return_type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode).replace(/^->\s*/, "") : null;
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Check for decorators
+    const modifiers: UCEModifier[] = [];
+    const decorators = node.children.filter((c: SyntaxNode) => c.type === "decorator");
+    for (const dec of decorators) {
+      const decName = dec.text;
+      if (decName.includes("@staticmethod")) modifiers.push("static");
+      if (decName.includes("@classmethod")) modifiers.push("static");
+      if (decName.includes("@property")) modifiers.push("readonly");
+      if (decName.includes("@abstractmethod")) modifiers.push("abstract");
+    }
+
+    // Check for async
+    if (node.children.some((c: SyntaxNode) => c.text === "async")) {
+      modifiers.push("async");
+    }
+
+    const docComment = this.extractPythonDocstring(bodyNode);
+    const signature = `def ${name}(${params.map(p => `${p.name}${p.type ? ": " + p.type : ""}${p.defaultValue ? " = " + p.defaultValue : ""}`).join(", ")})${returnType ? " -> " + returnType : ""}`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses Python function parameters.
+   */
+  private parsePythonParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "identifier") {
+        params.push({
+          name: child.text,
+          type: null,
+          isOptional: false,
+          isRest: false,
+          defaultValue: null,
+        });
+      } else if (child.type === "typed_parameter") {
+        const nameNode = child.children.find((c) => c.type === "identifier");
+        const typeNode = child.childForFieldName("type");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: false,
+          isRest: false,
+          defaultValue: null,
+        });
+      } else if (child.type === "default_parameter") {
+        const nameNode = child.childForFieldName("name");
+        const valueNode = child.childForFieldName("value");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: null,
+          isOptional: true,
+          isRest: false,
+          defaultValue: valueNode ? this.getNodeText(valueNode) : null,
+        });
+      } else if (child.type === "typed_default_parameter") {
+        const nameNode = child.childForFieldName("name");
+        const typeNode = child.childForFieldName("type");
+        const valueNode = child.childForFieldName("value");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: true,
+          isRest: false,
+          defaultValue: valueNode ? this.getNodeText(valueNode) : null,
+        });
+      } else if (child.type === "list_splat_pattern" || child.text.startsWith("*")) {
+        const nameNode = child.children.find((c) => c.type === "identifier");
+        params.push({
+          name: nameNode?.text ?? child.text.replace("*", ""),
+          type: null,
+          isOptional: false,
+          isRest: true,
+          defaultValue: null,
+        });
+      } else if (child.type === "dictionary_splat_pattern" || child.text.startsWith("**")) {
+        const nameNode = child.children.find((c) => c.type === "identifier");
+        params.push({
+          name: nameNode?.text ?? child.text.replace("**", ""),
+          type: null,
+          isOptional: false,
+          isRest: true,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Extracts Python docstring from function body.
+   */
+  private extractPythonDocstring(bodyNode: SyntaxNode | null): string | null {
+    if (!bodyNode) return null;
+
+    // Look for the first expression_statement containing a string
+    for (const child of bodyNode.children) {
+      if (child.type === "expression_statement") {
+        const stringNode = child.children.find((c) => c.type === "string");
+        if (stringNode) {
+          return stringNode.text;
+        }
+      }
+      // Stop looking after non-docstring statements
+      if (child.type !== "expression_statement" && child.type !== "comment") {
+        break;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Parses a Java function (method) node.
+   */
+  private parseJavaFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parseJavaParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode) : null;
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    const modifierNode = node.children.find((c: SyntaxNode) => c.type === "modifiers");
+    if (modifierNode) {
+      for (const mod of modifierNode.children) {
+        if (mod.text === "public") modifiers.push("public");
+        if (mod.text === "private") modifiers.push("private");
+        if (mod.text === "protected") modifiers.push("protected");
+        if (mod.text === "static") modifiers.push("static");
+        if (mod.text === "final") modifiers.push("readonly");
+        if (mod.text === "abstract") modifiers.push("abstract");
+        if (mod.text === "synchronized") modifiers.push("async"); // approximation
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = `${modifiers.filter(m => ["public", "private", "protected", "static"].includes(m)).join(" ")} ${returnType || "void"} ${name}(${params.map(p => `${p.type || "Object"} ${p.name}`).join(", ")})`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams,
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature: signature.trim(),
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses Java method parameters.
+   */
+  private parseJavaParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "formal_parameter") {
+        const typeNode = child.childForFieldName("type");
+        const nameNode = child.childForFieldName("name");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: false,
+          isRest: false,
+          defaultValue: null,
+        });
+      } else if (child.type === "spread_parameter") {
+        const typeNode = child.childForFieldName("type");
+        const nameNode = child.childForFieldName("name");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) + "..." : null,
+          isOptional: false,
+          isRest: true,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a C function definition.
+   */
+  private parseCFunction(node: SyntaxNode): UCEFunction | null {
+    const declaratorNode = node.childForFieldName("declarator");
+    if (!declaratorNode) return null;
+
+    // The function name is inside the declarator
+    const nameNode = this.findFunctionDeclaratorName(declaratorNode);
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Get parameters from the declarator
+    const paramsNode = this.findFunctionParameters(declaratorNode);
+    const params = paramsNode ? this.parseCParameters(paramsNode) : [];
+
+    // Return type is in the type specifier
+    const typeNode = node.childForFieldName("type");
+    const returnType = typeNode ? this.getNodeText(typeNode) : null;
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Check for static modifier
+    const modifiers: UCEModifier[] = [];
+    if (node.children.some((c: SyntaxNode) => c.type === "storage_class_specifier" && c.text === "static")) {
+      modifiers.push("static");
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = `${returnType || "void"} ${name}(${params.map(p => `${p.type || ""} ${p.name}`).join(", ")})`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature: signature.trim(),
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Finds the function name from a declarator node.
+   */
+  private findFunctionDeclaratorName(declarator: SyntaxNode): SyntaxNode | null {
+    if (declarator.type === "function_declarator") {
+      const innerDeclarator = declarator.childForFieldName("declarator");
+      if (innerDeclarator?.type === "identifier") {
+        return innerDeclarator;
+      }
+      // Could be pointer declarator
+      if (innerDeclarator) {
+        return this.findFunctionDeclaratorName(innerDeclarator);
+      }
+    } else if (declarator.type === "pointer_declarator") {
+      const innerDeclarator = declarator.childForFieldName("declarator");
+      if (innerDeclarator) {
+        return this.findFunctionDeclaratorName(innerDeclarator);
+      }
+    } else if (declarator.type === "identifier") {
+      return declarator;
+    }
+    return null;
+  }
+
+  /**
+   * Finds the parameters node from a declarator.
+   */
+  private findFunctionParameters(declarator: SyntaxNode): SyntaxNode | null {
+    if (declarator.type === "function_declarator") {
+      return declarator.childForFieldName("parameters");
+    } else if (declarator.type === "pointer_declarator") {
+      const innerDeclarator = declarator.childForFieldName("declarator");
+      if (innerDeclarator) {
+        return this.findFunctionParameters(innerDeclarator);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Parses C function parameters.
+   */
+  private parseCParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "parameter_declaration") {
+        const typeNode = child.childForFieldName("type");
+        const declaratorNode = child.childForFieldName("declarator");
+
+        let name = "";
+        if (declaratorNode?.type === "identifier") {
+          name = declaratorNode.text;
+        } else if (declaratorNode?.type === "pointer_declarator") {
+          const innerDeclarator = declaratorNode.childForFieldName("declarator");
+          name = innerDeclarator?.text ?? "";
+        }
+
+        params.push({
+          name,
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: false,
+          isRest: false,
+          defaultValue: null,
+        });
+      } else if (child.type === "variadic_parameter") {
+        params.push({
+          name: "...",
+          type: "...",
+          isOptional: false,
+          isRest: true,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a C++ function definition.
+   */
+  private parseCppFunction(node: SyntaxNode): UCEFunction | null {
+    const declaratorNode = node.childForFieldName("declarator");
+    if (!declaratorNode) return null;
+
+    // The function name is inside the declarator
+    const nameNode = this.findCppFunctionName(declaratorNode);
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Get parameters
+    const paramsNode = this.findFunctionParameters(declaratorNode);
+    const params = paramsNode ? this.parseCppParameters(paramsNode) : [];
+
+    // Return type
+    const typeNode = node.childForFieldName("type");
+    const returnType = typeNode ? this.getNodeText(typeNode) : null;
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Check for modifiers
+    const modifiers: UCEModifier[] = [];
+    if (node.children.some((c: SyntaxNode) => c.type === "storage_class_specifier" && c.text === "static")) {
+      modifiers.push("static");
+    }
+    if (node.children.some((c: SyntaxNode) => c.type === "virtual")) {
+      modifiers.push("abstract");
+    }
+    if (node.children.some((c: SyntaxNode) => c.type === "storage_class_specifier" && c.text === "inline")) {
+      modifiers.push("export"); // inline functions are typically visible
+    }
+
+    // Check for template
+    const typeParams: UCETypeParameter[] = [];
+    const templateNode = node.parent?.type === "template_declaration" ? node.parent : null;
+    if (templateNode) {
+      const templateParams = templateNode.childForFieldName("parameters");
+      if (templateParams) {
+        for (const param of templateParams.children) {
+          if (param.type === "type_parameter_declaration") {
+            const paramName = param.children.find((c) => c.type === "type_identifier");
+            if (paramName) {
+              typeParams.push({
+                name: paramName.text,
+                constraint: null,
+                default: null,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = `${returnType || "void"} ${name}(${params.map(p => `${p.type || ""} ${p.name}`).join(", ")})`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams,
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature: signature.trim(),
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Finds the function name from a C++ declarator.
+   */
+  private findCppFunctionName(declarator: SyntaxNode): SyntaxNode | null {
+    if (declarator.type === "function_declarator") {
+      const innerDeclarator = declarator.childForFieldName("declarator");
+      if (innerDeclarator?.type === "identifier") {
+        return innerDeclarator;
+      }
+      if (innerDeclarator?.type === "qualified_identifier") {
+        // Get the last identifier (the function name)
+        const nameNode = innerDeclarator.childForFieldName("name");
+        return nameNode;
+      }
+      if (innerDeclarator?.type === "field_identifier") {
+        return innerDeclarator;
+      }
+      if (innerDeclarator) {
+        return this.findCppFunctionName(innerDeclarator);
+      }
+    } else if (declarator.type === "pointer_declarator" || declarator.type === "reference_declarator") {
+      const innerDeclarator = declarator.childForFieldName("declarator");
+      if (innerDeclarator) {
+        return this.findCppFunctionName(innerDeclarator);
+      }
+    } else if (declarator.type === "identifier") {
+      return declarator;
+    }
+    return null;
+  }
+
+  /**
+   * Parses C++ function parameters.
+   */
+  private parseCppParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "parameter_declaration") {
+        const typeNode = child.childForFieldName("type");
+        const declaratorNode = child.childForFieldName("declarator");
+        const defaultValueNode = child.childForFieldName("default_value");
+
+        let name = "";
+        if (declaratorNode?.type === "identifier") {
+          name = declaratorNode.text;
+        } else if (declaratorNode?.type === "pointer_declarator" || declaratorNode?.type === "reference_declarator") {
+          const innerDeclarator = declaratorNode.childForFieldName("declarator");
+          name = innerDeclarator?.text ?? "";
+        }
+
+        params.push({
+          name,
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: defaultValueNode !== null,
+          isRest: false,
+          defaultValue: defaultValueNode ? this.getNodeText(defaultValueNode) : null,
+        });
+      } else if (child.type === "variadic_parameter_declaration") {
+        params.push({
+          name: "...",
+          type: "...",
+          isOptional: false,
+          isRest: true,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a C# method declaration.
+   */
+  private parseCSharpFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parseCSharpParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode) : null;
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    for (const child of node.children) {
+      if (child.type === "modifier") {
+        const modText = child.text;
+        if (modText === "public") modifiers.push("public");
+        if (modText === "private") modifiers.push("private");
+        if (modText === "protected") modifiers.push("protected");
+        if (modText === "static") modifiers.push("static");
+        if (modText === "readonly") modifiers.push("readonly");
+        if (modText === "abstract") modifiers.push("abstract");
+        if (modText === "virtual") modifiers.push("abstract"); // C# virtual similar to abstract
+        if (modText === "override") modifiers.push("override");
+        if (modText === "async") modifiers.push("async");
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = `${modifiers.filter(m => ["public", "private", "protected", "static"].includes(m)).join(" ")} ${returnType || "void"} ${name}(${params.map(p => `${p.type || "object"} ${p.name}`).join(", ")})`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams,
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature: signature.trim(),
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses C# method parameters.
+   */
+  private parseCSharpParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "parameter") {
+        const typeNode = child.childForFieldName("type");
+        const nameNode = child.childForFieldName("name");
+        const defaultValueNode = child.childForFieldName("default_value");
+
+        // Check for params keyword (variadic)
+        const isParams = child.children.some((c) => c.type === "modifier" && c.text === "params");
+
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: defaultValueNode !== null,
+          isRest: isParams,
+          defaultValue: defaultValueNode ? this.getNodeText(defaultValueNode) : null,
+        });
+      }
+    }
+
+    return params;
   }
 
   /**
@@ -260,8 +1233,17 @@ export class ASTTransformer {
    */
   private extractClasses(rootNode: SyntaxNode): UCEClass[] {
     const classes: UCEClass[] = [];
+    const nodeTypes = CLASS_NODE_TYPES[this.language] ?? CLASS_NODE_TYPES["typescript"] ?? [];
 
-    this.findNodes(rootNode, ["class_declaration"]).forEach((node) => {
+    this.findNodes(rootNode, nodeTypes).forEach((node) => {
+      // For Kotlin, skip class_declarations that have the 'interface' keyword (those are interfaces)
+      if (this.language === "kotlin" && node.type === "class_declaration") {
+        const hasInterfaceKeyword = node.children.some((c: SyntaxNode) => c.type === "interface");
+        if (hasInterfaceKeyword) {
+          return; // Skip interface declarations
+        }
+      }
+
       const cls = this.parseClassNode(node);
       if (cls) {
         classes.push(cls);
@@ -275,6 +1257,47 @@ export class ASTTransformer {
    * Parses a class declaration node.
    */
   private parseClassNode(node: SyntaxNode): UCEClass | null {
+    // Handle language-specific class parsing
+    switch (this.language) {
+      case "go":
+        return this.parseGoStruct(node);
+      case "rust":
+        return this.parseRustStruct(node);
+      case "python":
+        return this.parsePythonClass(node);
+      case "java":
+        return this.parseJavaClass(node);
+      case "c":
+        return this.parseCStruct(node);
+      case "cpp":
+        return this.parseCppClass(node);
+      case "csharp":
+        return this.parseCSharpClass(node);
+      case "kotlin":
+        return this.parseKotlinClass(node);
+      case "swift":
+        return this.parseSwiftClass(node);
+      case "dart":
+        return this.parseDartClass(node);
+      case "ruby":
+        return this.parseRubyClass(node);
+      case "php":
+        return this.parsePhpClass(node);
+      case "scala":
+        return this.parseScalaClass(node);
+      case "haskell":
+        return this.parseHaskellClass(node);
+      case "elixir":
+        return this.parseElixirModule(node);
+      default:
+        return this.parseTypeScriptClass(node);
+    }
+  }
+
+  /**
+   * Parses a TypeScript/JavaScript class node.
+   */
+  private parseTypeScriptClass(node: SyntaxNode): UCEClass | null {
     const nameNode = node.childForFieldName("name");
     const name = nameNode?.text ?? "";
 
@@ -321,6 +1344,811 @@ export class ASTTransformer {
       typeParams,
       extends: extendsClass,
       implements: implementsList,
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      isAbstract: modifiers.includes("abstract"),
+    };
+  }
+
+  /**
+   * Parses a Go struct (type_spec with struct_type).
+   */
+  private parseGoStruct(node: SyntaxNode): UCEClass | null {
+    // Go structs are defined as: type Name struct { ... }
+    // The type_spec node contains the name and type
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Check if this is a struct type
+    const typeNode = node.childForFieldName("type");
+    if (!typeNode || typeNode.type !== "struct_type") {
+      return null; // Not a struct, might be an interface
+    }
+
+    const properties: UCEProperty[] = [];
+    const methods: UCEMethod[] = []; // Methods are defined separately in Go
+
+    // Parse struct fields
+    const fieldListNode = typeNode.children.find((c) => c.type === "field_declaration_list");
+    if (fieldListNode) {
+      for (const field of fieldListNode.children) {
+        if (field.type === "field_declaration") {
+          const fieldNames = field.children.filter((c) => c.type === "field_identifier");
+          const fieldType = field.children.find((c) =>
+            c.type === "type_identifier" ||
+            c.type === "pointer_type" ||
+            c.type === "slice_type" ||
+            c.type === "array_type"
+          );
+
+          for (const fieldName of fieldNames) {
+            const fieldNameText = fieldName.text;
+            properties.push({
+              kind: "property",
+              name: fieldNameText,
+              type: fieldType ? this.getNodeText(fieldType) : null,
+              visibility: fieldNameText.length > 0 && fieldNameText[0] === fieldNameText[0]?.toUpperCase() ? "public" : "private",
+              isStatic: false,
+              isReadonly: false,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(field),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+    const isExported = name.length > 0 && name[0] === name[0]?.toUpperCase();
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: null,
+      implements: [],
+      methods,
+      properties,
+      constructor: null,
+      location: this.getLocation(node),
+      modifiers: isExported ? ["export"] : [],
+      docComment,
+      isAbstract: false,
+    };
+  }
+
+  /**
+   * Parses a Rust struct or impl.
+   */
+  private parseRustStruct(node: SyntaxNode): UCEClass | null {
+    if (node.type === "struct_item") {
+      const nameNode = node.childForFieldName("name");
+      const name = nameNode?.text ?? "";
+
+      if (!name) return null;
+
+      const properties: UCEProperty[] = [];
+
+      // Parse struct fields
+      const bodyNode = node.childForFieldName("body");
+      if (bodyNode) {
+        for (const field of bodyNode.children) {
+          if (field.type === "field_declaration") {
+            const fieldName = field.childForFieldName("name");
+            const fieldType = field.childForFieldName("type");
+            const visibility = field.children.find((c: SyntaxNode) => c.type === "visibility_modifier");
+
+            properties.push({
+              kind: "property",
+              name: fieldName?.text ?? "",
+              type: fieldType ? this.getNodeText(fieldType) : null,
+              visibility: visibility ? "public" : "private",
+              isStatic: false,
+              isReadonly: false,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(field),
+              docComment: null,
+            });
+          }
+        }
+      }
+
+      const typeParamsNode = node.childForFieldName("type_parameters");
+      const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+      const docComment = this.extractDocComment(node);
+      const visibility = node.children.find((c: SyntaxNode) => c.type === "visibility_modifier");
+
+      return {
+        kind: "class",
+        name,
+        typeParams,
+        extends: null,
+        implements: [],
+        methods: [],
+        properties,
+        constructor: null,
+        location: this.getLocation(node),
+        modifiers: visibility ? ["export"] : [],
+        docComment,
+        isAbstract: false,
+      };
+    } else if (node.type === "impl_item") {
+      // impl blocks contain methods for a type
+      const typeNode = node.childForFieldName("type");
+      const name = typeNode?.text ?? "";
+
+      if (!name) return null;
+
+      const methods: UCEMethod[] = [];
+      const bodyNode = node.childForFieldName("body");
+
+      if (bodyNode) {
+        for (const item of bodyNode.children) {
+          if (item.type === "function_item") {
+            const fn = this.parseRustFunction(item);
+            if (fn) {
+              methods.push({
+                kind: "method",
+                name: fn.name,
+                params: fn.params,
+                returnType: fn.returnType,
+                typeParams: fn.typeParams,
+                body: fn.body,
+                location: fn.location,
+                modifiers: fn.modifiers,
+                docComment: fn.docComment,
+                signature: fn.signature,
+                visibility: fn.modifiers.includes("public") ? "public" : "private",
+                isStatic: !fn.params.some((p) => p.name === "self"),
+                isAbstract: false,
+                isGetter: false,
+                isSetter: false,
+              });
+            }
+          }
+        }
+      }
+
+      return {
+        kind: "class",
+        name: `impl ${name}`,
+        typeParams: [],
+        extends: null,
+        implements: [],
+        methods,
+        properties: [],
+        constructor: null,
+        location: this.getLocation(node),
+        modifiers: [],
+        docComment: this.extractDocComment(node),
+        isAbstract: false,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Parses a Python class definition.
+   */
+  private parsePythonClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Parse superclass
+    const superclassNode = node.childForFieldName("superclasses");
+    const extendsList: string[] = [];
+    if (superclassNode) {
+      for (const child of superclassNode.children) {
+        if (child.type === "identifier" || child.type === "attribute") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    const bodyNode = node.childForFieldName("body");
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "function_definition") {
+          const fn = this.parsePythonFunction(child);
+          if (fn) {
+            const method: UCEMethod = {
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: fn.name.startsWith("_") ? "private" : "public",
+              isStatic: fn.modifiers.includes("static"),
+              isAbstract: fn.modifiers.includes("abstract"),
+              isGetter: fn.modifiers.includes("readonly"),
+              isSetter: false,
+            };
+
+            if (fn.name === "__init__") {
+              constructorMethod = method;
+            } else {
+              methods.push(method);
+            }
+          }
+        } else if (child.type === "expression_statement") {
+          // Class-level variable assignments
+          const assignment = child.children.find((c) => c.type === "assignment");
+          if (assignment) {
+            const leftNode = assignment.childForFieldName("left");
+            const rightNode = assignment.childForFieldName("right");
+            if (leftNode?.type === "identifier") {
+              properties.push({
+                kind: "property",
+                name: leftNode.text,
+                type: null,
+                visibility: leftNode.text.startsWith("_") ? "private" : "public",
+                isStatic: true, // Class-level
+                isReadonly: false,
+                isOptional: false,
+                defaultValue: rightNode ? this.getNodeText(rightNode) : null,
+                location: this.getLocation(child),
+                docComment: null,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractPythonDocstring(bodyNode);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: extendsList[0] ?? null,
+      implements: extendsList.slice(1),
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+      isAbstract: extendsList.some((e) => e.includes("ABC")),
+    };
+  }
+
+  /**
+   * Parses a Java class declaration.
+   */
+  private parseJavaClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Parse extends
+    const superclassNode = node.childForFieldName("superclass");
+    const extendsClass = superclassNode?.text ?? null;
+
+    // Parse implements
+    const interfacesNode = node.childForFieldName("interfaces");
+    const implementsList: string[] = [];
+    if (interfacesNode) {
+      for (const child of interfacesNode.children) {
+        if (child.type === "type_identifier" || child.type === "generic_type") {
+          implementsList.push(child.text);
+        }
+      }
+    }
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const bodyNode = node.childForFieldName("body");
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "method_declaration") {
+          const fn = this.parseJavaFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: fn.modifiers.includes("private")
+                ? "private"
+                : fn.modifiers.includes("protected")
+                  ? "protected"
+                  : "public",
+              isStatic: fn.modifiers.includes("static"),
+              isAbstract: fn.modifiers.includes("abstract"),
+              isGetter: fn.name.startsWith("get"),
+              isSetter: fn.name.startsWith("set"),
+            });
+          }
+        } else if (child.type === "constructor_declaration") {
+          const fn = this.parseJavaFunction(child);
+          if (fn) {
+            constructorMethod = {
+              kind: "method",
+              name: "constructor",
+              params: fn.params,
+              returnType: null,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: "public",
+              isStatic: false,
+              isAbstract: false,
+              isGetter: false,
+              isSetter: false,
+            };
+          }
+        } else if (child.type === "field_declaration") {
+          const typeNode = child.childForFieldName("type");
+          const declarators = child.children.filter((c: SyntaxNode) => c.type === "variable_declarator");
+
+          for (const decl of declarators) {
+            const fieldName = decl.childForFieldName("name");
+            const fieldValue = decl.childForFieldName("value");
+
+            const modifierNode = child.children.find((c: SyntaxNode) => c.type === "modifiers");
+            const modifiers: string[] = [];
+            if (modifierNode) {
+              for (const mod of modifierNode.children) {
+                modifiers.push(mod.text);
+              }
+            }
+
+            properties.push({
+              kind: "property",
+              name: fieldName?.text ?? "",
+              type: typeNode ? this.getNodeText(typeNode) : null,
+              visibility: modifiers.includes("private")
+                ? "private"
+                : modifiers.includes("protected")
+                  ? "protected"
+                  : "public",
+              isStatic: modifiers.includes("static"),
+              isReadonly: modifiers.includes("final"),
+              isOptional: false,
+              defaultValue: fieldValue ? this.getNodeText(fieldValue) : null,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    const modifierNode = node.children.find((c: SyntaxNode) => c.type === "modifiers");
+    if (modifierNode) {
+      for (const mod of modifierNode.children) {
+        if (mod.text === "public") modifiers.push("export");
+        if (mod.text === "abstract") modifiers.push("abstract");
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams,
+      extends: extendsClass,
+      implements: implementsList,
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      isAbstract: modifiers.includes("abstract"),
+    };
+  }
+
+  /**
+   * Parses a C struct specifier.
+   */
+  private parseCStruct(node: SyntaxNode): UCEClass | null {
+    // C structs: struct Name { ... }
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const properties: UCEProperty[] = [];
+
+    // Parse struct fields from the body
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "field_declaration") {
+          const typeNode = child.childForFieldName("type");
+          const declaratorNode = child.childForFieldName("declarator");
+
+          let fieldName = "";
+          if (declaratorNode?.type === "field_identifier") {
+            fieldName = declaratorNode.text;
+          } else if (declaratorNode?.type === "pointer_declarator") {
+            const innerDecl = declaratorNode.childForFieldName("declarator");
+            fieldName = innerDecl?.text ?? "";
+          } else if (declaratorNode?.type === "array_declarator") {
+            const innerDecl = declaratorNode.childForFieldName("declarator");
+            fieldName = innerDecl?.text ?? "";
+          }
+
+          if (fieldName) {
+            properties.push({
+              kind: "property",
+              name: fieldName,
+              type: typeNode ? this.getNodeText(typeNode) : null,
+              visibility: "public", // C structs are always public
+              isStatic: false,
+              isReadonly: false,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: null,
+      implements: [],
+      methods: [],
+      properties,
+      constructor: null,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+      isAbstract: false,
+    };
+  }
+
+  /**
+   * Parses a C++ class or struct specifier.
+   */
+  private parseCppClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const isStruct = node.type === "struct_specifier";
+    const properties: UCEProperty[] = [];
+    const methods: UCEMethod[] = [];
+
+    // Parse base classes
+    const baseClauseNode = node.children.find((c) => c.type === "base_class_clause");
+    const extendsList: string[] = [];
+    if (baseClauseNode) {
+      for (const child of baseClauseNode.children) {
+        if (child.type === "type_identifier" || child.type === "qualified_identifier") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    // Parse body
+    const bodyNode = node.childForFieldName("body");
+    let currentVisibility: UCEVisibility = isStruct ? "public" : "private";
+
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "access_specifier") {
+          const specText = child.text.replace(":", "").trim();
+          if (specText === "public") currentVisibility = "public";
+          else if (specText === "private") currentVisibility = "private";
+          else if (specText === "protected") currentVisibility = "protected";
+        } else if (child.type === "field_declaration") {
+          const typeNode = child.childForFieldName("type");
+          const declaratorNode = child.childForFieldName("declarator");
+
+          let fieldName = "";
+          if (declaratorNode?.type === "field_identifier") {
+            fieldName = declaratorNode.text;
+          } else if (declaratorNode) {
+            // Could be pointer or array
+            const innerDecl = declaratorNode.childForFieldName("declarator");
+            fieldName = innerDecl?.text ?? declaratorNode.text ?? "";
+          }
+
+          if (fieldName) {
+            const isStatic = child.children.some((c: SyntaxNode) =>
+              c.type === "storage_class_specifier" && c.text === "static"
+            );
+            const isConst = child.children.some((c: SyntaxNode) =>
+              c.type === "type_qualifier" && c.text === "const"
+            );
+
+            properties.push({
+              kind: "property",
+              name: fieldName,
+              type: typeNode ? this.getNodeText(typeNode) : null,
+              visibility: currentVisibility,
+              isStatic,
+              isReadonly: isConst,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        } else if (child.type === "function_definition" || child.type === "declaration") {
+          // Method definition or declaration
+          const fn = this.parseCppFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: currentVisibility,
+              isStatic: fn.modifiers.includes("static"),
+              isAbstract: fn.modifiers.includes("abstract"),
+              isGetter: false,
+              isSetter: false,
+            });
+          }
+        }
+      }
+    }
+
+    // Check for template
+    const typeParams: UCETypeParameter[] = [];
+    const templateNode = node.parent?.type === "template_declaration" ? node.parent : null;
+    if (templateNode) {
+      const templateParams = templateNode.childForFieldName("parameters");
+      if (templateParams) {
+        for (const param of templateParams.children) {
+          if (param.type === "type_parameter_declaration") {
+            const paramName = param.children.find((c) => c.type === "type_identifier");
+            if (paramName) {
+              typeParams.push({
+                name: paramName.text,
+                constraint: null,
+                default: null,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams,
+      extends: extendsList[0] ?? null,
+      implements: extendsList.slice(1),
+      methods,
+      properties,
+      constructor: null,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+      isAbstract: false,
+    };
+  }
+
+  /**
+   * Parses a C# class or struct declaration.
+   */
+  private parseCSharpClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Parse base types
+    const baseListNode = node.childForFieldName("bases");
+    const extendsList: string[] = [];
+    if (baseListNode) {
+      for (const child of baseListNode.children) {
+        if (child.type === "identifier" || child.type === "generic_name" || child.type === "qualified_name") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const bodyNode = node.childForFieldName("body");
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "method_declaration") {
+          const fn = this.parseCSharpFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: fn.modifiers.includes("private")
+                ? "private"
+                : fn.modifiers.includes("protected")
+                  ? "protected"
+                  : "public",
+              isStatic: fn.modifiers.includes("static"),
+              isAbstract: fn.modifiers.includes("abstract"),
+              isGetter: false,
+              isSetter: false,
+            });
+          }
+        } else if (child.type === "constructor_declaration") {
+          const fn = this.parseCSharpFunction(child);
+          if (fn) {
+            constructorMethod = {
+              kind: "method",
+              name: "constructor",
+              params: fn.params,
+              returnType: null,
+              typeParams: [],
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: "public",
+              isStatic: false,
+              isAbstract: false,
+              isGetter: false,
+              isSetter: false,
+            };
+          }
+        } else if (child.type === "field_declaration") {
+          const typeNode = child.childForFieldName("type");
+          const declarationNode = child.childForFieldName("declaration");
+
+          // Extract modifiers
+          const fieldModifiers: string[] = [];
+          for (const mod of child.children) {
+            if (mod.type === "modifier") {
+              fieldModifiers.push(mod.text);
+            }
+          }
+
+          if (declarationNode) {
+            for (const varDecl of declarationNode.children) {
+              if (varDecl.type === "variable_declarator") {
+                const fieldName = varDecl.childForFieldName("name");
+                const fieldValue = varDecl.childForFieldName("value");
+
+                if (fieldName) {
+                  properties.push({
+                    kind: "property",
+                    name: fieldName.text,
+                    type: typeNode ? this.getNodeText(typeNode) : null,
+                    visibility: fieldModifiers.includes("private")
+                      ? "private"
+                      : fieldModifiers.includes("protected")
+                        ? "protected"
+                        : "public",
+                    isStatic: fieldModifiers.includes("static"),
+                    isReadonly: fieldModifiers.includes("readonly"),
+                    isOptional: false,
+                    defaultValue: fieldValue ? this.getNodeText(fieldValue) : null,
+                    location: this.getLocation(child),
+                    docComment: null,
+                  });
+                }
+              }
+            }
+          }
+        } else if (child.type === "property_declaration") {
+          const typeNode = child.childForFieldName("type");
+          const propName = child.childForFieldName("name");
+
+          // Extract modifiers
+          const propModifiers: string[] = [];
+          for (const mod of child.children) {
+            if (mod.type === "modifier") {
+              propModifiers.push(mod.text);
+            }
+          }
+
+          if (propName) {
+            properties.push({
+              kind: "property",
+              name: propName.text,
+              type: typeNode ? this.getNodeText(typeNode) : null,
+              visibility: propModifiers.includes("private")
+                ? "private"
+                : propModifiers.includes("protected")
+                  ? "protected"
+                  : "public",
+              isStatic: propModifiers.includes("static"),
+              isReadonly: false,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    // Extract class modifiers
+    const modifiers: UCEModifier[] = [];
+    for (const child of node.children) {
+      if (child.type === "modifier") {
+        const modText = child.text;
+        if (modText === "public") modifiers.push("export");
+        if (modText === "abstract") modifiers.push("abstract");
+        if (modText === "static") modifiers.push("static");
+        if (modText === "sealed") modifiers.push("readonly");
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams,
+      extends: extendsList[0] ?? null,
+      implements: extendsList.slice(1),
       methods,
       properties,
       constructor: constructorMethod,
@@ -459,8 +2287,22 @@ export class ASTTransformer {
    */
   private extractInterfaces(rootNode: SyntaxNode): UCEInterface[] {
     const interfaces: UCEInterface[] = [];
+    const nodeTypes = INTERFACE_NODE_TYPES[this.language] ?? INTERFACE_NODE_TYPES["typescript"] ?? [];
 
-    this.findNodes(rootNode, ["interface_declaration"]).forEach((node) => {
+    // Skip if language doesn't have interfaces
+    if (!nodeTypes || nodeTypes.length === 0) {
+      return interfaces;
+    }
+
+    this.findNodes(rootNode, nodeTypes).forEach((node) => {
+      // For Kotlin, filter to only class_declarations that have the 'interface' keyword
+      if (this.language === "kotlin" && node.type === "class_declaration") {
+        const hasInterfaceKeyword = node.children.some((c: SyntaxNode) => c.type === "interface");
+        if (!hasInterfaceKeyword) {
+          return; // Skip non-interface class declarations
+        }
+      }
+
       const iface = this.parseInterfaceNode(node);
       if (iface) {
         interfaces.push(iface);
@@ -474,6 +2316,35 @@ export class ASTTransformer {
    * Parses an interface declaration node.
    */
   private parseInterfaceNode(node: SyntaxNode): UCEInterface | null {
+    // Handle language-specific interface parsing
+    switch (this.language) {
+      case "go":
+        return this.parseGoInterface(node);
+      case "rust":
+        return this.parseRustTrait(node);
+      case "java":
+        return this.parseJavaInterface(node);
+      case "csharp":
+        return this.parseCSharpInterface(node);
+      case "kotlin":
+        return this.parseKotlinInterface(node);
+      case "swift":
+        return this.parseSwiftProtocol(node);
+      case "php":
+        return this.parsePhpInterface(node);
+      case "scala":
+        return this.parseScalaTrait(node);
+      case "haskell":
+        return this.parseHaskellTypeClass(node);
+      default:
+        return this.parseTypeScriptInterface(node);
+    }
+  }
+
+  /**
+   * Parses a TypeScript interface declaration.
+   */
+  private parseTypeScriptInterface(node: SyntaxNode): UCEInterface | null {
     const nameNode = node.childForFieldName("name");
     const name = nameNode?.text ?? "";
 
@@ -512,6 +2383,2231 @@ export class ASTTransformer {
       modifiers,
       docComment,
     };
+  }
+
+  /**
+   * Parses a Go interface (type_spec with interface_type).
+   */
+  private parseGoInterface(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Check if this is an interface type
+    const typeNode = node.childForFieldName("type");
+    if (!typeNode || typeNode.type !== "interface_type") {
+      return null; // Not an interface
+    }
+
+    const methods: UCEInterfaceMethod[] = [];
+    const extendsList: string[] = [];
+
+    // Parse interface methods
+    for (const child of typeNode.children) {
+      if (child.type === "method_spec") {
+        const methodName = child.childForFieldName("name");
+        const paramsNode = child.childForFieldName("parameters");
+        const resultNode = child.childForFieldName("result");
+
+        methods.push({
+          kind: "method",
+          name: methodName?.text ?? "",
+          params: paramsNode ? this.parseGoParameters(paramsNode) : [],
+          returnType: resultNode ? this.getNodeText(resultNode) : null,
+          typeParams: [],
+          signature: `${methodName?.text ?? ""}(${paramsNode ? this.getNodeText(paramsNode) : ""})${resultNode ? " " + this.getNodeText(resultNode) : ""}`,
+          isOptional: false,
+          location: this.getLocation(child),
+          docComment: null,
+        });
+      } else if (child.type === "type_identifier") {
+        // Embedded interface
+        extendsList.push(child.text);
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+    const isExported = name.length > 0 && name[0] === name[0]?.toUpperCase();
+
+    return {
+      kind: "interface",
+      name,
+      typeParams: [],
+      extends: extendsList,
+      properties: [],
+      methods,
+      location: this.getLocation(node),
+      modifiers: isExported ? ["export"] : [],
+      docComment,
+    };
+  }
+
+  /**
+   * Parses a Rust trait definition.
+   */
+  private parseRustTrait(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const methods: UCEInterfaceMethod[] = [];
+    const extendsList: string[] = [];
+
+    // Parse trait bounds (super traits)
+    const boundsNode = node.childForFieldName("bounds");
+    if (boundsNode) {
+      for (const child of boundsNode.children) {
+        if (child.type === "type_identifier" || child.type === "generic_type") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    // Parse trait items
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const item of bodyNode.children) {
+        if (item.type === "function_signature_item" || item.type === "function_item") {
+          const methodName = item.childForFieldName("name");
+          const paramsNode = item.childForFieldName("parameters");
+          const returnTypeNode = item.childForFieldName("return_type");
+
+          methods.push({
+            kind: "method",
+            name: methodName?.text ?? "",
+            params: paramsNode ? this.parseRustParameters(paramsNode) : [],
+            returnType: returnTypeNode ? this.getNodeText(returnTypeNode).replace(/^->\s*/, "") : null,
+            typeParams: [],
+            signature: `fn ${methodName?.text ?? ""}(...)`,
+            isOptional: false,
+            location: this.getLocation(item),
+            docComment: null,
+          });
+        }
+      }
+    }
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+    const visibility = node.children.find((c: SyntaxNode) => c.type === "visibility_modifier");
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "interface",
+      name,
+      typeParams,
+      extends: extendsList,
+      properties: [],
+      methods,
+      location: this.getLocation(node),
+      modifiers: visibility ? ["export"] : [],
+      docComment,
+    };
+  }
+
+  /**
+   * Parses a Java interface declaration.
+   */
+  private parseJavaInterface(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Parse extends
+    const extendsNode = node.childForFieldName("extends_interfaces");
+    const extendsList: string[] = [];
+    if (extendsNode) {
+      for (const child of extendsNode.children) {
+        if (child.type === "type_identifier" || child.type === "generic_type") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const methods: UCEInterfaceMethod[] = [];
+    const properties: UCEInterfaceProperty[] = [];
+
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "method_declaration") {
+          const methodName = child.childForFieldName("name");
+          const paramsNode = child.childForFieldName("parameters");
+          const returnTypeNode = child.childForFieldName("type");
+
+          methods.push({
+            kind: "method",
+            name: methodName?.text ?? "",
+            params: paramsNode ? this.parseJavaParameters(paramsNode) : [],
+            returnType: returnTypeNode ? this.getNodeText(returnTypeNode) : null,
+            typeParams: [],
+            signature: `${returnTypeNode ? this.getNodeText(returnTypeNode) : "void"} ${methodName?.text ?? ""}(...)`,
+            isOptional: false,
+            location: this.getLocation(child),
+            docComment: null,
+          });
+        } else if (child.type === "constant_declaration") {
+          const typeNode = child.childForFieldName("type");
+          const declarators = child.children.filter((c: SyntaxNode) => c.type === "variable_declarator");
+
+          for (const decl of declarators) {
+            const fieldName = decl.childForFieldName("name");
+            properties.push({
+              kind: "property",
+              name: fieldName?.text ?? "",
+              type: typeNode ? this.getNodeText(typeNode) : null,
+              isReadonly: true,
+              isOptional: false,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    const modifierNode = node.children.find((c: SyntaxNode) => c.type === "modifiers");
+    if (modifierNode) {
+      for (const mod of modifierNode.children) {
+        if (mod.text === "public") modifiers.push("export");
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "interface",
+      name,
+      typeParams,
+      extends: extendsList,
+      properties,
+      methods,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+    };
+  }
+
+  /**
+   * Parses a C# interface declaration.
+   */
+  private parseCSharpInterface(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Parse base interfaces
+    const baseListNode = node.childForFieldName("bases");
+    const extendsList: string[] = [];
+    if (baseListNode) {
+      for (const child of baseListNode.children) {
+        if (child.type === "identifier" || child.type === "generic_name" || child.type === "qualified_name") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const methods: UCEInterfaceMethod[] = [];
+    const properties: UCEInterfaceProperty[] = [];
+
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "method_declaration") {
+          const methodName = child.childForFieldName("name");
+          const paramsNode = child.childForFieldName("parameters");
+          const returnTypeNode = child.childForFieldName("type");
+
+          methods.push({
+            kind: "method",
+            name: methodName?.text ?? "",
+            params: paramsNode ? this.parseCSharpParameters(paramsNode) : [],
+            returnType: returnTypeNode ? this.getNodeText(returnTypeNode) : null,
+            typeParams: [],
+            signature: `${returnTypeNode ? this.getNodeText(returnTypeNode) : "void"} ${methodName?.text ?? ""}(...)`,
+            isOptional: false,
+            location: this.getLocation(child),
+            docComment: null,
+          });
+        } else if (child.type === "property_declaration") {
+          const typeNode = child.childForFieldName("type");
+          const propName = child.childForFieldName("name");
+
+          if (propName) {
+            properties.push({
+              kind: "property",
+              name: propName.text,
+              type: typeNode ? this.getNodeText(typeNode) : null,
+              isReadonly: false,
+              isOptional: false,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    for (const child of node.children) {
+      if (child.type === "modifier") {
+        if (child.text === "public") modifiers.push("export");
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "interface",
+      name,
+      typeParams,
+      extends: extendsList,
+      properties,
+      methods,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+    };
+  }
+
+  // ===========================================================================
+  // Kotlin Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a Kotlin function declaration.
+   */
+  private parseKotlinFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name") ?? node.children.find((c) => c.type === "simple_identifier");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("value_parameters") ?? node.children.find((c) => c.type === "function_value_parameters");
+    const params = paramsNode ? this.parseKotlinParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("type") ?? node.children.find((c) => c.type === "type_identifier" || c.type === "user_type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode) : null;
+
+    const typeParamsNode = node.childForFieldName("type_parameters") ?? node.children.find((c) => c.type === "type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const bodyNode = node.childForFieldName("body") ?? node.children.find((c) => c.type === "function_body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    const modifierList = node.children.filter((c: SyntaxNode) => c.type === "modifiers" || c.type === "modifier");
+    for (const modNode of modifierList) {
+      const modText = modNode.text;
+      if (modText.includes("public")) modifiers.push("public");
+      if (modText.includes("private")) modifiers.push("private");
+      if (modText.includes("protected")) modifiers.push("protected");
+      if (modText.includes("internal")) modifiers.push("public"); // Map internal to public
+      if (modText.includes("suspend")) modifiers.push("async");
+      if (modText.includes("abstract")) modifiers.push("abstract");
+      if (modText.includes("override")) modifiers.push("override");
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = `fun ${name}(${params.map(p => `${p.name}: ${p.type || "Any"}`).join(", ")}): ${returnType || "Unit"}`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams,
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature: signature.trim(),
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode ?? null) : 0,
+    };
+  }
+
+  /**
+   * Parses Kotlin function parameters.
+   */
+  private parseKotlinParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "parameter" || child.type === "function_value_parameter") {
+        const nameNode = child.children.find((c) => c.type === "simple_identifier");
+        const typeNode = child.childForFieldName("type") ?? child.children.find((c) => c.type === "user_type" || c.type === "type_identifier");
+        const defaultValueNode = child.children.find((c) => c.type === "expression" || c.previousSibling?.text === "=");
+
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: defaultValueNode !== null,
+          isRest: false,
+          defaultValue: defaultValueNode ? this.getNodeText(defaultValueNode) : null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a Kotlin class or object declaration.
+   */
+  private parseKotlinClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name") ?? node.children.find((c) => c.type === "type_identifier" || c.type === "simple_identifier");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Parse superclass/interfaces
+    const delegationSpecifiers = node.children.find((c) => c.type === "delegation_specifiers");
+    const extendsList: string[] = [];
+    if (delegationSpecifiers) {
+      for (const child of delegationSpecifiers.children) {
+        if (child.type === "delegation_specifier" || child.type === "user_type") {
+          const text = child.text ?? "";
+          extendsList.push(text.split("(")[0] ?? text); // Remove constructor call
+        }
+      }
+    }
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    const bodyNode = node.children.find((c) => c.type === "class_body");
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    // Parse primary constructor parameters as properties
+    const primaryConstructor = node.children.find((c) => c.type === "primary_constructor");
+    if (primaryConstructor) {
+      const classParams = primaryConstructor.children.find((c) => c.type === "class_parameters");
+      if (classParams) {
+        for (const param of classParams.children) {
+          if (param.type === "class_parameter") {
+            const propName = param.children.find((c) => c.type === "simple_identifier");
+            const propType = param.children.find((c) => c.type === "user_type" || c.type === "type_identifier");
+            const isVal = param.children.some((c) => c.text === "val");
+            const isVar = param.children.some((c) => c.text === "var");
+
+            if (propName && (isVal || isVar)) {
+              properties.push({
+                kind: "property",
+                name: propName.text,
+                type: propType ? this.getNodeText(propType) : null,
+                visibility: "public",
+                isStatic: false,
+                isReadonly: isVal,
+                isOptional: false,
+                defaultValue: null,
+                location: this.getLocation(param),
+                docComment: null,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "function_declaration") {
+          const fn = this.parseKotlinFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: fn.modifiers.includes("private") ? "private" : fn.modifiers.includes("protected") ? "protected" : "public",
+              isStatic: false,
+              isAbstract: fn.modifiers.includes("abstract"),
+              isGetter: false,
+              isSetter: false,
+            });
+          }
+        } else if (child.type === "property_declaration") {
+          const propName = child.children.find((c) => c.type === "variable_declaration")?.children.find((c) => c.type === "simple_identifier");
+          const propType = child.children.find((c) => c.type === "user_type" || c.type === "type_identifier");
+          const isVal = child.children.some((c) => c.text === "val");
+
+          if (propName) {
+            properties.push({
+              kind: "property",
+              name: propName.text,
+              type: propType ? this.getNodeText(propType) : null,
+              visibility: "public",
+              isStatic: false,
+              isReadonly: isVal,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    // Extract class modifiers
+    const modifiers: UCEModifier[] = [];
+    const modifierList = node.children.filter((c: SyntaxNode) => c.type === "modifiers");
+    for (const modNode of modifierList) {
+      const modText = modNode.text;
+      if (modText.includes("public") || modText.includes("internal")) modifiers.push("export");
+      if (modText.includes("abstract")) modifiers.push("abstract");
+      if (modText.includes("data")) modifiers.push("readonly");
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams,
+      extends: extendsList[0] ?? null,
+      implements: extendsList.slice(1),
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      isAbstract: modifiers.includes("abstract"),
+    };
+  }
+
+  /**
+   * Parses a Kotlin interface declaration.
+   */
+  private parseKotlinInterface(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name") ?? node.children.find((c) => c.type === "type_identifier");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const typeParamsNode = node.childForFieldName("type_parameters");
+    const typeParams = typeParamsNode ? this.parseTypeParameters(typeParamsNode) : [];
+
+    // Parse extends
+    const delegationSpecifiers = node.children.find((c) => c.type === "delegation_specifiers");
+    const extendsList: string[] = [];
+    if (delegationSpecifiers) {
+      for (const child of delegationSpecifiers.children) {
+        if (child.type === "user_type") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    const methods: UCEInterfaceMethod[] = [];
+    const properties: UCEInterfaceProperty[] = [];
+
+    const bodyNode = node.children.find((c) => c.type === "class_body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "function_declaration") {
+          const fn = this.parseKotlinFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              signature: fn.signature,
+              isOptional: false,
+              location: fn.location,
+              docComment: fn.docComment,
+            });
+          }
+        } else if (child.type === "property_declaration") {
+          const propName = child.children.find((c) => c.type === "variable_declaration")?.children.find((c) => c.type === "simple_identifier");
+          const propType = child.children.find((c) => c.type === "user_type" || c.type === "type_identifier");
+
+          if (propName) {
+            properties.push({
+              kind: "property",
+              name: propName.text,
+              type: propType ? this.getNodeText(propType) : null,
+              isReadonly: false,
+              isOptional: false,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "interface",
+      name,
+      typeParams,
+      extends: extendsList,
+      properties,
+      methods,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+    };
+  }
+
+  // ===========================================================================
+  // Swift Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a Swift function declaration.
+   */
+  private parseSwiftFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name") ?? node.children.find((c) => c.type === "simple_identifier");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters") ?? node.children.find((c) => c.type === "parameter_clause");
+    const params = paramsNode ? this.parseSwiftParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("return_type") ?? node.children.find((c) => c.type === "type_identifier" || c.type === "user_type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode).replace(/^->\s*/, "") : null;
+
+    const bodyNode = node.childForFieldName("body") ?? node.children.find((c) => c.type === "function_body" || c.type === "code_block");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    for (const child of node.children) {
+      if (child.type === "modifiers" || child.type === "modifier") {
+        const modText = child.text;
+        if (modText.includes("public")) modifiers.push("public");
+        if (modText.includes("private")) modifiers.push("private");
+        if (modText.includes("fileprivate")) modifiers.push("private");
+        if (modText.includes("internal")) modifiers.push("public");
+        if (modText.includes("static")) modifiers.push("static");
+        if (modText.includes("class")) modifiers.push("static");
+        if (modText.includes("async")) modifiers.push("async");
+        if (modText.includes("override")) modifiers.push("override");
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = `func ${name}(${params.map(p => `${p.name}: ${p.type || "Any"}`).join(", ")})${returnType ? ` -> ${returnType}` : ""}`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature: signature.trim(),
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode ?? null) : 0,
+    };
+  }
+
+  /**
+   * Parses Swift function parameters.
+   */
+  private parseSwiftParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "parameter") {
+        const externalName = child.children.find((c, i) => c.type === "simple_identifier" && i === 0);
+        const internalName = child.children.filter((c) => c.type === "simple_identifier")[1] ?? externalName;
+        const typeNode = child.children.find((c) => c.type === "type_identifier" || c.type === "user_type" || c.type === "optional_type");
+        const defaultValueNode = child.children.find((c) => c.type === "expression" || c.previousSibling?.text === "=");
+
+        params.push({
+          name: internalName?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: typeNode?.type === "optional_type" || defaultValueNode !== null,
+          isRest: child.children.some((c) => c.text === "..."),
+          defaultValue: defaultValueNode ? this.getNodeText(defaultValueNode) : null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a Swift class or struct declaration.
+   */
+  private parseSwiftClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name") ?? node.children.find((c) => c.type === "type_identifier");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const isStruct = node.type === "struct_declaration";
+
+    // Parse inheritance
+    const inheritanceClause = node.children.find((c) => c.type === "inheritance_clause" || c.type === "type_inheritance_clause");
+    const extendsList: string[] = [];
+    if (inheritanceClause) {
+      for (const child of inheritanceClause.children) {
+        if (child.type === "type_identifier" || child.type === "user_type") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    const bodyNode = node.children.find((c) => c.type === "class_body" || c.type === "struct_body");
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "function_declaration") {
+          const fn = this.parseSwiftFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: fn.modifiers.includes("private") ? "private" : "public",
+              isStatic: fn.modifiers.includes("static"),
+              isAbstract: false,
+              isGetter: false,
+              isSetter: false,
+            });
+          }
+        } else if (child.type === "init_declaration") {
+          const fn = this.parseSwiftFunction(child);
+          if (fn) {
+            constructorMethod = {
+              kind: "method",
+              name: "init",
+              params: fn.params,
+              returnType: null,
+              typeParams: [],
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: "public",
+              isStatic: false,
+              isAbstract: false,
+              isGetter: false,
+              isSetter: false,
+            };
+          }
+        } else if (child.type === "property_declaration" || child.type === "variable_declaration") {
+          const propName = child.children.find((c) => c.type === "pattern")?.text ?? child.children.find((c) => c.type === "simple_identifier")?.text;
+          const propType = child.children.find((c) => c.type === "type_annotation")?.children.find((c) => c.type === "type_identifier" || c.type === "user_type");
+          const isLet = child.children.some((c) => c.text === "let");
+          const isStatic = child.children.some((c) => c.text === "static" || c.text === "class");
+
+          if (propName) {
+            properties.push({
+              kind: "property",
+              name: propName,
+              type: propType ? this.getNodeText(propType) : null,
+              visibility: "public",
+              isStatic,
+              isReadonly: isLet,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: extendsList[0] ?? null,
+      implements: extendsList.slice(1),
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers: isStruct ? [] : [],
+      docComment,
+      isAbstract: false,
+    };
+  }
+
+  /**
+   * Parses a Swift protocol declaration.
+   */
+  private parseSwiftProtocol(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name") ?? node.children.find((c) => c.type === "type_identifier");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Parse inheritance
+    const inheritanceClause = node.children.find((c) => c.type === "inheritance_clause" || c.type === "type_inheritance_clause");
+    const extendsList: string[] = [];
+    if (inheritanceClause) {
+      for (const child of inheritanceClause.children) {
+        if (child.type === "type_identifier" || child.type === "user_type") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    const methods: UCEInterfaceMethod[] = [];
+    const properties: UCEInterfaceProperty[] = [];
+
+    const bodyNode = node.children.find((c) => c.type === "protocol_body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "protocol_method_declaration" || child.type === "function_declaration") {
+          const fn = this.parseSwiftFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: [],
+              signature: fn.signature,
+              isOptional: false,
+              location: fn.location,
+              docComment: fn.docComment,
+            });
+          }
+        } else if (child.type === "protocol_property_declaration" || child.type === "property_declaration") {
+          const propName = child.children.find((c) => c.type === "pattern")?.text ?? child.children.find((c) => c.type === "simple_identifier")?.text;
+          const propType = child.children.find((c) => c.type === "type_annotation")?.children.find((c) => c.type === "type_identifier");
+
+          if (propName) {
+            properties.push({
+              kind: "property",
+              name: propName,
+              type: propType ? this.getNodeText(propType) : null,
+              isReadonly: false,
+              isOptional: false,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "interface",
+      name,
+      typeParams: [],
+      extends: extendsList,
+      properties,
+      methods,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+    };
+  }
+
+  // ===========================================================================
+  // Dart Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a Dart function or method.
+   */
+  private parseDartFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name") ?? node.children.find((c) => c.type === "identifier");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters") ?? node.children.find((c) => c.type === "formal_parameter_list");
+    const params = paramsNode ? this.parseDartParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("return_type") ?? node.children.find((c) => c.type === "type_identifier" || c.type === "type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode) : null;
+
+    const bodyNode = node.childForFieldName("body") ?? node.children.find((c) => c.type === "function_body" || c.type === "block");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    if (node.children.some((c: SyntaxNode) => c.text === "static")) modifiers.push("static");
+    if (node.children.some((c: SyntaxNode) => c.text === "async")) modifiers.push("async");
+    if (node.children.some((c: SyntaxNode) => c.text === "abstract")) modifiers.push("abstract");
+
+    const docComment = this.extractDocComment(node);
+    const signature = `${returnType ?? "void"} ${name}(${params.map(p => `${p.type || "dynamic"} ${p.name}`).join(", ")})`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature: signature.trim(),
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode ?? null) : 0,
+    };
+  }
+
+  /**
+   * Parses Dart function parameters.
+   */
+  private parseDartParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "formal_parameter" || child.type === "simple_formal_parameter" || child.type === "default_formal_parameter") {
+        const nameNode = child.children.find((c) => c.type === "identifier");
+        const typeNode = child.children.find((c) => c.type === "type_identifier" || c.type === "type");
+        const defaultValueNode = child.children.find((c) => c.type === "expression" || c.previousSibling?.text === "=");
+        const isRequired = child.children.some((c) => c.text === "required");
+
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: !isRequired && (child.type === "default_formal_parameter" || defaultValueNode !== null),
+          isRest: false,
+          defaultValue: defaultValueNode ? this.getNodeText(defaultValueNode) : null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a Dart class definition.
+   */
+  private parseDartClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name") ?? node.children.find((c) => c.type === "identifier");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Parse superclass and interfaces
+    const extendsClause = node.children.find((c) => c.type === "superclass");
+    const implementsClause = node.children.find((c) => c.type === "interfaces");
+    const withClause = node.children.find((c) => c.type === "mixins");
+
+    let extendsClass: string | null = null;
+    const implementsList: string[] = [];
+
+    if (extendsClause) {
+      const superType = extendsClause.children.find((c) => c.type === "type_identifier" || c.type === "identifier");
+      extendsClass = superType?.text ?? null;
+    }
+
+    if (implementsClause) {
+      for (const child of implementsClause.children) {
+        if (child.type === "type_identifier" || child.type === "identifier") {
+          implementsList.push(child.text);
+        }
+      }
+    }
+
+    if (withClause) {
+      for (const child of withClause.children) {
+        if (child.type === "type_identifier" || child.type === "identifier") {
+          implementsList.push(child.text);
+        }
+      }
+    }
+
+    const bodyNode = node.children.find((c) => c.type === "class_body");
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "method_signature" || child.type === "function_signature") {
+          const fn = this.parseDartFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: name.startsWith("_") ? "private" : "public",
+              isStatic: fn.modifiers.includes("static"),
+              isAbstract: fn.modifiers.includes("abstract"),
+              isGetter: false,
+              isSetter: false,
+            });
+          }
+        } else if (child.type === "constructor_signature") {
+          const fn = this.parseDartFunction(child);
+          if (fn) {
+            constructorMethod = {
+              kind: "method",
+              name: "constructor",
+              params: fn.params,
+              returnType: null,
+              typeParams: [],
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: "public",
+              isStatic: false,
+              isAbstract: false,
+              isGetter: false,
+              isSetter: false,
+            };
+          }
+        } else if (child.type === "declaration" || child.type === "initialized_variable_definition") {
+          const propName = child.children.find((c) => c.type === "identifier");
+          const propType = child.children.find((c) => c.type === "type_identifier" || c.type === "type");
+          const isFinal = child.children.some((c) => c.text === "final");
+          const isStatic = child.children.some((c) => c.text === "static");
+
+          if (propName) {
+            properties.push({
+              kind: "property",
+              name: propName.text,
+              type: propType ? this.getNodeText(propType) : null,
+              visibility: propName.text.startsWith("_") ? "private" : "public",
+              isStatic,
+              isReadonly: isFinal,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    // Extract class modifiers
+    const modifiers: UCEModifier[] = [];
+    if (node.children.some((c: SyntaxNode) => c.text === "abstract")) modifiers.push("abstract");
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: extendsClass,
+      implements: implementsList,
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      isAbstract: modifiers.includes("abstract"),
+    };
+  }
+
+  // ===========================================================================
+  // Ruby Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a Ruby method node (method or singleton_method).
+   */
+  private parseRubyFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parseRubyParameters(paramsNode) : [];
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Ruby methods are dynamically typed - no explicit return types
+    const modifiers: UCEModifier[] = [];
+    if (node.type === "singleton_method") {
+      modifiers.push("static");
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = this.buildFunctionSignature(name, params, null, [], modifiers);
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType: null,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses Ruby method parameters.
+   */
+  private parseRubyParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "identifier" || child.type === "simple_parameter") {
+        const name = child.text;
+        params.push({
+          name,
+          type: null, // Ruby is dynamically typed
+          isOptional: false,
+          isRest: false,
+          defaultValue: null,
+        });
+      } else if (child.type === "optional_parameter") {
+        const nameNode = child.children.find((c) => c.type === "identifier");
+        const valueNode = child.children.find((c) => c.type !== "identifier" && c.type !== "=");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: null,
+          isOptional: true,
+          isRest: false,
+          defaultValue: valueNode ? this.getNodeText(valueNode) : null,
+        });
+      } else if (child.type === "splat_parameter") {
+        const nameNode = child.children.find((c) => c.type === "identifier");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: null,
+          isOptional: false,
+          isRest: true,
+          defaultValue: null,
+        });
+      } else if (child.type === "block_parameter") {
+        const nameNode = child.children.find((c) => c.type === "identifier");
+        params.push({
+          name: nameNode?.text ?? "",
+          type: null,
+          isOptional: true,
+          isRest: false,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a Ruby class or module node.
+   */
+  private parseRubyClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Extract superclass
+    let extendsClass: string | null = null;
+    const superclassNode = node.childForFieldName("superclass");
+    if (superclassNode) {
+      extendsClass = superclassNode.text;
+    }
+
+    // Ruby modules can be mixed in - find include statements
+    const implementsList: string[] = [];
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "call" && child.children[0]?.text === "include") {
+          const argNode = child.children.find((c) => c.type === "argument_list");
+          if (argNode) {
+            for (const arg of argNode.children) {
+              if (arg.type === "constant" || arg.type === "scope_resolution") {
+                implementsList.push(arg.text);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Extract methods
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "method" || child.type === "singleton_method") {
+          const fn = this.parseRubyFunction(child);
+          if (fn) {
+            const method: UCEMethod = {
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: fn.name.startsWith("_") ? "private" : "public",
+              isStatic: fn.modifiers.includes("static"),
+              isAbstract: false,
+              isGetter: false,
+              isSetter: false,
+            };
+            if (fn.name === "initialize") {
+              constructorMethod = method;
+            } else {
+              methods.push(method);
+            }
+          }
+        } else if (child.type === "call") {
+          // Handle attr_reader, attr_writer, attr_accessor
+          const methodName = child.children[0]?.text;
+          if (methodName === "attr_reader" || methodName === "attr_writer" || methodName === "attr_accessor") {
+            const argList = child.children.find((c) => c.type === "argument_list");
+            if (argList) {
+              for (const arg of argList.children) {
+                if (arg.type === "simple_symbol" || arg.type === "symbol") {
+                  const propName = arg.text.replace(/^:/, "");
+                  properties.push({
+                    kind: "property",
+                    name: propName,
+                    type: null,
+                    visibility: "public",
+                    isStatic: false,
+                    isReadonly: methodName === "attr_reader",
+                    isOptional: false,
+                    defaultValue: null,
+                    location: this.getLocation(arg),
+                    docComment: null,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const modifiers: UCEModifier[] = [];
+    if (node.type === "module") {
+      modifiers.push("abstract"); // Ruby modules can't be instantiated
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: extendsClass,
+      implements: implementsList,
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      isAbstract: node.type === "module",
+    };
+  }
+
+  // ===========================================================================
+  // PHP Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a PHP function or method node.
+   */
+  private parsePhpFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parsePhpParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("return_type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode).replace(/^:\s*/, "") : null;
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Extract modifiers
+    const modifiers: UCEModifier[] = [];
+    for (const child of node.children) {
+      if (child.type === "visibility_modifier") {
+        if (child.text === "private") modifiers.push("private");
+        if (child.text === "protected") modifiers.push("protected");
+      }
+      if (child.type === "static_modifier" || child.text === "static") {
+        modifiers.push("static");
+      }
+      if (child.text === "abstract") modifiers.push("abstract");
+      if (child.text === "final") modifiers.push("final");
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = this.buildFunctionSignature(name, params, returnType, [], modifiers);
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses PHP function parameters.
+   */
+  private parsePhpParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "simple_parameter" || child.type === "property_promotion_parameter") {
+        const nameNode = child.children.find((c) => c.type === "variable_name");
+        const typeNode = child.children.find((c) =>
+          c.type === "type_name" || c.type === "named_type" || c.type === "primitive_type" || c.type === "nullable_type"
+        );
+        const defaultNode = child.childForFieldName("default_value");
+        const isVariadic = child.children.some((c) => c.type === "...");
+
+        const name = nameNode?.text?.replace(/^\$/, "") ?? "";
+        params.push({
+          name,
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: defaultNode !== null,
+          isRest: isVariadic,
+          defaultValue: defaultNode ? this.getNodeText(defaultNode) : null,
+        });
+      } else if (child.type === "variadic_parameter") {
+        const nameNode = child.children.find((c) => c.type === "variable_name");
+        const typeNode = child.children.find((c) =>
+          c.type === "type_name" || c.type === "named_type" || c.type === "primitive_type"
+        );
+
+        params.push({
+          name: nameNode?.text?.replace(/^\$/, "") ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: false,
+          isRest: true,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a PHP class node.
+   */
+  private parsePhpClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Extract extends
+    let extendsClass: string | null = null;
+    const extendsClause = node.children.find((c: SyntaxNode) => c.type === "base_clause");
+    if (extendsClause) {
+      const extendName = extendsClause.children.find((c: SyntaxNode) => c.type === "name" || c.type === "qualified_name");
+      extendsClass = extendName?.text ?? null;
+    }
+
+    // Extract implements
+    const implementsList: string[] = [];
+    const implementsClause = node.children.find((c: SyntaxNode) => c.type === "class_interface_clause");
+    if (implementsClause) {
+      for (const child of implementsClause.children) {
+        if (child.type === "name" || child.type === "qualified_name") {
+          implementsList.push(child.text);
+        }
+      }
+    }
+
+    // Extract methods and properties
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "method_declaration") {
+          const fn = this.parsePhpFunction(child);
+          if (fn) {
+            const visibility = this.getPhpVisibility(child);
+            const method: UCEMethod = {
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility,
+              isStatic: fn.modifiers.includes("static"),
+              isAbstract: fn.modifiers.includes("abstract"),
+              isGetter: false,
+              isSetter: false,
+            };
+            if (fn.name === "__construct") {
+              constructorMethod = method;
+            } else {
+              methods.push(method);
+            }
+          }
+        } else if (child.type === "property_declaration") {
+          const visibility = this.getPhpVisibility(child);
+          const isStatic = child.children.some((c: SyntaxNode) => c.text === "static");
+          const isReadonly = child.children.some((c: SyntaxNode) => c.text === "readonly");
+          const typeNode = child.children.find((c: SyntaxNode) =>
+            c.type === "type_name" || c.type === "named_type" || c.type === "primitive_type" || c.type === "nullable_type"
+          );
+
+          for (const prop of child.children) {
+            if (prop.type === "property_element") {
+              const propNameNode = prop.children.find((c) => c.type === "variable_name");
+              const defaultNode = prop.children.find((c) => c.type !== "variable_name" && c.type !== "=");
+
+              if (propNameNode) {
+                properties.push({
+                  kind: "property",
+                  name: propNameNode.text.replace(/^\$/, ""),
+                  type: typeNode ? this.getNodeText(typeNode) : null,
+                  visibility,
+                  isStatic,
+                  isReadonly,
+                  isOptional: false,
+                  defaultValue: defaultNode ? this.getNodeText(defaultNode) : null,
+                  location: this.getLocation(prop),
+                  docComment: null,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Extract class modifiers
+    const modifiers: UCEModifier[] = [];
+    if (node.children.some((c: SyntaxNode) => c.text === "abstract")) modifiers.push("abstract");
+    if (node.children.some((c: SyntaxNode) => c.text === "final")) modifiers.push("final");
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: extendsClass,
+      implements: implementsList,
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      isAbstract: modifiers.includes("abstract"),
+    };
+  }
+
+  /**
+   * Gets PHP visibility from a node.
+   */
+  private getPhpVisibility(node: SyntaxNode): UCEVisibility {
+    for (const child of node.children) {
+      if (child.type === "visibility_modifier" || child.type === "modifier") {
+        if (child.text === "private") return "private";
+        if (child.text === "protected") return "protected";
+      }
+    }
+    return "public";
+  }
+
+  /**
+   * Parses a PHP interface node.
+   */
+  private parsePhpInterface(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Extract extends
+    const extendsList: string[] = [];
+    const extendsClause = node.children.find((c: SyntaxNode) => c.type === "base_clause");
+    if (extendsClause) {
+      for (const child of extendsClause.children) {
+        if (child.type === "name" || child.type === "qualified_name") {
+          extendsList.push(child.text);
+        }
+      }
+    }
+
+    // Extract methods
+    const methods: UCEInterfaceMethod[] = [];
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "method_declaration") {
+          const fn = this.parsePhpFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: [],
+              signature: fn.signature,
+              isOptional: false,
+              location: fn.location,
+              docComment: fn.docComment,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "interface",
+      name,
+      typeParams: [],
+      extends: extendsList,
+      properties: [],
+      methods,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+    };
+  }
+
+  // ===========================================================================
+  // Bash Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a Bash function definition.
+   */
+  private parseBashFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Bash functions don't have explicit parameters - they use $1, $2, etc.
+    const params: UCEParameter[] = [];
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    const docComment = this.extractDocComment(node);
+    const signature = `${name}()`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType: null, // Bash functions return exit codes, not typed values
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  // ===========================================================================
+  // Scala Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a Scala function definition.
+   */
+  private parseScalaFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parseScalaParameters(paramsNode) : [];
+
+    const returnTypeNode = node.childForFieldName("return_type");
+    const returnType = returnTypeNode ? this.getNodeText(returnTypeNode) : null;
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    const modifiers: UCEModifier[] = [];
+    for (const child of node.children) {
+      if (child.type === "modifiers") {
+        if (child.text.includes("private")) modifiers.push("private");
+        if (child.text.includes("protected")) modifiers.push("protected");
+        if (child.text.includes("final")) modifiers.push("final");
+        if (child.text.includes("abstract")) modifiers.push("abstract");
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+    const signature = this.buildFunctionSignature(name, params, returnType, [], modifiers);
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses Scala function parameters.
+   */
+  private parseScalaParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "parameter") {
+        const nameNode = child.childForFieldName("name");
+        const typeNode = child.childForFieldName("type");
+        const defaultNode = child.childForFieldName("default");
+
+        params.push({
+          name: nameNode?.text ?? "",
+          type: typeNode ? this.getNodeText(typeNode) : null,
+          isOptional: defaultNode !== null,
+          isRest: false,
+          defaultValue: defaultNode ? this.getNodeText(defaultNode) : null,
+        });
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * Parses a Scala class, object, or trait definition.
+   */
+  private parseScalaClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Extract extends
+    let extendsClass: string | null = null;
+    const extendsClause = node.children.find((c: SyntaxNode) => c.type === "extends_clause");
+    if (extendsClause) {
+      const typeNode = extendsClause.children.find((c: SyntaxNode) => c.type === "type_identifier");
+      extendsClass = typeNode?.text ?? null;
+    }
+
+    // Extract with (mixins)
+    const implementsList: string[] = [];
+    for (const child of node.children) {
+      if (child.type === "extends_clause") {
+        for (const mixinChild of child.children) {
+          if (mixinChild.type === "type_identifier" && mixinChild.text !== extendsClass) {
+            implementsList.push(mixinChild.text);
+          }
+        }
+      }
+    }
+
+    // Extract methods and properties
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+    let constructorMethod: UCEMethod | null = null;
+
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "function_definition") {
+          const fn = this.parseScalaFunction(child);
+          if (fn) {
+            const method: UCEMethod = {
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: fn.modifiers.includes("private") ? "private" : fn.modifiers.includes("protected") ? "protected" : "public",
+              isStatic: false,
+              isAbstract: fn.modifiers.includes("abstract"),
+              isGetter: false,
+              isSetter: false,
+            };
+            methods.push(method);
+          }
+        } else if (child.type === "val_definition" || child.type === "var_definition") {
+          const propName = child.childForFieldName("pattern");
+          const propType = child.childForFieldName("type");
+          const isVal = child.type === "val_definition";
+
+          if (propName) {
+            properties.push({
+              kind: "property",
+              name: propName.text,
+              type: propType ? this.getNodeText(propType) : null,
+              visibility: "public",
+              isStatic: false,
+              isReadonly: isVal,
+              isOptional: false,
+              defaultValue: null,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    const modifiers: UCEModifier[] = [];
+    if (node.type === "object_definition") modifiers.push("static");
+    if (node.type === "trait_definition") modifiers.push("abstract");
+
+    // Check for abstract modifier in class_definition
+    const modifiersNode = node.children.find((c: SyntaxNode) => c.type === "modifiers");
+    const hasAbstract = modifiersNode?.text.includes("abstract") ?? false;
+    if (hasAbstract) modifiers.push("abstract");
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: extendsClass,
+      implements: implementsList,
+      methods,
+      properties,
+      constructor: constructorMethod,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      isAbstract: node.type === "trait_definition" || hasAbstract,
+    };
+  }
+
+  /**
+   * Parses a Scala trait as an interface.
+   */
+  private parseScalaTrait(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const methods: UCEInterfaceMethod[] = [];
+    const bodyNode = node.childForFieldName("body");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "function_definition") {
+          const fn = this.parseScalaFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: [],
+              signature: fn.signature,
+              isOptional: false,
+              location: fn.location,
+              docComment: fn.docComment,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "interface",
+      name,
+      typeParams: [],
+      extends: [],
+      properties: [],
+      methods,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+    };
+  }
+
+  // ===========================================================================
+  // Haskell Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a Haskell function definition.
+   */
+  private parseHaskellFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Haskell functions use pattern matching, parameters are patterns
+    const params: UCEParameter[] = [];
+    for (const child of node.children) {
+      if (child.type === "patterns" || child.type === "pat") {
+        for (const pattern of child.children) {
+          if (pattern.type === "variable" || pattern.type === "pat_name") {
+            params.push({
+              name: pattern.text,
+              type: null, // Haskell uses type inference
+              isOptional: false,
+              isRest: false,
+              defaultValue: null,
+            });
+          }
+        }
+      }
+    }
+
+    const bodyNode = node.childForFieldName("rhs") || node.childForFieldName("match");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    const docComment = this.extractDocComment(node);
+    const signature = `${name} :: ...`; // Haskell type signatures are separate
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType: null,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses a Haskell data type (ADT) as a class.
+   */
+  private parseHaskellClass(node: SyntaxNode): UCEClass | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    // Haskell ADTs have constructors
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+
+    // Extract constructors as static factory methods
+    for (const child of node.children) {
+      if (child.type === "constructor" || child.type === "data_constructor") {
+        const constrName = child.childForFieldName("name");
+        if (constrName) {
+          methods.push({
+            kind: "method",
+            name: constrName.text,
+            params: [],
+            returnType: name,
+            typeParams: [],
+            body: "",
+            location: this.getLocation(child),
+            modifiers: [],
+            docComment: null,
+            signature: constrName.text,
+            visibility: "public",
+            isStatic: true,
+            isAbstract: false,
+            isGetter: false,
+            isSetter: false,
+          });
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: null,
+      implements: [],
+      methods,
+      properties,
+      constructor: null,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+      isAbstract: false,
+    };
+  }
+
+  /**
+   * Parses a Haskell type class as an interface.
+   */
+  private parseHaskellTypeClass(node: SyntaxNode): UCEInterface | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const methods: UCEInterfaceMethod[] = [];
+    const bodyNode = node.childForFieldName("where") || node.childForFieldName("declarations");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "signature" || child.type === "type_signature") {
+          const sigName = child.childForFieldName("name");
+          if (sigName) {
+            methods.push({
+              kind: "method",
+              name: sigName.text,
+              params: [],
+              returnType: null,
+              typeParams: [],
+              signature: this.getNodeText(child),
+              isOptional: false,
+              location: this.getLocation(child),
+              docComment: null,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "interface",
+      name,
+      typeParams: [],
+      extends: [],
+      properties: [],
+      methods,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+    };
+  }
+
+  // ===========================================================================
+  // Elixir Language Support
+  // ===========================================================================
+
+  /**
+   * Parses an Elixir function definition (def/defp).
+   */
+  private parseElixirFunction(node: SyntaxNode): UCEFunction | null {
+    // Elixir uses def/defp macro calls
+    if (node.type !== "call") return null;
+
+    const target = node.children[0];
+    if (!target || (target.text !== "def" && target.text !== "defp")) {
+      return null;
+    }
+
+    const isPrivate = target.text === "defp";
+
+    // Get function name and params from arguments
+    const args = node.children.find((c: SyntaxNode) => c.type === "arguments");
+    if (!args) return null;
+
+    let name = "";
+    const params: UCEParameter[] = [];
+
+    const firstArg = args.children[0];
+    if (firstArg?.type === "call") {
+      // def func_name(args)
+      const funcName = firstArg.children[0];
+      name = funcName?.text ?? "";
+
+      const funcArgs = firstArg.children.find((c: SyntaxNode) => c.type === "arguments");
+      if (funcArgs) {
+        for (const arg of funcArgs.children) {
+          if (arg.type === "identifier") {
+            params.push({
+              name: arg.text,
+              type: null,
+              isOptional: false,
+              isRest: false,
+              defaultValue: null,
+            });
+          }
+        }
+      }
+    } else if (firstArg?.type === "identifier") {
+      name = firstArg.text;
+    }
+
+    if (!name) return null;
+
+    const bodyNode = node.children.find((c: SyntaxNode) => c.type === "do_block");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    const modifiers: UCEModifier[] = [];
+    if (isPrivate) modifiers.push("private");
+
+    const docComment = this.extractDocComment(node);
+    const signature = `${target.text} ${name}(${params.map(p => p.name).join(", ")})`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType: null,
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity && bodyNode ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses an Elixir module definition as a class.
+   */
+  private parseElixirModule(node: SyntaxNode): UCEClass | null {
+    if (node.type !== "call") return null;
+
+    const target = node.children[0];
+    if (!target || target.text !== "defmodule") {
+      return null;
+    }
+
+    const args = node.children.find((c: SyntaxNode) => c.type === "arguments");
+    if (!args) return null;
+
+    const nameNode = args.children[0];
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const methods: UCEMethod[] = [];
+    const properties: UCEProperty[] = [];
+
+    const bodyNode = node.children.find((c: SyntaxNode) => c.type === "do_block");
+    if (bodyNode) {
+      for (const child of bodyNode.children) {
+        if (child.type === "call") {
+          const fn = this.parseElixirFunction(child);
+          if (fn) {
+            methods.push({
+              kind: "method",
+              name: fn.name,
+              params: fn.params,
+              returnType: fn.returnType,
+              typeParams: fn.typeParams,
+              body: fn.body,
+              location: fn.location,
+              modifiers: fn.modifiers,
+              docComment: fn.docComment,
+              signature: fn.signature,
+              visibility: fn.modifiers.includes("private") ? "private" : "public",
+              isStatic: true, // Elixir module functions are essentially static
+              isAbstract: false,
+              isGetter: false,
+              isSetter: false,
+            });
+          }
+        }
+      }
+    }
+
+    const docComment = this.extractDocComment(node);
+
+    return {
+      kind: "class",
+      name,
+      typeParams: [],
+      extends: null,
+      implements: [],
+      methods,
+      properties,
+      constructor: null,
+      location: this.getLocation(node),
+      modifiers: [],
+      docComment,
+      isAbstract: false,
+    };
+  }
+
+  // ===========================================================================
+  // Lua Language Support
+  // ===========================================================================
+
+  /**
+   * Parses a Lua function definition.
+   */
+  private parseLuaFunction(node: SyntaxNode): UCEFunction | null {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode?.text ?? "";
+
+    if (!name) return null;
+
+    const paramsNode = node.childForFieldName("parameters");
+    const params = paramsNode ? this.parseLuaParameters(paramsNode) : [];
+
+    const bodyNode = node.childForFieldName("body");
+    const body = bodyNode && this.options.includeBodies
+      ? this.truncateBody(this.getNodeText(bodyNode))
+      : "";
+
+    // Check if local
+    const modifiers: UCEModifier[] = [];
+    const isLocal = node.parent?.type === "local_function" ||
+                    node.children.some((c: SyntaxNode) => c.text === "local");
+    if (isLocal) modifiers.push("private");
+
+    const docComment = this.extractDocComment(node);
+    const signature = `function ${name}(${params.map(p => p.name).join(", ")})`;
+
+    return {
+      kind: "function",
+      name,
+      params,
+      returnType: null, // Lua is dynamically typed
+      typeParams: [],
+      body,
+      location: this.getLocation(node),
+      modifiers,
+      docComment,
+      signature,
+      complexity: this.options.calculateComplexity ? this.calculateComplexity(bodyNode) : 0,
+    };
+  }
+
+  /**
+   * Parses Lua function parameters.
+   */
+  private parseLuaParameters(paramsNode: SyntaxNode): UCEParameter[] {
+    const params: UCEParameter[] = [];
+
+    for (const child of paramsNode.children) {
+      if (child.type === "identifier" || child.type === "name") {
+        params.push({
+          name: child.text,
+          type: null,
+          isOptional: false,
+          isRest: false,
+          defaultValue: null,
+        });
+      } else if (child.type === "vararg_expression" || child.text === "...") {
+        params.push({
+          name: "...",
+          type: null,
+          isOptional: true,
+          isRest: true,
+          defaultValue: null,
+        });
+      }
+    }
+
+    return params;
   }
 
   /**

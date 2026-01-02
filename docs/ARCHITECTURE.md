@@ -35,8 +35,10 @@ Code-Synapse is a local CLI "sidecar" that runs alongside AI agents (Claude Code
 
 - **Real-time Code Understanding**: Watches file changes and maintains an up-to-date knowledge graph
 - **Semantic Search**: Combines vector embeddings, keyword search, and graph traversal
+- **Natural Language Search**: Query your codebase using plain English ("most complex functions", "where is createParser")
 - **Cross-File Intelligence**: Tracks function calls, type hierarchies, and module dependencies
 - **Local LLM Inference**: Uses small local models for business logic summarization
+- **Web Viewer**: Visual dashboard with REST API for exploring indexed code
 
 ### Design Goals
 
@@ -98,17 +100,17 @@ Code-Synapse is a local CLI "sidecar" that runs alongside AI agents (Claude Code
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              User / AI Agent                                 │
 └─────────────────────────────────────────────────────────────────────────────┘
-                    │                                    │
-                    ▼                                    ▼
-┌─────────────────────────────┐        ┌─────────────────────────────────────┐
-│         CLI Layer           │        │           MCP Layer                  │
-│   (commander.js + chalk)    │        │   (@modelcontextprotocol/sdk)       │
-│   default │ init │ index    │        │   Tools  │  Resources                │
-│   status │ config │ start   │        │                                      │
-└─────────────────────────────┘        └─────────────────────────────────────┘
-                    │                                    │
-                    └──────────────┬─────────────────────┘
-                                   ▼
+                    │                       │                      │
+                    ▼                       ▼                      ▼
+┌─────────────────────────┐  ┌────────────────────────┐  ┌────────────────────┐
+│       CLI Layer         │  │       MCP Layer        │  │    Viewer Layer    │
+│  (commander.js + chalk) │  │(@modelcontextprotocol) │  │  (HTTP + REST API) │
+│  default │ init │ index │  │  Tools │ Resources     │  │  NL Search │ Stats │
+│  status │ config│ start │  │                        │  │  Dashboard │ API   │
+└─────────────────────────┘  └────────────────────────┘  └────────────────────┘
+                    │                       │                      │
+                    └───────────────────────┼──────────────────────┘
+                                            ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           Core Layer                                         │
 │                                                                              │
@@ -117,10 +119,10 @@ Code-Synapse is a local CLI "sidecar" that runs alongside AI agents (Claude Code
 │  │ (fast-glob) │  │(tree-sitter)│  │ (pipeline)  │  │  (CozoDB)   │        │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
 │                                                                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                          │
-│  │ Embeddings  │  │  LLM Service│  │File Watcher │                          │
-│  │  (ONNX)     │  │(llama.cpp)  │  │ (chokidar)  │                          │
-│  └─────────────┘  └─────────────┘  └─────────────┘                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │ Embeddings  │  │  LLM Service│  │File Watcher │  │  NL Search  │        │
+│  │  (ONNX)     │  │(llama.cpp)  │  │ (chokidar)  │  │  (Intents)  │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
 └─────────────────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
@@ -138,13 +140,14 @@ Code-Synapse is a local CLI "sidecar" that runs alongside AI agents (Claude Code
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Three-Part Design
+### Four-Part Design
 
 | Part | Purpose | Technology |
 |------|---------|------------|
 | **CLI** | User interface for configuration and management | Commander.js, Chalk, Ora |
 | **MCP Server** | AI agent communication via Model Context Protocol | @modelcontextprotocol/sdk |
-| **Core** | Shared business logic used by both CLI and MCP | TypeScript modules |
+| **Web Viewer** | Visual dashboard with REST API for exploration | Node HTTP, NL Search |
+| **Core** | Shared business logic used by CLI, MCP, and Viewer | TypeScript modules |
 
 ---
 
@@ -236,12 +239,25 @@ CozoDB provides both graph storage AND native vector search via HNSW indices. Th
 src/
 ├── cli/                    # User-facing CLI
 │   ├── index.ts            # Entry point, signal handlers, default command
-│   └── commands/           # default, init, index, status, config, start
+│   └── commands/           # default, init, index, status, config, start, viewer
 │
 ├── mcp/                    # MCP Server
 │   ├── server.ts           # Server setup, tool handlers
 │   ├── tools.ts            # Tool definitions
 │   └── resources.ts        # Resource handlers
+│
+├── viewer/                 # Web Viewer & NL Search
+│   ├── index.ts            # Module exports
+│   ├── interfaces/         # IGraphViewer interface
+│   ├── impl/               # CozoGraphViewer implementation
+│   ├── ui/                 # HTTP server and REST API
+│   │   ├── server.ts       # ViewerServer class
+│   │   └── public/         # Static files (dashboard)
+│   └── nl-search/          # Natural Language Search
+│       ├── types.ts        # SearchIntent, NLSearchResult types
+│       ├── intent-classifier.ts  # Intent classification
+│       ├── query-builder.ts      # CozoScript query generation
+│       └── nl-search-service.ts  # Search orchestration
 │
 ├── core/                   # Business logic
 │   ├── parser/             # Tree-sitter AST parsing
@@ -301,6 +317,7 @@ src/
 | **V9: MCP Server** | Agent communication | Tools, resources, hybrid search |
 | **V10: LLM Integration** | Business logic | Model registry, GBNF grammars, inference |
 | **V11: CLI Commands** | User interface | Full command implementations |
+| **V12: Web Viewer** | Visual dashboard | REST API, NL Search, statistics |
 
 ### Interface Contracts
 
@@ -313,6 +330,7 @@ The codebase uses explicit interface contracts for testability and modularity:
 | **IScanner** | File discovery abstraction |
 | **ISemanticAnalyzer** | Type resolution abstraction |
 | **IExtractor** | Entity extraction abstraction |
+| **IGraphViewer** | Read-only graph exploration and statistics |
 
 ---
 
@@ -426,6 +444,128 @@ project-root/
 
 ---
 
+## Web Viewer & Natural Language Search
+
+### Web Viewer Overview
+
+The Web Viewer provides a visual dashboard and REST API for exploring indexed code without requiring AI agent integration. It runs as an HTTP server alongside the MCP server.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Web Browser                              │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    ViewerServer (Node HTTP)                      │
+│  • Static file serving (dashboard UI)                            │
+│  • REST API routing                                              │
+│  • CORS handling                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      IGraphViewer Interface                      │
+│  • getOverviewStats()        • listFiles()                       │
+│  • searchByName()            • getFunction()                     │
+│  • nlSearch()                • getCallers()                      │
+│  • getMostComplexFunctions() • getImports()                      │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        CozoGraphViewer                           │
+│  • CozoScript query execution                                    │
+│  • NL Search integration                                         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### REST API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/stats/overview` | GET | Index statistics (files, functions, etc.) |
+| `/api/stats/languages` | GET | Language distribution |
+| `/api/stats/complexity` | GET | Complexity distribution |
+| `/api/files` | GET | List indexed files |
+| `/api/functions` | GET | List indexed functions |
+| `/api/functions/most-complex` | GET | Most complex functions |
+| `/api/classes` | GET | List indexed classes |
+| `/api/search?q=term` | GET | Search by name |
+| `/api/nl-search?q=query` | GET | Natural language search |
+| `/api/nl-search/patterns` | GET | Supported NL query patterns |
+| `/api/health` | GET | Index health status |
+
+### Natural Language Search
+
+The NL Search feature allows querying the codebase using plain English. It uses pattern-based intent classification to convert natural language queries into CozoScript database queries.
+
+#### Supported Intents
+
+| Intent | Example Queries | Description |
+|--------|-----------------|-------------|
+| `rank_complexity` | "most complex functions", "complex code" | Find highest cyclomatic complexity |
+| `rank_size` | "largest files", "biggest classes" | Rank by byte size |
+| `find_location` | "where is createParser", "location of main" | Find symbol locations |
+| `filter_scope` | "functions in src/cli", "code in parser/" | Filter by directory |
+| `show_callers` | "what calls createParser", "callers of main" | Find calling functions |
+| `show_callees` | "what does main call", "functions called by X" | Find called functions |
+| `show_hierarchy` | "classes extending Error", "inheritance tree" | Class hierarchy |
+| `find_dependencies` | "external dependencies", "npm imports" | External packages |
+
+#### NL Search Architecture
+
+```
+User Query: "most complex functions"
+       │
+       ▼
+┌──────────────────┐
+│ Intent Classifier │  Pattern matching + confidence scoring
+└──────────────────┘
+       │
+       ▼
+┌──────────────────┐
+│  Query Builder   │  Generates CozoScript queries
+└──────────────────┘
+       │
+       ▼
+┌──────────────────┐
+│    CozoDB        │  Executes Datalog query
+└──────────────────┘
+       │
+       ▼
+┌──────────────────┐
+│ Result Formatter │  Structured JSON response
+└──────────────────┘
+```
+
+#### Example Response
+
+```json
+{
+  "query": "most complex functions",
+  "intent": {
+    "intent": "rank_complexity",
+    "confidence": 0.9,
+    "keywords": ["most", "complex", "functions"]
+  },
+  "results": [
+    {
+      "id": "func_123",
+      "name": "writeBatchToDb",
+      "complexity": 33,
+      "file_path": "src/core/graph/operations.ts"
+    }
+  ],
+  "totalCount": 45,
+  "executionTimeMs": 12
+}
+```
+
+---
+
 ## LLM Integration
 
 ### Model Registry
@@ -497,6 +637,7 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 | V9 | MCP Server | ✅ Complete |
 | V10 | LLM Integration | ✅ Complete |
 | V11 | CLI Commands | ✅ Complete |
+| V12 | Web Viewer & NL Search | ✅ Complete |
 
 ---
 
@@ -504,29 +645,21 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 
 ### Test Summary
 
-- **Total Tests**: 155 passing
-- **Test Files**: 11
+- **Total Tests**: 377+ passing
+- **Test Files**: 12
 - **Skipped**: 6 (MCP transport tests, tested manually)
-
-### Checkpoints Verified
-
-| Checkpoint | Goal | Result |
-|------------|------|--------|
-| **CP1: Foundation** | CLI launches, parsing works | ✅ 66 tests |
-| **CP2: Indexing** | Full pipeline end-to-end | ✅ 89 tests |
-| **CP3: MCP Server** | AI agents can query | ✅ 24 tests |
-| **CP4: Full System** | Complete verification | ✅ 155 tests |
 
 ### Key Verifications
 
-- CLI commands execute without errors (init, index, status, config, start)
+- CLI commands execute without errors (init, index, status, config, start, viewer)
 - File scanner discovers project files correctly
-- Parser extracts functions, classes, imports
+- Parser extracts functions, classes, imports for 24 languages
 - Graph database CRUD operations work
 - Incremental updates process correctly
 - File watcher detects and batches changes
 - MCP tools respond correctly
 - LLM model registry functional with 12 models
+- Web Viewer with REST API and NL Search
 - Performance benchmarks pass (100 parses <5s, 50 queries <2s)
 
 ---
@@ -581,9 +714,9 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 - Full GraphRAG hierarchical summarization
 - IDE Extensions (VS Code sidebar)
 - Additional LLM models via model registry
-- Web UI for graph visualization
+- Enhanced Web UI dashboard (graph visualization, filtering)
 - Export/import knowledge graphs
-- Additional language support (Go, Rust, Java, etc.)
+- Additional language support (Swift, Dart, Elixir, Lua - pending WASM)
 
 ### Scalability Considerations
 
@@ -787,4 +920,4 @@ See [Extension Points](#extension-points) section for details on extending Code-
 
 ---
 
-*Last Updated: December 31, 2025*
+*Last Updated: January 2, 2026*

@@ -59,11 +59,40 @@ Unlike standard tools (LSP, grep) that only see syntax, Code-Synapse builds a mu
 
 ## ✨ Key Features
 
-* **⚡ Zero-Config "Sidecar":** Runs locally on your machine. No Docker required. Just `npx code-synapse start`.
+* **⚡ Zero-Config "Sidecar":** Runs locally on your machine. No Docker required. Just `code-synapse` to get started.
 * **🔌 Agent-First Design:** Built natively on the **Model Context Protocol (MCP)**. Works out-of-the-box with Claude Desktop, Cursor, and any MCP-compliant tool.
 * **🧠 Hybrid Intelligence:** Combines deterministic Static Analysis (Tree-sitter) for 100% accuracy with probabilistic AI Inference (Local LLM) for deep context.
 * **🔒 Privacy-First:** Your code never leaves your machine. We use an embedded database (**CozoDB** with RocksDB backend) and local models (**Qwen 2.5 Coder**) to keep everything offline.
 * **🔄 Incremental Indexing:** Smart file-watching ensures the graph is updated in milliseconds when you save a file.
+* **🔍 Natural Language Search:** Query your codebase in plain English - "most complex functions", "where is createParser", "what calls main".
+* **📊 Web Viewer:** Visual dashboard with REST API for exploring indexed code, statistics, and call graphs.
+
+### 🌐 Supported Languages (24 total)
+
+| Language | Extensions | Extracted Entities |
+|----------|------------|-------------------|
+| **TypeScript** | `.ts`, `.tsx` | Functions, classes, interfaces, types, imports/exports |
+| **JavaScript** | `.js`, `.jsx`, `.mjs`, `.cjs` | Functions, classes, imports/exports |
+| **Go** | `.go` | Functions, methods, structs, interfaces, imports |
+| **Rust** | `.rs` | Functions, structs, traits, impl blocks, use declarations |
+| **Python** | `.py`, `.pyi`, `.pyw` | Functions, classes, methods, imports, decorators |
+| **Java** | `.java` | Classes, interfaces, methods, fields, imports |
+| **C** | `.c`, `.h` | Functions, structs, static functions, parameters |
+| **C++** | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, `.hxx`, `.h++`, `.ipp` | Classes, structs, templates, inheritance, methods |
+| **C#** | `.cs` | Classes, structs, interfaces, methods, properties, async |
+| **Kotlin** | `.kt`, `.kts` | Classes, interfaces, objects, data classes, suspend functions |
+| **Swift** | `.swift` | Classes, structs, protocols, functions *(WASM pending)* |
+| **Dart** | `.dart` | Classes, mixins, functions, async *(WASM pending)* |
+| **Ruby** | `.rb`, `.rake`, `.gemspec` | Classes, modules, methods, attr_accessor |
+| **PHP** | `.php`, `.phtml`, `.php3`, `.php4`, `.php5`, `.phps` | Classes, interfaces, methods, traits, visibility |
+| **Bash** | `.sh`, `.bash`, `.zsh` | Functions, shell scripts |
+| **Scala** | `.scala`, `.sc`, `.sbt` | Classes, case classes, traits, objects, methods |
+| **Haskell** | `.hs`, `.lhs` | Data types, type classes, functions, newtypes |
+| **Elixir** | `.ex`, `.exs` | Modules, functions, behaviours *(WASM pending)* |
+| **Lua** | `.lua` | Functions (prototype-based) *(WASM pending)* |
+| **JSON** | `.json`, `.jsonc`, `.json5` | Data format (syntax validation only) |
+| **YAML** | `.yaml`, `.yml` | Data format (syntax validation only) |
+| **TOML** | `.toml` | Data format (syntax validation only) |
 
 ---
 
@@ -105,25 +134,39 @@ code-synapse --version
 Navigate to your project and run Code-Synapse. It will automatically:
 - Initialize if not already set up
 - Index your codebase
-- Start the MCP server on an available port (3100-3200)
+- Start the Web Viewer with REST API and NL Search
+- Start the MCP server for AI agent communication
 
 ```bash
 cd my-project
 code-synapse                   # One command does it all!
 ```
 
+**Output:**
+```
+✔ Project initialized
+✔ Project indexed
+✔ Web Viewer started on port 3101
+  → Dashboard: http://127.0.0.1:3101
+  → NL Search: http://127.0.0.1:3101/api/nl-search?q=your+query
+✔ MCP server started on port 3100
+```
+
 **Options:**
 ```bash
-code-synapse --port 3200       # Use specific port
-code-synapse --debug           # Enable debug logging
-code-synapse --skip-index      # Skip indexing (if already indexed)
+code-synapse --port 3200          # Use specific MCP port
+code-synapse --viewer-port 3201   # Use specific viewer port
+code-synapse --debug              # Enable debug logging
+code-synapse --skip-index         # Skip indexing (if already indexed)
+code-synapse --skip-viewer        # Skip web viewer (MCP server only)
 ```
 
 **Or use individual commands:**
 ```bash
 code-synapse init              # Initialize configuration only
 code-synapse index             # Build the knowledge graph only
-code-synapse start             # Start server only
+code-synapse viewer            # Start web viewer only
+code-synapse start             # Start MCP server only
 code-synapse status            # Check status
 ```
 
@@ -297,19 +340,23 @@ Now ask complex, context-aware questions in your AI agent:
 Running `code-synapse` without any subcommand automatically:
 - Initializes the project (if not already initialized)
 - Indexes the codebase
-- Starts the MCP server on an available port (3100-3200)
+- Starts the Web Viewer with REST API and NL Search
+- Starts the MCP server for AI agent communication
 
 ```bash
-code-synapse                   # All-in-one command
-code-synapse --port 3200       # Use specific port
-code-synapse --debug           # Enable debug logging
-code-synapse --skip-index      # Skip indexing step
+code-synapse                      # All-in-one command
+code-synapse --port 3200          # Use specific MCP port
+code-synapse --viewer-port 3201   # Use specific viewer port
+code-synapse --debug              # Enable debug logging
+code-synapse --skip-index         # Skip indexing step
+code-synapse --skip-viewer        # Skip web viewer
 ```
 
 **Port Selection:**
-- Automatically finds an available port in range 3100-3200
+- MCP server: Finds available port in range 3100-3200
+- Web Viewer: Uses next available port after MCP
 - If no port available in range, prompts you to enter a port
-- Use `--port` to specify a port directly
+- Use `--port` and `--viewer-port` to specify ports directly
 
 ### Subcommands
 
@@ -318,10 +365,12 @@ code-synapse --skip-index      # Skip indexing step
 | `code-synapse init` | Initialize project configuration only |
 | `code-synapse index` | Build/rebuild the knowledge graph only |
 | `code-synapse status` | Show project and index statistics |
+| `code-synapse viewer` | Start the Web Viewer only |
+| `code-synapse viewer --port 3200` | Start viewer on custom port |
 | `code-synapse config --list-models` | List available LLM models |
 | `code-synapse config --model <preset>` | Set LLM model (fastest/balanced/quality/maximum) |
 | `code-synapse start` | Start the MCP server only |
-| `code-synapse start --port 3200` | Start on custom port |
+| `code-synapse start --port 3200` | Start MCP server on custom port |
 
 ---
 
@@ -420,14 +469,17 @@ Embeddings (ONNX) → Vector Index (HNSW)
 - [x] **Foundation**: Project scaffolding, CLI framework, utilities
 - [x] **Graph Database**: CozoDB integration with schema migrations
 - [x] **File Scanner**: Project detection, file discovery, change detection
-- [x] **Code Parser**: Tree-sitter WASM parsing for TS/JS
+- [x] **Code Parser**: Tree-sitter WASM parsing for multiple languages
+- [x] **Multi-Language Support**: TypeScript, JavaScript, Go, Rust, Python, Java
 - [x] **Semantic Analysis**: TypeScript Compiler API for type resolution
 - [x] **Entity Extraction**: Functions, classes, interfaces, relationships
 - [x] **Graph Builder**: Atomic writes, incremental updates
 - [x] **Indexer & Watcher**: Pipeline orchestration, file watching
 - [x] **MCP Server**: AI agent communication interface (stdio transport, HTTP optional)
 - [x] **LLM Integration**: Business logic inference with local models (12 models supported)
-- [x] **CLI Commands**: Full command implementations (init, index, status, config, start)
+- [x] **CLI Commands**: Full command implementations (init, index, status, config, start, viewer)
+- [x] **Web Viewer**: Visual dashboard with REST API for exploring indexed code
+- [x] **Natural Language Search**: Query codebase in plain English
 
 ### Future
 
@@ -441,9 +493,14 @@ Embeddings (ONNX) → Vector Index (HNSW)
 - [ ] Cross-repository dependency mapping
 - [ ] GraphRAG hierarchical summarization
 - [ ] IDE Extensions (VS Code sidebar)
-- [ ] Web UI for graph visualization
+- [ ] Enhanced Web UI (graph visualization, interactive filtering)
 - [ ] Export/import knowledge graphs
-- [ ] Additional language support (Go, Rust, Java, etc.)
+- [x] Additional language support (C, C++, C#) ✅
+- [x] Additional language support (Kotlin) ✅
+- [x] Additional language support (Ruby, PHP, Bash) ✅
+- [x] Additional language support (Scala, Haskell) ✅
+- [x] Data format support (JSON, YAML, TOML) ✅
+- [ ] Additional language support (Swift, Dart, Elixir, Lua - pending WASM)
 
 ## 🤝 Contributing
 
@@ -501,7 +558,7 @@ pnpm format
 - ✨ New features
 - 📚 Documentation improvements
 - 🧪 Test coverage
-- 🌐 Additional language support (Go, Rust, Java, etc.)
+- 🌐 Additional language support (Swift WASM, Dart WASM)
 - 🎨 UI/UX improvements
 - ⚡ Performance optimizations
 

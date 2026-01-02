@@ -42,3 +42,4 @@ Thumbs.db
 
 # Code-Synapse local data (created by code-synapse init)
 .code-synapse
+.code-synapse/*

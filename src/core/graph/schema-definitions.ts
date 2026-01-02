@@ -20,7 +20,7 @@
  * Current schema version. Increment when making breaking changes.
  * Used by the migration system to track schema evolution.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // =============================================================================
 // Property Type Definitions
@@ -241,6 +241,71 @@ export const SCHEMA = {
       appliedAt: { type: "TIMESTAMP" },
       description: { type: "STRING", nullable: true },
     },
+
+    /**
+     * Justification node - stores business justification for code entities
+     * Part of the Business Justification Layer (V13)
+     */
+    Justification: {
+      id: { type: "STRING", primary: true },
+      entityId: { type: "STRING", index: true },
+      entityType: { type: "STRING" }, // 'file' | 'function' | 'class' | 'interface' | 'module'
+      name: { type: "STRING", index: true },
+      filePath: { type: "STRING" },
+      purposeSummary: { type: "STRING", fulltext: true },
+      businessValue: { type: "STRING", fulltext: true },
+      featureContext: { type: "STRING", index: true },
+      detailedDescription: { type: "STRING", nullable: true },
+      tags: { type: "JSON" }, // string[]
+      inferredFrom: { type: "STRING" }, // 'llm_inferred' | 'user_provided' | 'propagated_down' | 'propagated_up' | 'code_comment'
+      confidenceScore: { type: "FLOAT" },
+      confidenceLevel: { type: "STRING" }, // 'high' | 'medium' | 'low' | 'uncertain'
+      reasoning: { type: "STRING", nullable: true },
+      evidenceSources: { type: "JSON" }, // string[]
+      parentJustificationId: { type: "STRING", nullable: true },
+      hierarchyDepth: { type: "INT32" },
+      clarificationPending: { type: "BOOLEAN", index: true },
+      pendingQuestions: { type: "JSON" }, // ClarificationQuestion[]
+      lastConfirmedByUser: { type: "TIMESTAMP", nullable: true },
+      confirmedByUserId: { type: "STRING", nullable: true },
+      createdAt: { type: "TIMESTAMP" },
+      updatedAt: { type: "TIMESTAMP" },
+      version: { type: "INT32" },
+    },
+
+    /**
+     * ClarificationQuestion node - stores pending questions for user
+     * Part of the Business Justification Layer (V13)
+     */
+    ClarificationQuestion: {
+      id: { type: "STRING", primary: true },
+      justificationId: { type: "STRING", index: true },
+      entityId: { type: "STRING", index: true },
+      question: { type: "STRING" },
+      context: { type: "STRING", nullable: true },
+      priority: { type: "INT32", index: true },
+      category: { type: "STRING" }, // 'purpose' | 'business_value' | 'feature_context' | 'naming' | 'relationship' | 'ownership'
+      suggestedAnswers: { type: "JSON" }, // string[]
+      answered: { type: "BOOLEAN", index: true },
+      answer: { type: "STRING", nullable: true },
+      answeredAt: { type: "TIMESTAMP", nullable: true },
+      createdAt: { type: "TIMESTAMP" },
+    },
+
+    /**
+     * ProjectContext node - stores project-level context for justification
+     * Singleton per project
+     */
+    ProjectContext: {
+      id: { type: "STRING", primary: true },
+      projectName: { type: "STRING" },
+      projectDescription: { type: "STRING", nullable: true },
+      domain: { type: "STRING", nullable: true },
+      framework: { type: "STRING", nullable: true },
+      knownFeatures: { type: "JSON" }, // string[]
+      businessGoals: { type: "JSON" }, // string[]
+      updatedAt: { type: "TIMESTAMP" },
+    },
   },
 
   relationships: {
@@ -363,6 +428,37 @@ export const SCHEMA = {
       properties: {
         strength: { type: "INT32" }, // Number of imports between modules
       },
+    },
+
+    /**
+     * HAS_JUSTIFICATION - Entity has a business justification
+     * Part of the Business Justification Layer (V13)
+     */
+    HAS_JUSTIFICATION: {
+      from: ["File", "Function", "Class", "Interface", "TypeAlias", "Variable", "Module"],
+      to: ["Justification"],
+      properties: {},
+    },
+
+    /**
+     * JUSTIFICATION_HIERARCHY - Parent-child relationship between justifications
+     * Used for context propagation up/down the tree
+     */
+    JUSTIFICATION_HIERARCHY: {
+      from: ["Justification"],
+      to: ["Justification"],
+      properties: {
+        relationshipType: { type: "STRING" }, // 'parent_of' | 'child_of'
+      },
+    },
+
+    /**
+     * HAS_CLARIFICATION - Justification has pending clarification question
+     */
+    HAS_CLARIFICATION: {
+      from: ["Justification"],
+      to: ["ClarificationQuestion"],
+      properties: {},
     },
   },
 } as const;
