@@ -282,6 +282,25 @@ src/
 │   │   ├── models/         # Query/Change observation, correlations
 │   │   ├── interfaces/     # IAdaptiveIndexer interface
 │   │   └── impl/           # AdaptiveIndexerService
+│   ├── reconciliation/     # Ledger Reconciliation (V18)
+│   │   ├── interfaces/     # IReconciliationWorker, IGitIntegration
+│   │   └── impl/           # ReconciliationWorker implementation
+│   ├── memory/             # Persistent Developer Memory (V19)
+│   │   ├── models/         # ProjectMemoryRule, MemoryStats
+│   │   ├── interfaces/     # IProjectMemory, IMemoryLearner
+│   │   └── impl/           # CozoProjectMemory implementation
+│   ├── optimization/       # Performance Optimization Layer (V20)
+│   │   ├── cache/          # LRU caches (QueryCache, ModelResponseCache)
+│   │   ├── filter/         # Bloom filters, entity filters
+│   │   ├── pool/           # Worker pools for parallel processing
+│   │   ├── batch/          # Batch writers, write-behind ledger
+│   │   ├── heat/           # Heat tracking, adaptive indexing
+│   │   ├── metrics/        # Performance tracker, cost attribution
+│   │   └── interfaces/     # IOptimization interfaces
+│   ├── models/             # Multi-Model Intelligence Layer (V21)
+│   │   ├── interfaces/     # IModelProvider, IModelRouter
+│   │   ├── router/         # ModelRouter with policy engine
+│   │   └── providers/      # LocalProvider, OpenAIProvider
 │   └── interfaces/         # Contract interfaces
 │
 ├── types/                  # Type definitions
@@ -299,6 +318,7 @@ src/
 │  V1 Graph → V2 Scanner → V3 Parser → V4 Semantic → V5 Extract              │
 │  → V6 Refactor → V7 Build → V8 Indexer → V9 MCP → V10 LLM → V11 CLI        │
 │  → V12 Viewer → V13 Justify → V14 Classify → V15 Ledger → V16 Adaptive     │
+│  → V17 Compaction → V18 Reconciliation → V19 Memory → V20 Optimize → V21 Models │
 └─────────────────────────────────────────────────────────────────────────────┘
                               ▲
                               │ depends on
@@ -338,6 +358,13 @@ src/
 | **V14: Classification** | Domain/Infrastructure categorization | LLM classification, pattern matching, confidence |
 | **V15: Change Ledger** | Append-only event log | Observability, time-travel debugging, correlation |
 | **V16: Adaptive Indexer** | MCP-driven re-indexing | Query observation, semantic correlation, priorities |
+| **V17: Ledger Compaction** | Session-aware log grouping | Intent clustering, semantic diffing, noise reduction |
+| **V18: Reconciliation** | Offline recovery | Git integration, gap detection, synthetic entries |
+| **V19: Persistent Memory** | Developer rule learning | Convention tracking, anti-patterns, confidence decay |
+| **V20: Optimization** | Performance primitives | LRU caches, bloom filters, worker pools, batch writes |
+| **V21: Multi-Model** | Pluggable model routing | Local + cloud providers, policy engine, cost tracking |
+| **V22: Horizontal Docs** | Documentation graph | Package links, NPM metadata, SDK references |
+| **V23: Self-Optimizing** | Feedback loops | Performance observation, automatic score adjustment |
 
 ### Interface Contracts
 
@@ -356,6 +383,20 @@ The codebase uses explicit interface contracts for testability and modularity:
 | **IClassificationStorage** | Classification persistence and queries |
 | **IChangeLedger** | Append-only event logging and queries |
 | **IAdaptiveIndexer** | MCP query observation and intelligent re-indexing |
+| **ILedgerCompaction** | Session-aware compaction and intent grouping |
+| **IReconciliationWorker** | Offline recovery and Git-based gap detection |
+| **IProjectMemory** | Developer memory storage and learning |
+| **IMemoryLearner** | Pattern detection from corrections and failures |
+| **IModelProvider** | Unified LLM provider abstraction |
+| **IModelRouter** | Intelligent model routing with policy engine |
+| **IOptimizationLayer** | Performance optimization orchestration |
+| **IHeatTracker** | Entity access frequency tracking |
+| **IPerformanceTracker** | Operation timing and bottleneck detection |
+| **IDocumentationService** | Documentation discovery and linking |
+| **IDocumentationStorage** | Documentation reference persistence |
+| **IFeedbackLoop** | Performance observation and score adjustment |
+| **IFeedbackObserver** | Model outcome recording and statistics |
+| **IFeedbackOptimizer** | Routing adjustment generation |
 
 ---
 
@@ -668,6 +709,13 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 | V14 | Business Layer Classification | ✅ Complete |
 | V15 | Change Ledger & Observability | ✅ Complete |
 | V16 | Adaptive MCP-Driven Indexing | ✅ Complete |
+| V17 | Ledger Compaction | ✅ Complete |
+| V18 | Ledger Reconciliation | ✅ Complete |
+| V19 | Persistent Developer Memory | ✅ Complete |
+| V20 | Performance Optimization Layer | ✅ Complete |
+| V21 | Multi-Model Intelligence Layer | ✅ Complete |
+| V22 | Horizontal Documentation Graph | ✅ Complete |
+| V23 | Self-Optimizing Feedback Loops | ✅ Complete |
 
 ---
 
@@ -675,8 +723,8 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 
 ### Test Summary
 
-- **Total Tests**: 336+ passing
-- **Test Files**: 16+
+- **Total Tests**: 539+ passing
+- **Test Files**: 20+
 - **Skipped**: 6 (MCP transport tests, tested manually)
 
 ### Key Verifications
@@ -694,6 +742,13 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 - Business Layer Classification with Domain/Infrastructure categorization
 - Change Ledger with append-only event logging and queries
 - Adaptive Indexer with query observation and semantic correlation
+- Ledger Compaction with session-aware grouping and intent clustering
+- Ledger Reconciliation with Git-based gap detection and synthetic entries
+- Persistent Memory with rule learning and confidence decay
+- Performance Optimization with LRU caches, bloom filters, and worker pools
+- Multi-Model routing with local and cloud provider support
+- Horizontal Documentation with known registry and NPM metadata fetching
+- Self-Optimizing Feedback with automatic routing adjustments
 - Performance benchmarks pass (100 parses <5s, 50 queries <2s)
 
 ---
@@ -743,9 +798,12 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 - Additional MCP tools based on user feedback
 - Improved logging and debugging capabilities
 
+**Intelligence Enhancements:**
+- Full GraphRAG hierarchical summarization
+- Cross-model quality scoring for output comparison
+
 **Feature Enhancements:**
 - Cross-repository dependency mapping
-- Full GraphRAG hierarchical summarization
 - IDE Extensions (VS Code sidebar)
 - Additional LLM models via model registry
 - Enhanced Web UI dashboard (graph visualization, filtering)

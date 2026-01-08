@@ -65,11 +65,19 @@ Unlike standard tools (LSP, grep) that only see syntax, Code-Synapse builds a mu
 * **🎯 Business Justification:** Local LLM infers *why* code exists - its purpose, business value, and feature context.
 * **🏷️ Business Layer Classification:** Automatically categorizes code as **Domain** (business logic, user-facing) or **Infrastructure** (platform, cross-cutting).
 * **📜 Change Ledger:** Append-only event log tracks all system changes for time-travel debugging and observability.
+* **🗜️ Ledger Compaction:** Session-aware compaction groups related changes into meaningful entries, reducing noise while preserving detail.
+* **🔧 Ledger Reconciliation:** Self-healing history that detects gaps and synthesizes missing entries from Git history when offline.
 * **🔄 Adaptive Indexing:** Observes MCP queries and code changes, correlates them semantically, and triggers intelligent re-indexing.
+* **🧠 Persistent Memory:** Learns coding rules, conventions, and anti-patterns from human edits - AI stops repeating mistakes.
+* **📚 Horizontal Documentation:** Links infrastructure code to official docs, SDK references, and version-specific documentation automatically.
+* **🔄 Self-Optimizing:** Observes model performance and automatically adjusts routing scores for better quality, cost, and latency.
 * **🔒 Privacy-First:** Your code never leaves your machine. We use an embedded database (**CozoDB** with RocksDB backend) and local models (**Qwen 2.5 Coder**) to keep everything offline.
 * **🔄 Incremental Indexing:** Smart file-watching ensures the graph is updated in milliseconds when you save a file.
 * **🔍 Natural Language Search:** Query your codebase in plain English - "most complex functions", "where is createParser", "what calls main".
 * **📊 Web Viewer:** Visual dashboard with REST API for exploring indexed code, statistics, and call graphs.
+* **⚡ Performance Optimized:** LRU caching, bloom filters, heat tracking, batch writes, and worker pools for large codebases.
+* **🌐 Multi-Model Support:** Unified interface for local models AND cloud providers (OpenAI, Anthropic, Google) with intelligent routing.
+* **📈 Observability:** Tracks performance metrics, token costs, latency, and cache hit rates for monitoring and debugging.
 
 ### 🎯 How Business Justification Works
 
@@ -552,7 +560,14 @@ Embeddings (ONNX) → Vector Index (HNSW)
 - [x] **Business Justification**: LLM-powered inference of code purpose, business value, and feature context
 - [x] **Business Layer Classification**: Domain (business logic) vs Infrastructure (platform) categorization
 - [x] **Change Ledger**: Append-only event log for time-travel debugging and observability
+- [x] **Ledger Compaction**: Session-aware compaction with intent grouping
+- [x] **Ledger Reconciliation**: Self-healing history from Git when offline
 - [x] **Adaptive Indexing**: MCP query observation, semantic correlation, intelligent re-indexing
+- [x] **Persistent Memory**: Learns conventions and anti-patterns from human corrections
+- [x] **Performance Optimization**: LRU caching, bloom filters, heat tracking, worker pools
+- [x] **Multi-Model Abstraction**: Unified interface for local and cloud providers with routing
+- [x] **Horizontal Documentation**: Links infrastructure code to official docs, SDK references automatically
+- [x] **Self-Optimizing Feedback**: Automatically adjusts routing based on observed performance metrics
 
 ### Future
 

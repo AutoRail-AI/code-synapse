@@ -9,9 +9,11 @@
 
 // Models
 export * from "./models/ledger-events.js";
+export * from "./models/compacted-entry.js";
 
 // Interfaces
 export * from "./interfaces/IChangeLedger.js";
+export * from "./interfaces/ILedgerCompaction.js";
 
 // Implementation
 export {
@@ -20,3 +22,12 @@ export {
   createChangeLedger,
   createLedgerStorage,
 } from "./impl/CozoChangeLedger.js";
+
+export {
+  LedgerCompactionService,
+  CozoCompactionStorage,
+  SimpleIntentAnalyzer,
+  createLedgerCompaction,
+  createCompactionStorage,
+  createIntentAnalyzer,
+} from "./impl/LedgerCompactionService.js";

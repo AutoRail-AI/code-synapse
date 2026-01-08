@@ -127,6 +127,32 @@ src/
 │   │   ├── models/         # Query/Change observation, correlations
 │   │   ├── interfaces/     # IAdaptiveIndexer interface
 │   │   └── impl/           # AdaptiveIndexerService
+│   ├── reconciliation/     # Ledger Reconciliation (V18)
+│   │   ├── interfaces/     # IReconciliationWorker interface
+│   │   └── impl/           # ReconciliationWorker implementation
+│   ├── memory/             # Persistent Developer Memory (V19)
+│   │   ├── models/         # ProjectMemoryRule, MemoryStats
+│   │   ├── interfaces/     # IProjectMemory interface
+│   │   └── impl/           # CozoProjectMemory implementation
+│   ├── optimization/       # Performance Optimization Layer (V20)
+│   │   ├── cache/          # LRU caches (QueryCache, ModelResponseCache)
+│   │   ├── filter/         # Bloom filters, entity filters
+│   │   ├── pool/           # Worker pools for parallel processing
+│   │   ├── batch/          # Batch writers, write-behind ledger
+│   │   ├── heat/           # Heat tracking, adaptive indexing
+│   │   └── metrics/        # Performance tracker, cost attribution
+│   ├── models/             # Multi-Model Intelligence Layer (V21)
+│   │   ├── interfaces/     # IModelProvider, IModelRouter
+│   │   ├── router/         # ModelRouter with policy engine
+│   │   └── providers/      # LocalProvider, OpenAIProvider
+│   ├── documentation/      # Horizontal Documentation Graph (V22)
+│   │   ├── interfaces/     # IDocumentationService, IDocumentationStorage
+│   │   ├── models/         # DocumentationReference, EntityDocumentationLink
+│   │   ├── storage/        # CozoDocumentationStorage
+│   │   └── impl/           # DocumentationService
+│   ├── feedback/           # Self-Optimizing Feedback Loops (V23)
+│   │   ├── interfaces/     # IFeedbackLoop, IFeedbackObserver, IFeedbackOptimizer
+│   │   └── impl/           # FeedbackLoop with routing adjustments
 │   ├── indexer/            # Orchestrates all core modules
 │   └── telemetry/          # Tracing and metrics
 │
@@ -291,6 +317,12 @@ User                          AI Agent
 | `classification` | Domain/Infrastructure classification (V14) | `llm` module |
 | `ledger` | Change ledger + observability (V15) | `graph` module |
 | `adaptive-indexer` | MCP-driven adaptive re-indexing (V16) | `ledger`, `indexer` |
+| `reconciliation` | Offline recovery from Git (V18) | `git`, `ledger` |
+| `memory` | Developer rule learning (V19) | `graph`, `embeddings` |
+| `optimization` | Performance primitives (V20) | LRU, bloom, worker pools |
+| `models` | Multi-model routing (V21) | `llm`, providers |
+| `documentation` | Horizontal documentation graph (V22) | NPM registry, graph |
+| `feedback` | Self-optimizing feedback (V23) | model router |
 | `indexer` | Pipeline orchestration, file watching | `chokidar` |
 | `interfaces` | Core contracts (IParser, IGraphStore) | - |
 | `telemetry` | Tracing and metrics | - |
@@ -464,12 +496,19 @@ See `docs/implementation-plan.md` for detailed implementation steps and `docs/im
 | **V14** | Business Layer Classification (Domain/Infrastructure) | ✅ Complete |
 | **V15** | Change Ledger + Observability | ✅ Complete |
 | **V16** | Adaptive MCP-Driven Indexing | ✅ Complete |
+| **V17** | Ledger Compaction (Session Semantics) | ✅ Complete |
+| **V18** | Ledger Reconciliation (Offline Recovery) | ✅ Complete |
+| **V19** | Persistent Developer Memory | ✅ Complete |
+| **V20** | Performance Optimization Layer | ✅ Complete |
+| **V21** | Multi-Model Intelligence Layer | ✅ Complete |
+| **V22** | Horizontal Documentation Graph | ✅ Complete |
+| **V23** | Self-Optimizing Feedback Loops | ✅ Complete |
 
 ### Current Architecture
 
-- **336+ tests passing** across all modules
+- **539+ tests passing** across all modules
 - **CozoDB** with RocksDB backend for unified graph + vector storage
-- **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor, IJustificationService, IClassificationEngine, IChangeLedger, IAdaptiveIndexer)
+- **Interface-based architecture** (IParser, IGraphStore, IScanner, IExtractor, IJustificationService, IClassificationEngine, IChangeLedger, IAdaptiveIndexer, IProjectMemory, IModelRouter, IDocumentationService, IFeedbackLoop)
 - **Incremental indexing** with file hash-based change detection
 - **File watching** with event debouncing and batching
 - **MCP Server** with stdio transport (primary) and HTTP transport (optional)
@@ -477,7 +516,14 @@ See `docs/implementation-plan.md` for detailed implementation steps and `docs/im
 - **Business Justification** with LLM-powered inference and interactive clarification
 - **Business Layer Classification** categorizing code as Domain (business logic) or Infrastructure (platform)
 - **Change Ledger** for append-only event logging with time-travel debugging
+- **Ledger Compaction** with session-aware grouping and intent clustering
+- **Ledger Reconciliation** for self-healing history from Git when offline
 - **Adaptive Indexing** that observes MCP queries and triggers intelligent re-indexing
+- **Persistent Memory** that learns coding rules and conventions from human corrections
+- **Performance Optimization** with LRU caches, bloom filters, heat tracking, worker pools
+- **Multi-Model Routing** with unified interface for local and cloud providers (OpenAI)
+- **Horizontal Documentation** linking infrastructure code to official docs and SDK references
+- **Self-Optimizing Feedback** automatically adjusting model routing based on performance
 - **Multi-language parsing** with support for 24 languages including TypeScript, JavaScript, Go, Rust, Python, Java, C/C++, C#, Kotlin, Ruby, PHP, Bash, Scala, Haskell, and data formats (JSON, YAML, TOML)
 
 ### Supported Languages

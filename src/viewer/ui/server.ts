@@ -16,8 +16,14 @@ import type { CozoGraphViewer } from "../impl/CozoGraphViewer.js";
 import type { IClassificationStorage } from "../../core/classification/interfaces/IClassificationEngine.js";
 import type { IChangeLedger, LedgerQuery } from "../../core/ledger/interfaces/IChangeLedger.js";
 import type { IAdaptiveIndexer } from "../../core/adaptive-indexer/interfaces/IAdaptiveIndexer.js";
+import type { IProjectMemory } from "../../core/memory/interfaces/IProjectMemory.js";
+import type { MemoryQuery } from "../../core/memory/models/memory-models.js";
+import type { ILedgerCompaction } from "../../core/ledger/interfaces/ILedgerCompaction.js";
+import type { CompactedEntryQuery } from "../../core/ledger/models/compacted-entry.js";
+import type { IReconciliationWorker } from "../../core/reconciliation/interfaces/IReconciliation.js";
 import type { ClassificationCategory, DomainArea, InfrastructureLayer } from "../../core/classification/models/classification.js";
 import type { LedgerEventType, EventSource } from "../../core/ledger/models/ledger-events.js";
+import type { MemoryRuleScope, MemoryRuleCategory } from "../../core/memory/models/memory-models.js";
 
 // =============================================================================
 // Types
@@ -32,6 +38,9 @@ interface ViewerServerOptions {
   classificationStorage?: IClassificationStorage;
   changeLedger?: IChangeLedger;
   adaptiveIndexer?: IAdaptiveIndexer;
+  projectMemory?: IProjectMemory;
+  ledgerCompaction?: ILedgerCompaction;
+  reconciliationWorker?: IReconciliationWorker;
 }
 
 interface RouteHandler {
@@ -78,12 +87,18 @@ export class ViewerServer {
   private classificationStorage?: IClassificationStorage;
   private changeLedger?: IChangeLedger;
   private adaptiveIndexer?: IAdaptiveIndexer;
+  private projectMemory?: IProjectMemory;
+  private ledgerCompaction?: ILedgerCompaction;
+  private reconciliationWorker?: IReconciliationWorker;
 
   constructor(viewer: IGraphViewer, options?: ViewerServerOptions) {
     this.viewer = viewer;
     this.classificationStorage = options?.classificationStorage;
     this.changeLedger = options?.changeLedger;
     this.adaptiveIndexer = options?.adaptiveIndexer;
+    this.projectMemory = options?.projectMemory;
+    this.ledgerCompaction = options?.ledgerCompaction;
+    this.reconciliationWorker = options?.reconciliationWorker;
 
     // Get the directory where static files are located
     const __filename = fileURLToPath(import.meta.url);
@@ -166,6 +181,25 @@ export class ViewerServer {
     this.addRoute("GET", "/api/adaptive/sessions/:id", this.handleGetSession.bind(this));
     this.addRoute("GET", "/api/adaptive/queries/recent", this.handleRecentQueries.bind(this));
     this.addRoute("GET", "/api/adaptive/changes/recent", this.handleRecentChanges.bind(this));
+
+    // Project Memory (Developer Memory System)
+    this.addRoute("GET", "/api/memory/stats", this.handleMemoryStats.bind(this));
+    this.addRoute("GET", "/api/memory/rules", this.handleListMemoryRules.bind(this));
+    this.addRoute("GET", "/api/memory/rules/:id", this.handleGetMemoryRule.bind(this));
+    this.addRoute("GET", "/api/memory/relevant", this.handleGetRelevantMemories.bind(this));
+    this.addRoute("GET", "/api/memory/file/:filePath", this.handleGetMemoriesForFile.bind(this));
+
+    // Ledger Compaction (Semantic Summaries)
+    this.addRoute("GET", "/api/compaction/stats", this.handleCompactionStats.bind(this));
+    this.addRoute("GET", "/api/compaction/entries", this.handleListCompactedEntries.bind(this));
+    this.addRoute("GET", "/api/compaction/entries/:id", this.handleGetCompactedEntry.bind(this));
+    this.addRoute("GET", "/api/compaction/timeline", this.handleCompactionTimeline.bind(this));
+    this.addRoute("GET", "/api/compaction/session/:sessionId", this.handleCompactedEntryForSession.bind(this));
+
+    // Reconciliation (Git Sync)
+    this.addRoute("GET", "/api/reconciliation/status", this.handleReconciliationStatus.bind(this));
+    this.addRoute("GET", "/api/reconciliation/gaps", this.handleDetectGaps.bind(this));
+    this.addRoute("GET", "/api/reconciliation/validation", this.handleValidateLedgerIntegrity.bind(this));
 
     // Health
     this.addRoute("GET", "/api/health", this.handleHealth.bind(this));
@@ -1232,6 +1266,321 @@ export class ViewerServer {
       this.sendJSON(res, changes);
     } catch (error) {
       this.sendError(res, 500, "Failed to get recent changes", error);
+    }
+  }
+
+  // ===========================================================================
+  // API Handlers - Project Memory
+  // ===========================================================================
+
+  private async handleMemoryStats(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.projectMemory) {
+      this.sendJSON(res, { error: "Project memory not available" }, 503);
+      return;
+    }
+
+    try {
+      const stats = await this.projectMemory.getStats();
+      this.sendJSON(res, stats);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get memory stats", error);
+    }
+  }
+
+  private async handleListMemoryRules(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.projectMemory) {
+      this.sendJSON(res, { error: "Project memory not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "100", 10);
+    const offset = parseInt(params.query.get("offset") || "0", 10);
+    const scope = params.query.get("scope") as MemoryRuleScope | undefined;
+    const category = params.query.get("category") as MemoryRuleCategory | undefined;
+    const isActive = params.query.get("isActive") === "true" ? true : params.query.get("isActive") === "false" ? false : undefined;
+    const minConfidence = params.query.get("minConfidence") ? parseFloat(params.query.get("minConfidence")!) : undefined;
+
+    const query: MemoryQuery = { limit, offset, scope, category, isActive, minConfidence };
+
+    try {
+      const rules = await this.projectMemory.listRules(query);
+      this.sendJSON(res, rules);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to list memory rules", error);
+    }
+  }
+
+  private async handleGetMemoryRule(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.projectMemory) {
+      this.sendJSON(res, { error: "Project memory not available" }, 503);
+      return;
+    }
+
+    const id = params.pathParams.id!;
+
+    try {
+      const rule = await this.projectMemory.getRule(id);
+      if (!rule) {
+        this.sendError(res, 404, "Memory rule not found");
+        return;
+      }
+      this.sendJSON(res, rule);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get memory rule", error);
+    }
+  }
+
+  private async handleGetRelevantMemories(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.projectMemory) {
+      this.sendJSON(res, { error: "Project memory not available" }, 503);
+      return;
+    }
+
+    const context = params.query.get("context") || "";
+    const filePath = params.query.get("filePath") || undefined;
+    const entityType = params.query.get("entityType") || undefined;
+    const limit = parseInt(params.query.get("limit") || "10", 10);
+
+    try {
+      const rules = await this.projectMemory.getRelevantMemories({
+        context,
+        filePath,
+        entityType,
+        limit,
+      });
+      this.sendJSON(res, {
+        rules,
+        formatted: this.projectMemory.formatForPrompt(rules),
+      });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get relevant memories", error);
+    }
+  }
+
+  private async handleGetMemoriesForFile(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.projectMemory) {
+      this.sendJSON(res, { error: "Project memory not available" }, 503);
+      return;
+    }
+
+    const filePath = decodeURIComponent(params.pathParams.filePath!);
+
+    try {
+      const rules = await this.projectMemory.getMemoriesForFile(filePath);
+      this.sendJSON(res, rules);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get memories for file", error);
+    }
+  }
+
+  // ===========================================================================
+  // API Handlers - Ledger Compaction
+  // ===========================================================================
+
+  private async handleCompactionStats(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.ledgerCompaction) {
+      this.sendJSON(res, { error: "Ledger compaction not available" }, 503);
+      return;
+    }
+
+    try {
+      const stats = await this.ledgerCompaction.getStats();
+      this.sendJSON(res, stats);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get compaction stats", error);
+    }
+  }
+
+  private async handleListCompactedEntries(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.ledgerCompaction) {
+      this.sendJSON(res, { error: "Ledger compaction not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+    const offset = parseInt(params.query.get("offset") || "0", 10);
+    const source = params.query.get("source") as CompactedEntryQuery["source"] | undefined;
+    const intentCategory = params.query.get("intentCategory") as CompactedEntryQuery["intentCategory"] | undefined;
+    const startTime = params.query.get("startTime") || undefined;
+    const endTime = params.query.get("endTime") || undefined;
+
+    const query: CompactedEntryQuery = { limit, offset, source, intentCategory, startTime, endTime };
+
+    try {
+      const entries = await this.ledgerCompaction.query(query);
+      this.sendJSON(res, entries);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to list compacted entries", error);
+    }
+  }
+
+  private async handleGetCompactedEntry(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.ledgerCompaction) {
+      this.sendJSON(res, { error: "Ledger compaction not available" }, 503);
+      return;
+    }
+
+    const id = params.pathParams.id!;
+
+    try {
+      const entry = await this.ledgerCompaction.getEntry(id);
+      if (!entry) {
+        this.sendError(res, 404, "Compacted entry not found");
+        return;
+      }
+      this.sendJSON(res, entry);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get compacted entry", error);
+    }
+  }
+
+  private async handleCompactionTimeline(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.ledgerCompaction) {
+      this.sendJSON(res, { error: "Ledger compaction not available" }, 503);
+      return;
+    }
+
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+    const startTime = params.query.get("startTime") || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const endTime = params.query.get("endTime") || new Date().toISOString();
+
+    try {
+      const entries = await this.ledgerCompaction.getTimeline(startTime, endTime, limit);
+      this.sendJSON(res, entries);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get compaction timeline", error);
+    }
+  }
+
+  private async handleCompactedEntryForSession(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    if (!this.ledgerCompaction) {
+      this.sendJSON(res, { error: "Ledger compaction not available" }, 503);
+      return;
+    }
+
+    const sessionId = params.pathParams.sessionId!;
+
+    try {
+      const entry = await this.ledgerCompaction.getEntryForSession(sessionId);
+      if (!entry) {
+        this.sendJSON(res, null);
+        return;
+      }
+      this.sendJSON(res, entry);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get compacted entry for session", error);
+    }
+  }
+
+  // ===========================================================================
+  // API Handlers - Reconciliation
+  // ===========================================================================
+
+  private async handleReconciliationStatus(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.reconciliationWorker) {
+      this.sendJSON(res, { error: "Reconciliation worker not available" }, 503);
+      return;
+    }
+
+    try {
+      const [needsReconciliation, lastSyncedCommit, config] = await Promise.all([
+        this.reconciliationWorker.needsReconciliation(),
+        this.reconciliationWorker.getLastSyncedCommit(),
+        Promise.resolve(this.reconciliationWorker.getConfig()),
+      ]);
+
+      this.sendJSON(res, {
+        isReady: this.reconciliationWorker.isReady,
+        needsReconciliation,
+        lastSyncedCommit,
+        config: {
+          repoPath: config.repoPath,
+          defaultBranch: config.defaultBranch,
+          autoReconcileOnStartup: config.autoReconcileOnStartup,
+        },
+      });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get reconciliation status", error);
+    }
+  }
+
+  private async handleDetectGaps(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.reconciliationWorker) {
+      this.sendJSON(res, { error: "Reconciliation worker not available" }, 503);
+      return;
+    }
+
+    try {
+      const gaps = await this.reconciliationWorker.detectGaps();
+      this.sendJSON(res, gaps);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to detect gaps", error);
+    }
+  }
+
+  private async handleValidateLedgerIntegrity(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.reconciliationWorker) {
+      this.sendJSON(res, { error: "Reconciliation worker not available" }, 503);
+      return;
+    }
+
+    try {
+      const validation = await this.reconciliationWorker.validateLedgerIntegrity();
+      this.sendJSON(res, validation);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to validate ledger integrity", error);
     }
   }
 

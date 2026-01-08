@@ -20,6 +20,11 @@ A comprehensive guide to understanding Code-Synapse's architecture, data flow, a
 10. [Business Layer Classification](#business-layer-classification)
 11. [Change Ledger & Observability](#change-ledger--observability)
 12. [Adaptive MCP-Driven Indexing](#adaptive-mcp-driven-indexing)
+13. [Ledger Compaction](#ledger-compaction)
+14. [Ledger Reconciliation](#ledger-reconciliation)
+15. [Persistent Developer Memory](#persistent-developer-memory)
+16. [Performance Optimization](#performance-optimization)
+17. [Multi-Model Intelligence](#multi-model-intelligence)
 
 ---
 
@@ -1887,6 +1892,365 @@ interface AdaptiveIndexerConfig {
   sessionTimeoutMs: number;      // Session timeout (default: 30 min)
 }
 ```
+
+---
+
+## Ledger Compaction
+
+The Ledger Compaction service reduces noise in the change ledger by grouping related events into meaningful, session-aware summaries.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. SESSION DETECTION                                             │
+│    - Groups events by session boundaries                        │
+│    - Detects session start/end from MCP connections             │
+│    - Handles implicit sessions from time gaps                   │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. INTENT CLUSTERING                                             │
+│    - Groups events with similar semantic intent                 │
+│    - Uses content hashing for deduplication                     │
+│    - Identifies related operations (query → edit → save)        │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. COMPACTED ENTRY GENERATION                                    │
+│    - Creates single entry per meaningful task                   │
+│    - Summarizes: user prompts, MCP queries, code changes        │
+│    - Preserves raw events internally for forensics              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Compacted Entry Structure
+
+```typescript
+interface CompactedLedgerEntry {
+  id: string;
+  sessionId: string;
+  timestampStart: string;
+  timestampEnd: string;
+  intentSummary: string;           // "Refactored authentication module"
+  intentCategory: string;          // "feature-development" | "bug-fix" | "refactoring"
+  userPrompts: string[];           // User's original questions
+  mcpQueries: MCPQueryTrace[];     // Tools called, results returned
+  codeAccessed: string[];          // Files read
+  codeChanges: CodeChange[];       // Files modified
+  semanticImpact: SemanticImpact;  // Domain/infra areas affected
+  rawEventIds: string[];           // Links to original events
+}
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/ledger/compacted` | GET | List compacted entries |
+| `/api/ledger/compacted/:id` | GET | Get specific compacted entry |
+| `/api/ledger/compacted/session/:sessionId` | GET | Entries for session |
+
+---
+
+## Ledger Reconciliation
+
+The Reconciliation Worker detects and fills gaps in the ledger when the system was offline, crashed, or not deployed.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. GAP DETECTION                                                 │
+│    - Compares ledger entries with Git history                   │
+│    - Identifies commits not recorded in ledger                  │
+│    - Calculates gap duration and scope                          │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. COMMIT ANALYSIS                                               │
+│    - Fetches commits from Git for the gap period                │
+│    - Parses commit messages for intent                          │
+│    - Extracts file changes and entity diffs                     │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. SYNTHETIC ENTRY GENERATION                                    │
+│    - Creates ledger entries from Git commits                    │
+│    - Infers intent category from commit messages                │
+│    - Marks entries as "reconciled" for transparency             │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. INDEX SYNCHRONIZATION                                         │
+│    - Triggers re-indexing for changed files                     │
+│    - Updates entity classifications                              │
+│    - Marks commits as synced                                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Gap Types
+
+| Reason | Description | Example |
+|--------|-------------|---------|
+| `system-offline` | System was not running | Server reboot |
+| `crash-recovery` | Unexpected termination | OOM kill |
+| `late-deployment` | Code-Synapse added to existing project | New installation |
+| `manual-sync` | User-triggered reconciliation | CLI command |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/reconciliation/gaps` | GET | List detected gaps |
+| `/api/reconciliation/status` | GET | Reconciliation status |
+| `/api/reconciliation/trigger` | POST | Trigger reconciliation |
+
+---
+
+## Persistent Developer Memory
+
+The Memory System learns coding rules, conventions, and anti-patterns from developer behavior to help AI stop repeating mistakes.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. LEARNING FROM CORRECTIONS                                     │
+│    - Detects when user edits AI-generated code                  │
+│    - Compares original vs corrected code                        │
+│    - Extracts pattern: "Don't do X, do Y instead"               │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. LEARNING FROM FAILURES                                        │
+│    - Monitors build and lint failures                           │
+│    - Associates errors with recent AI changes                   │
+│    - Creates rules: "This pattern causes build failure"         │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. RULE STORAGE                                                  │
+│    - Stores rules with semantic embeddings                      │
+│    - Tracks confidence (validated rules get boosted)            │
+│    - Applies decay to unused rules                              │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. CONTEXT INJECTION                                             │
+│    - Retrieves relevant rules before code generation            │
+│    - Formats rules for prompt injection                         │
+│    - Prioritizes high-confidence, recent rules                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Rule Categories
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| `convention` | Coding style rules | "Use camelCase for variables" |
+| `architecture` | Structural patterns | "Services go in src/services/" |
+| `anti-pattern` | Things to avoid | "Don't use any type in TypeScript" |
+| `dependency` | Import rules | "Prefer lodash-es over lodash" |
+| `formatting` | Style preferences | "Max line length is 100" |
+
+### Memory Rule Structure
+
+```typescript
+interface ProjectMemoryRule {
+  id: string;
+  scope: "global" | "file" | "directory" | "entity";
+  scopeTarget?: string;                    // File path or pattern
+  category: MemoryRuleCategory;
+  triggerType: "file-pattern" | "entity-type" | "code-pattern" | "semantic";
+  triggerPattern: string;
+  ruleText: string;                        // "Always use async/await instead of .then()"
+  ruleExplanation?: string;
+  examples?: Array<{ bad: string; good: string }>;
+  confidence: number;                      // 0-1, decays over time
+  validationCount: number;                 // How often rule was correct
+  violationCount: number;                  // How often rule was violated
+  source: "user-correction" | "build-failure" | "explicit-instruction" | "inferred";
+  createdAt: string;
+  lastValidatedAt?: string;
+}
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/memory/rules` | GET | List all rules |
+| `/api/memory/rules` | POST | Create explicit rule |
+| `/api/memory/rules/:id` | GET | Get specific rule |
+| `/api/memory/rules/:id` | PATCH | Update rule |
+| `/api/memory/stats` | GET | Memory statistics |
+| `/api/memory/relevant` | POST | Get rules for context |
+
+---
+
+## Performance Optimization
+
+The Optimization Layer provides performance primitives for scaling to large codebases.
+
+### Components
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    OPTIMIZATION LAYER                            │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐       │
+│  │   LRU Cache   │  │ Bloom Filter  │  │ Heat Tracker  │       │
+│  │ (Query/Model) │  │(Entity Check) │  │(Access Freq)  │       │
+│  └───────────────┘  └───────────────┘  └───────────────┘       │
+│                                                                  │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐       │
+│  │ Worker Pool   │  │ Batch Writer  │  │  Performance  │       │
+│  │(Parallel Ops) │  │(Buffered I/O) │  │   Tracker     │       │
+│  └───────────────┘  └───────────────┘  └───────────────┘       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### LRU Cache
+
+- **Query Cache**: Caches database query results with TTL
+- **Model Response Cache**: Caches LLM responses for identical prompts
+- **O(1) Operations**: Doubly-linked list for efficient eviction
+
+### Bloom Filter
+
+- **Entity Existence Check**: Probabilistic membership testing
+- **False Positive Rate**: Configurable (default 1%)
+- **Use Case**: Skip database lookups for non-existent entities
+
+### Heat Tracker
+
+- **Access Frequency**: Tracks how often entities are accessed
+- **Time Decay**: Recent access weighted higher
+- **Hot/Cold Classification**: Identifies frequently used code
+
+### Worker Pool
+
+- **Parallel Processing**: Concurrent task execution
+- **Priority Queue**: High-priority tasks processed first
+- **Backpressure**: Prevents overwhelming system resources
+
+### Batch Writer
+
+- **Buffered Writes**: Batches database operations
+- **Exponential Backoff**: Retry with increasing delays
+- **Write-Behind Ledger**: Async ledger operations
+
+### Performance Tracker
+
+- **Operation Timing**: Records latency for all operations
+- **Percentile Stats**: P50, P90, P99 latencies
+- **Bottleneck Detection**: Identifies slow operations
+
+### Cost Attribution
+
+- **Token Tracking**: Records input/output tokens per operation
+- **Cost Calculation**: Estimates cost based on model pricing
+- **Budget Management**: Alerts when approaching limits
+
+---
+
+## Multi-Model Intelligence
+
+The Multi-Model Layer provides a unified interface for routing requests to the best available model.
+
+### Supported Providers
+
+| Provider | Models | Use Case |
+|----------|--------|----------|
+| **Local** | Qwen, Llama, CodeLlama, DeepSeek | Privacy, offline, zero cost |
+| **OpenAI** | GPT-4o, GPT-4o-mini | High quality, function calling |
+| **Anthropic** | Claude 3.5 Sonnet, Claude 3 Haiku | (Planned) |
+| **Google** | Gemini 1.5 Pro, Gemini 1.5 Flash | (Planned) |
+
+### Model Router
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       MODEL ROUTER                               │
+├─────────────────────────────────────────────────────────────────┤
+│  Request                                                         │
+│     │                                                            │
+│     ▼                                                            │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ 1. Find Candidates                                       │    │
+│  │    - Filter by task type support                        │    │
+│  │    - Filter by required capabilities                    │    │
+│  │    - Apply vendor preferences                           │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│     │                                                            │
+│     ▼                                                            │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ 2. Score Models                                          │    │
+│  │    - Quality score (model capability)                   │    │
+│  │    - Latency score (response time)                      │    │
+│  │    - Cost score (token pricing)                         │    │
+│  │    - Local preference bonus                             │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│     │                                                            │
+│     ▼                                                            │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ 3. Execute with Fallback                                 │    │
+│  │    - Try best model first                               │    │
+│  │    - On failure, try alternatives                       │    │
+│  │    - Track statistics                                   │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Routing Policies
+
+| Policy | Description | Use Case |
+|--------|-------------|----------|
+| `preferLocal` | Prefer local models | Privacy, offline |
+| `maxLatencyMs` | Maximum acceptable latency | Real-time responses |
+| `maxCostPerRequest` | Maximum cost per request | Budget control |
+| `qualityThreshold` | Minimum quality score | Critical tasks |
+| `fallbackOrder` | Provider fallback order | Reliability |
+
+### Example Usage
+
+```typescript
+// Create router with providers
+const router = await createInitializedModelRouter({
+  enableLocal: true,
+  enableOpenAI: true,
+});
+
+// Execute with policy
+const response = await router.execute({
+  prompt: "Explain this function...",
+  taskType: "generation",
+}, {
+  preferLocal: true,
+  maxLatencyMs: 5000,
+  qualityThreshold: 0.7,
+});
+```
+
+### Statistics Tracking
+
+The router tracks:
+- Total requests per model
+- Requests by vendor
+- Average latency
+- Total tokens used
+- Total cost
+- Cache hit rate
+- Fallback count
 
 ---
 
