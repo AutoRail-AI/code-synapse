@@ -375,8 +375,9 @@ getModelSelectionGuide();                       // Human-readable guide
 
 ```bash
 # Default command (all-in-one)
-code-synapse                # Auto: init → index → justify → viewer → start
+code-synapse                # Auto: setup → init → index → justify → viewer → start
 code-synapse --skip-justify # Skip business justification
+code-synapse --skip-setup   # Skip interactive setup wizard
 code-synapse --justify-only # Run only justification
 code-synapse -m balanced    # Set LLM model preset
 
@@ -388,10 +389,23 @@ code-synapse justify -i     # Interactive clarification mode
 code-synapse justify --stats # Show justification statistics
 code-synapse status         # Show project status
 code-synapse viewer         # Start web viewer
+code-synapse config --setup # Interactive setup wizard
+code-synapse config --provider openai --api-key sk-xxx  # Set cloud provider
 code-synapse config --list-models  # List available LLM models
 code-synapse start          # Start MCP server
 code-synapse start -p 3100  # Start on specific port
 ```
+
+## Model Providers
+
+Code-Synapse supports local and cloud model providers:
+
+| Provider | Models | Environment Variable |
+|----------|--------|---------------------|
+| `local` (default) | Qwen 2.5 Coder (0.5B-14B) | - |
+| `openai` | GPT-4o, GPT-4o Mini | `OPENAI_API_KEY` |
+| `anthropic` | Claude 3.5 Sonnet, Claude 3 Haiku | `ANTHROPIC_API_KEY` |
+| `google` | Gemini 1.5 Pro, Gemini 1.5 Flash | `GOOGLE_API_KEY` |
 
 ## TypeScript Guidelines
 

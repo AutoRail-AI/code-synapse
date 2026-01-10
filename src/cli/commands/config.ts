@@ -19,6 +19,14 @@ import {
   listDownloadedModels,
   type ModelPreset,
 } from "../../core/llm/index.js";
+import {
+  InteractiveSetup,
+  PROVIDERS,
+  getApiKey,
+  getConfiguredProvider,
+  type ModelProvider,
+  type CodeSynapseConfig,
+} from "./setup.js";
 
 const logger = createLogger("config");
 
@@ -26,6 +34,9 @@ export interface ConfigOptions {
   model?: string;
   listModels?: boolean;
   showGuide?: boolean;
+  setup?: boolean;
+  provider?: string;
+  apiKey?: string;
 }
 
 /**
@@ -33,6 +44,13 @@ export interface ConfigOptions {
  */
 export async function configCommand(options: ConfigOptions): Promise<void> {
   logger.info({ options }, "Config command");
+
+  // Handle --setup flag - interactive wizard
+  if (options.setup) {
+    const setup = new InteractiveSetup();
+    await setup.run();
+    return;
+  }
 
   // Handle --list-models flag
   if (options.listModels) {
@@ -60,9 +78,15 @@ export async function configCommand(options: ConfigOptions): Promise<void> {
   }
 
   // Load configuration
-  const config = readJson<ProjectConfig & { llmModel?: string; skipLlm?: boolean }>(configPath);
+  const config = readJson<CodeSynapseConfig>(configPath);
   if (!config) {
     console.log(chalk.red("Failed to read configuration."));
+    return;
+  }
+
+  // Handle --provider flag
+  if (options.provider) {
+    await setProvider(config, configPath, options.provider, options.apiKey);
     return;
   }
 
@@ -77,9 +101,72 @@ export async function configCommand(options: ConfigOptions): Promise<void> {
 }
 
 /**
+ * Set the model provider and optionally API key
+ */
+async function setProvider(
+  config: CodeSynapseConfig,
+  configPath: string,
+  providerInput: string,
+  apiKey?: string
+): Promise<void> {
+  const provider = providerInput.toLowerCase() as ModelProvider;
+
+  if (!PROVIDERS[provider]) {
+    console.log(chalk.red(`Unknown provider: ${providerInput}`));
+    console.log(chalk.dim("Valid providers: local, openai, anthropic, google"));
+    return;
+  }
+
+  const providerInfo = PROVIDERS[provider];
+
+  // Initialize apiKeys if needed
+  if (!config.apiKeys) {
+    config.apiKeys = {};
+  }
+
+  // Set provider
+  config.modelProvider = provider;
+  config.skipLlm = false;
+
+  // Handle API key
+  if (providerInfo.requiresApiKey) {
+    if (apiKey) {
+      config.apiKeys[provider as keyof typeof config.apiKeys] = apiKey;
+      console.log(chalk.green(`✓ API key saved for ${providerInfo.name}`));
+    } else {
+      // Check if API key exists in environment or config
+      const existingKey = getApiKey(provider);
+      if (!existingKey) {
+        console.log(chalk.yellow(`Note: ${providerInfo.name} requires an API key.`));
+        console.log(chalk.dim(`Set ${providerInfo.envVar} in your environment or use --api-key flag.`));
+      }
+    }
+  }
+
+  // Set default model for provider
+  if (!config.llmModel || !isModelForProvider(config.llmModel, provider)) {
+    config.llmModel = providerInfo.models[0]?.id;
+    console.log(chalk.green(`✓ Default model set to: ${providerInfo.models[0]?.name}`));
+  }
+
+  // Save config
+  writeJson(configPath, config);
+  console.log(chalk.green(`✓ Provider set to: ${providerInfo.name}`));
+
+  logger.info({ provider, hasApiKey: !!apiKey }, "Provider configuration updated");
+}
+
+/**
+ * Check if a model ID belongs to a provider
+ */
+function isModelForProvider(modelId: string, provider: ModelProvider): boolean {
+  return PROVIDERS[provider].models.some((m) => m.id === modelId);
+}
+
+/**
  * Show current configuration
  */
-function showCurrentConfig(config: ProjectConfig & { llmModel?: string; skipLlm?: boolean }): void {
+function showCurrentConfig(config: CodeSynapseConfig): void {
   console.log();
   console.log(chalk.cyan.bold("Code-Synapse Configuration"));
   console.log(chalk.dim("─".repeat(50)));
@@ -98,38 +185,69 @@ function showCurrentConfig(config: ProjectConfig & { llmModel?: string; skipLlm?
   if (config.skipLlm) {
     console.log(`  Status:     ${chalk.yellow("Disabled")}`);
   } else {
+    console.log(`  Status:     ${chalk.green("Enabled")}`);
+
+    // Show provider
+    const provider = config.modelProvider ?? "local";
+    const providerInfo = PROVIDERS[provider];
+    console.log(`  Provider:   ${chalk.cyan(providerInfo?.name ?? provider)}`);
+
+    // Show API key status for cloud providers
+    if (providerInfo?.requiresApiKey) {
+      const hasKey = !!getApiKey(provider);
+      if (hasKey) {
+        console.log(`  API Key:    ${chalk.green("✓ Configured")}`);
+      } else {
+        console.log(`  API Key:    ${chalk.red("✗ Not configured")}`);
+        console.log(chalk.dim(`              Set ${providerInfo.envVar} or use --api-key`));
+      }
+    }
+
+    // Show model
     const modelId = config.llmModel || MODEL_PRESETS.balanced;
     const modelSpec = getModelById(modelId);
 
-    console.log(`  Status:     ${chalk.green("Enabled")}`);
     if (modelSpec) {
       console.log(`  Model:      ${chalk.cyan(modelSpec.name)} (${modelSpec.parameters})`);
       console.log(`  Family:     ${modelSpec.family}`);
       console.log(`  RAM:        ${modelSpec.minRamGb}GB minimum`);
       console.log(`  Quality:    ${"★".repeat(Math.floor(modelSpec.codeQuality / 2))}${"☆".repeat(5 - Math.floor(modelSpec.codeQuality / 2))} (${modelSpec.codeQuality}/10)`);
       console.log(`  Speed:      ${"★".repeat(Math.floor(modelSpec.speed / 2))}${"☆".repeat(5 - Math.floor(modelSpec.speed / 2))} (${modelSpec.speed}/10)`);
+    } else if (provider !== "local") {
+      // Cloud model
+      const cloudModel = providerInfo?.models.find(m => m.id === modelId);
+      if (cloudModel) {
+        console.log(`  Model:      ${chalk.cyan(cloudModel.name)}`);
+        console.log(chalk.dim(`              ${cloudModel.description}`));
+      } else {
+        console.log(`  Model:      ${modelId}`);
+      }
     } else {
       console.log(`  Model:      ${modelId}`);
     }
   }
 
-  // Show downloaded models
-  const downloaded = listDownloadedModels();
-  if (downloaded.length > 0) {
-    console.log();
-    console.log(chalk.white.bold("Downloaded Models"));
-    for (const model of downloaded) {
-      const isCurrent = model.id === (config.llmModel || MODEL_PRESETS.balanced);
-      const marker = isCurrent ? chalk.green("●") : chalk.dim("○");
-      console.log(`  ${marker} ${model.name} (${model.parameters})`);
+  // Show downloaded models (only for local provider)
+  if (config.modelProvider === "local" || !config.modelProvider) {
+    const downloaded = listDownloadedModels();
+    if (downloaded.length > 0) {
+      console.log();
+      console.log(chalk.white.bold("Downloaded Models"));
+      for (const model of downloaded) {
+        const isCurrent = model.id === (config.llmModel || MODEL_PRESETS.balanced);
+        const marker = isCurrent ? chalk.green("●") : chalk.dim("○");
+        console.log(`  ${marker} ${model.name} (${model.parameters})`);
+      }
     }
   }
 
   console.log();
   console.log(chalk.dim("─".repeat(50)));
-  console.log(chalk.dim("To change model: code-synapse config --model <preset>"));
-  console.log(chalk.dim("To list models:  code-synapse config --list-models"));
-  console.log(chalk.dim("For help:        code-synapse config --show-guide"));
+  console.log(chalk.dim("Interactive setup:  code-synapse config --setup"));
+  console.log(chalk.dim("Change provider:    code-synapse config --provider <name>"));
+  console.log(chalk.dim("Change model:       code-synapse config --model <preset>"));
+  console.log(chalk.dim("List models:        code-synapse config --list-models"));
+  console.log(chalk.dim("Help:               code-synapse config --show-guide"));
   console.log();
 }
 
@@ -137,7 +255,7 @@ function showCurrentConfig(config: ProjectConfig & { llmModel?: string; skipLlm?
  * Set the LLM model
  */
 async function setModel(
-  config: ProjectConfig & { llmModel?: string; skipLlm?: boolean },
+  config: CodeSynapseConfig,
   configPath: string,
   modelInput: string
 ): Promise<void> {

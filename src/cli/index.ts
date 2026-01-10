@@ -47,6 +47,7 @@ program
   .option("--skip-index", "Skip indexing step")
   .option("--skip-viewer", "Skip starting the Web Viewer")
   .option("--skip-justify", "Skip business justification step")
+  .option("--skip-setup", "Skip interactive setup wizard")
   .option("--justify-only", "Run only justification (skip indexing)")
   .option("-m, --model <preset>", "LLM model preset for justification (fastest, minimal, balanced, quality, maximum)")
   .action(async (options) => {
@@ -65,6 +66,7 @@ program
         skipIndex: options.skipIndex,
         skipViewer: options.skipViewer,
         skipJustify: options.skipJustify,
+        skipSetup: options.skipSetup,
         justifyOnly: options.justifyOnly,
         model: options.model,
       });
@@ -105,6 +107,9 @@ program
 program
   .command("config")
   .description("Manage Code-Synapse configuration")
+  .option("-s, --setup", "Run interactive setup wizard")
+  .option("--provider <name>", "Set model provider (local, openai, anthropic, google)")
+  .option("--api-key <key>", "Set API key for cloud provider")
   .option("-m, --model <preset>", "Set LLM model (preset or model ID)")
   .option("-l, --list-models", "List all available models")
   .option("-g, --show-guide", "Show model selection guide")
@@ -239,6 +244,7 @@ async function main(): Promise<void> {
       skipIndex: args.includes("--skip-index"),
       skipViewer: args.includes("--skip-viewer"),
       skipJustify: args.includes("--skip-justify"),
+      skipSetup: args.includes("--skip-setup"),
       justifyOnly: args.includes("--justify-only"),
     };
 

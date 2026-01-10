@@ -1072,15 +1072,36 @@ LLM Settings
 
 ### `code-synapse config`
 
-Manages configuration, especially LLM models.
+Manages configuration, including model providers, API keys, and LLM models.
 
 ```bash
 code-synapse config [options]
 
 Options:
+  -s, --setup            Run interactive setup wizard
+  --provider <name>      Set model provider (local, openai, anthropic, google)
+  --api-key <key>        Set API key for cloud provider
   -m, --model <preset>   Set LLM model (preset or model ID)
   -l, --list-models      List all available models
   -g, --show-guide       Show model selection guide
+```
+
+**Model Providers:**
+
+| Provider | Models | API Key | Environment Variable |
+|----------|--------|---------|---------------------|
+| `local` | Qwen 2.5 Coder (0.5B-14B) | Not required | - |
+| `openai` | GPT-4o, GPT-4o Mini | Required | `OPENAI_API_KEY` |
+| `anthropic` | Claude 3.5 Sonnet, Claude 3 Haiku | Required | `ANTHROPIC_API_KEY` |
+| `google` | Gemini 1.5 Pro, Gemini 1.5 Flash | Required | `GOOGLE_API_KEY` |
+
+**Configure cloud provider:**
+```bash
+# Interactive setup
+code-synapse config --setup
+
+# Or via command line
+code-synapse config --provider openai --api-key sk-xxx
 ```
 
 **List Models Output:**

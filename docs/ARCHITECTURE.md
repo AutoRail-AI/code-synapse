@@ -656,6 +656,25 @@ Code-Synapse includes a comprehensive model registry with 12 models across 4 fam
 | **CodeLlama** | 7B, 13B | Code-specialized, proven |
 | **DeepSeek Coder** | 1.3B, 6.7B | Strong alternative to Qwen |
 
+### Cloud Providers
+
+Code-Synapse supports cloud model providers as an alternative to local models:
+
+| Provider | Models | API Key Environment Variable |
+|----------|--------|------------------------------|
+| **OpenAI** | GPT-4o, GPT-4o Mini | `OPENAI_API_KEY` |
+| **Anthropic** | Claude 3.5 Sonnet, Claude 3 Haiku | `ANTHROPIC_API_KEY` |
+| **Google** | Gemini 1.5 Pro, Gemini 1.5 Flash | `GOOGLE_API_KEY` |
+
+**Configuration:**
+```bash
+# Interactive setup wizard
+code-synapse config --setup
+
+# Command-line configuration
+code-synapse config --provider openai --api-key sk-xxx
+```
+
 ### Inference Features
 
 - **GBNF Grammar Constraints**: Forces syntactically valid JSON output from small models

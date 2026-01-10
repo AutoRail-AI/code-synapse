@@ -1,5 +1,9 @@
 /**
  * Default command - Auto-initialize, index, and start the MCP server + Web Viewer
+ *
+ * When run without any existing configuration, this command launches an
+ * interactive setup wizard to help users configure their model provider
+ * (local or cloud) and API keys.
  */
 
 import chalk from "chalk";
@@ -22,6 +26,7 @@ import { justifyCommand } from "./justify.js";
 import { createGraphStore } from "../../core/graph/index.js";
 import { createGraphViewer, startViewerServer } from "../../viewer/index.js";
 import type { ModelPreset } from "../../core/llm/index.js";
+import { InteractiveSetup } from "./setup.js";
 
 const logger = createLogger("default");
 
@@ -37,6 +42,8 @@ export interface DefaultOptions {
   justifyOnly?: boolean;
   /** LLM model preset for justification */
   model?: ModelPreset;
+  /** Skip interactive setup */
+  skipSetup?: boolean;
 }
 
 const PORT_RANGE_START = 3100;
@@ -92,12 +99,25 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
   let viewer: ReturnType<typeof createGraphViewer> | null = null;
 
   try {
-    // Step 1: Check if initialized, if not run init
+    // Step 1: Check if initialized, if not run interactive setup + init
     const configPath = getConfigPath();
     if (!fileExists(configPath)) {
       spinner.info(chalk.yellow("Project not initialized"));
-      spinner.start("Initializing project...");
 
+      // Run interactive setup wizard (unless skipped)
+      if (!options.skipSetup) {
+        spinner.stop();
+        console.log();
+        console.log(chalk.cyan.bold("Welcome to Code-Synapse!"));
+        console.log(chalk.dim("Let's configure your AI model preferences first."));
+        console.log();
+
+        const setup = new InteractiveSetup();
+        await setup.run();
+        console.log();
+      }
+
+      spinner.start("Initializing project...");
       await initCommand({});
       spinner.succeed(chalk.green("Project initialized"));
     } else {

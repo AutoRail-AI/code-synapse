@@ -382,10 +382,13 @@ code-synapse --viewer-port 3201   # Use specific viewer port
 code-synapse --debug              # Enable debug logging
 code-synapse --skip-index         # Skip indexing step
 code-synapse --skip-justify       # Skip business justification
+code-synapse --skip-setup         # Skip interactive setup wizard
 code-synapse --justify-only       # Run only justification (skip indexing)
 code-synapse --skip-viewer        # Skip web viewer
 code-synapse -m balanced          # Set LLM model preset
 ```
+
+**Interactive Setup:** When running on a new project, Code-Synapse automatically launches an interactive wizard to configure your model provider (local or cloud) and API keys. Use `--skip-setup` to bypass this.
 
 **Options:**
 
@@ -396,6 +399,7 @@ code-synapse -m balanced          # Set LLM model preset
 | `-d, --debug` | Enable debug logging |
 | `--skip-index` | Skip the indexing step |
 | `--skip-justify` | Skip business justification (LLM inference) |
+| `--skip-setup` | Skip interactive setup wizard |
 | `--justify-only` | Run only justification (assumes already indexed) |
 | `-m, --model <preset>` | LLM model preset: `fastest`, `minimal`, `balanced`, `quality`, `maximum` |
 | `--skip-viewer` | Skip starting the Web Viewer |
@@ -417,9 +421,36 @@ code-synapse -m balanced          # Set LLM model preset
 | `code-synapse justify --stats` | Show justification statistics |
 | `code-synapse status` | Show project and index statistics |
 | `code-synapse viewer` | Start the Web Viewer only |
+| `code-synapse config --setup` | Run interactive setup wizard |
+| `code-synapse config --provider <name>` | Set model provider (local/openai/anthropic/google) |
+| `code-synapse config --api-key <key>` | Set API key for cloud provider |
 | `code-synapse config --list-models` | List available LLM models |
 | `code-synapse config --model <preset>` | Set LLM model (fastest/balanced/quality/maximum) |
 | `code-synapse start` | Start the MCP server only |
+
+### Model Providers
+
+Code-Synapse supports both local and cloud model providers:
+
+| Provider | Models | API Key Required | Environment Variable |
+|----------|--------|------------------|---------------------|
+| `local` (default) | Qwen 2.5 Coder (0.5B-14B) | No | - |
+| `openai` | GPT-4o, GPT-4o Mini | Yes | `OPENAI_API_KEY` |
+| `anthropic` | Claude 3.5 Sonnet, Claude 3 Haiku | Yes | `ANTHROPIC_API_KEY` |
+| `google` | Gemini 1.5 Pro, Gemini 1.5 Flash | Yes | `GOOGLE_API_KEY` |
+
+**Configure a cloud provider:**
+```bash
+# Option 1: Interactive setup
+code-synapse config --setup
+
+# Option 2: Command line
+code-synapse config --provider openai --api-key sk-xxx
+
+# Option 3: Environment variable
+export OPENAI_API_KEY=sk-xxx
+code-synapse config --provider openai
+```
 
 ### Justify Command Options
 
