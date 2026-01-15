@@ -533,7 +533,22 @@ export class LLMClassificationEngine implements IClassificationEngine {
 
       return null;
     } catch (error) {
-      logger.error({ error }, "LLM classification failed");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(
+        {
+          err: error,
+          errorMessage,
+          errorStack: error instanceof Error ? error.stack : undefined,
+          entityId: request.entityId,
+          entityType: request.entityType,
+          entityName: request.entityName,
+          filePath: request.filePath,
+        },
+        "LLM classification failed for %s (%s): %s",
+        request.entityName,
+        request.entityType,
+        errorMessage
+      );
       return null;
     }
   }

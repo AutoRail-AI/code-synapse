@@ -540,13 +540,22 @@ export class LedgerCompactionService implements ILedgerCompaction {
         durationMs: this.lastCompactionDurationMs,
       };
     } catch (error) {
-      logger.error({ error }, "Compaction failed");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(
+        {
+          err: error,
+          errorMessage,
+          errorStack: error instanceof Error ? error.stack : undefined,
+        },
+        "Ledger compaction failed: %s",
+        errorMessage
+      );
       return {
         success: false,
         entriesProcessed: 0,
         entriesCompacted: 0,
         sessionsProcessed: 0,
-        errors: [{ sessionId: "unknown", error: error instanceof Error ? error.message : "Unknown error" }],
+        errors: [{ sessionId: "unknown", error: errorMessage }],
         durationMs: Date.now() - startTime,
       };
     }

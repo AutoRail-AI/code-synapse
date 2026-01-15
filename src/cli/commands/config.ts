@@ -3,6 +3,8 @@
  */
 
 import chalk from "chalk";
+import * as readline from "node:readline/promises";
+import { stdin, stdout } from "node:process";
 import {
   fileExists,
   getConfigPath,
@@ -17,7 +19,12 @@ import {
   getAvailableModels,
   getModelSelectionGuide,
   listDownloadedModels,
+  ANTHROPIC_MODELS,
+  OPENAI_MODELS,
+  GOOGLE_MODELS,
+  LOCAL_MODELS,
   type ModelPreset,
+  type ModelConfig,
 } from "../../core/llm/index.js";
 import {
   InteractiveSetup,
@@ -43,7 +50,7 @@ export interface ConfigOptions {
  * Manage Code-Synapse configuration
  */
 export async function configCommand(options: ConfigOptions): Promise<void> {
-  logger.info({ options }, "Config command");
+  logger.debug({ options }, "Config command");
 
   // Handle --setup flag - interactive wizard
   if (options.setup) {
@@ -128,7 +135,7 @@ async function setProvider(
   config.modelProvider = provider;
   config.skipLlm = false;
 
-  // Handle API key
+  // Handle API key for cloud providers
   if (providerInfo.requiresApiKey) {
     if (apiKey) {
       config.apiKeys[provider as keyof typeof config.apiKeys] = apiKey;
@@ -141,12 +148,17 @@ async function setProvider(
         console.log(chalk.dim(`Set ${providerInfo.envVar} in your environment or use --api-key flag.`));
       }
     }
-  }
-
-  // Set default model for provider
-  if (!config.llmModel || !isModelForProvider(config.llmModel, provider)) {
-    config.llmModel = providerInfo.models[0]?.id;
-    console.log(chalk.green(`✓ Default model set to: ${providerInfo.models[0]?.name}`));
+    // Set default model for cloud provider
+    if (!config.llmModel || !isModelForProvider(config.llmModel, provider)) {
+      config.llmModel = providerInfo.models[0]?.id;
+      console.log(chalk.green(`✓ Default model set to: ${providerInfo.models[0]?.name}`));
+    }
+  } else if (provider === "local") {
+    // Interactive model selection for local provider
+    const selectedModel = await selectLocalModel();
+    if (selectedModel) {
+      config.llmModel = selectedModel;
+    }
   }
 
   // Save config
@@ -154,6 +166,87 @@ async function setProvider(
   console.log(chalk.green(`✓ Provider set to: ${providerInfo.name}`));
 
   logger.info({ provider, hasApiKey: !!apiKey }, "Provider configuration updated");
+}
+
+/**
+ * Interactive local model selection
+ */
+async function selectLocalModel(): Promise<string | null> {
+  console.log();
+  console.log(chalk.cyan.bold("Select Local Model"));
+  console.log(chalk.dim("─".repeat(50)));
+  console.log();
+
+  const presetDescriptions: Record<string, { ram: string; description: string }> = {
+    fastest: { ram: "1GB", description: "Ultra-fast, minimal resources" },
+    minimal: { ram: "2GB", description: "Good for low-memory systems" },
+    balanced: { ram: "4GB", description: "Recommended - best balance" },
+    quality: { ram: "8GB", description: "High quality analysis" },
+    maximum: { ram: "16GB", description: "Maximum quality" },
+  };
+
+  const presetNames = Object.keys(MODEL_PRESETS) as ModelPreset[];
+  const downloaded = listDownloadedModels();
+
+  // Display options
+  presetNames.forEach((preset, index) => {
+    const modelId = MODEL_PRESETS[preset];
+    const modelSpec = getModelById(modelId);
+    const info = presetDescriptions[preset] ?? { ram: "?", description: "Unknown" };
+    const isDownloaded = downloaded.some(m => m.id === modelId);
+    const isRecommended = preset === "balanced";
+
+    const marker = isRecommended ? chalk.green("★") : chalk.dim(`${index + 1}`);
+    const downloadStatus = isDownloaded ? chalk.green(" ✓") : chalk.dim(" ○");
+    const recommendedTag = isRecommended ? chalk.green(" (Recommended)") : "";
+
+    console.log(`  ${marker}. ${chalk.cyan(preset.padEnd(10))} ${info.ram.padEnd(5)} ${info.description}${downloadStatus}${recommendedTag}`);
+    if (modelSpec) {
+      console.log(chalk.dim(`     → ${modelSpec.name}`));
+    }
+  });
+
+  console.log();
+  console.log(chalk.dim("  ✓ = downloaded, ○ = will download on first use"));
+  console.log();
+
+  // Prompt for selection
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+
+  try {
+    const answer = await rl.question(chalk.white("Select model (1-5 or name) [balanced]: "));
+    const input = answer.trim().toLowerCase() || "balanced";
+
+    // Check if input is a number
+    const num = parseInt(input, 10);
+    if (num >= 1 && num <= presetNames.length) {
+      const selectedPreset = presetNames[num - 1]!;
+      const modelId = MODEL_PRESETS[selectedPreset];
+      const modelSpec = getModelById(modelId);
+      console.log(chalk.green(`✓ Model set to: ${modelSpec?.name || modelId} (${selectedPreset})`));
+      return modelId;
+    }
+
+    // Check if input is a preset name
+    if (input in MODEL_PRESETS) {
+      const modelId = MODEL_PRESETS[input as ModelPreset];
+      const modelSpec = getModelById(modelId);
+      console.log(chalk.green(`✓ Model set to: ${modelSpec?.name || modelId} (${input})`));
+      return modelId;
+    }
+
+    // Check if input is a direct model ID
+    const modelSpec = getModelById(input);
+    if (modelSpec) {
+      console.log(chalk.green(`✓ Model set to: ${modelSpec.name}`));
+      return input;
+    }
+
+    console.log(chalk.yellow(`Unknown model: ${input}, using balanced`));
+    return MODEL_PRESETS.balanced;
+  } finally {
+    rl.close();
+  }
 }
 
 /**
@@ -307,16 +400,28 @@ async function setModel(
 }
 
 /**
+ * Format number with K/M suffixes
+ */
+function formatNumber(num: number): string {
+  if (num >= 1000000) {
+    return `${(num / 1000000).toFixed(1)}M`;
+  } else if (num >= 1000) {
+    return `${(num / 1000).toFixed(0)}K`;
+  }
+  return num.toString();
+}
+
+/**
  * Show available models
  */
 function showAvailableModels(): void {
   console.log();
   console.log(chalk.cyan.bold("Available LLM Models"));
-  console.log(chalk.dim("─".repeat(80)));
+  console.log(chalk.dim("─".repeat(90)));
   console.log();
 
-  // Show presets first
-  console.log(chalk.white.bold("Quick Presets"));
+  // Show local presets first
+  console.log(chalk.white.bold("Local Model Presets"));
   console.log(chalk.dim("Use these with: code-synapse config --model <preset>"));
   console.log();
 
@@ -336,11 +441,40 @@ function showAvailableModels(): void {
     console.log(chalk.dim(`    ${presetDescriptions[preset]}`));
   }
 
+  // Show cloud providers
   console.log();
-  console.log(chalk.white.bold("All Models"));
+  console.log(chalk.dim("─".repeat(90)));
+  console.log();
+  console.log(chalk.white.bold("Cloud API Models"));
+  console.log(chalk.dim("Set with: code-synapse config --provider <anthropic|openai|google>"));
   console.log();
 
-  // Group by family
+  // Anthropic Models
+  console.log(chalk.magenta.bold("ANTHROPIC (Claude)"));
+  console.log(chalk.dim("  Set ANTHROPIC_API_KEY environment variable"));
+  console.log();
+  showModelTable(Object.values(ANTHROPIC_MODELS));
+
+  // OpenAI Models
+  console.log(chalk.green.bold("OPENAI (GPT)"));
+  console.log(chalk.dim("  Set OPENAI_API_KEY environment variable"));
+  console.log();
+  showModelTable(Object.values(OPENAI_MODELS));
+
+  // Google Models
+  console.log(chalk.blue.bold("GOOGLE (Gemini)"));
+  console.log(chalk.dim("  Set GOOGLE_API_KEY environment variable"));
+  console.log();
+  showModelTable(Object.values(GOOGLE_MODELS));
+
+  // Local Models
+  console.log(chalk.dim("─".repeat(90)));
+  console.log();
+  console.log(chalk.white.bold("Local Models (node-llama-cpp)"));
+  console.log(chalk.dim("Privacy-first, no API costs. Models download on first use."));
+  console.log();
+
+  // Group local models by family
   const models = getAvailableModels();
   const byFamily = new Map<string, typeof models>();
 
@@ -355,13 +489,37 @@ function showAvailableModels(): void {
     for (const model of familyModels) {
       const downloaded = listDownloadedModels().some(m => m.id === model.id);
       const marker = downloaded ? chalk.green("✓") : chalk.dim("○");
-      console.log(`  ${marker} ${chalk.white(model.id.padEnd(22))} ${model.parameters.padEnd(6)} ${model.minRamGb}GB RAM  ${chalk.dim(model.description.substring(0, 40))}`);
+      const localConfig = LOCAL_MODELS[model.id];
+      const contextStr = localConfig ? formatNumber(localConfig.contextWindow) : "?";
+      console.log(`  ${marker} ${chalk.white(model.id.padEnd(22))} ${model.parameters.padEnd(6)} ${String(model.minRamGb).padStart(2)}GB RAM  ${contextStr.padStart(5)} ctx  ${chalk.dim(model.description.substring(0, 35))}`);
     }
     console.log();
   }
 
-  console.log(chalk.dim("─".repeat(80)));
-  console.log(chalk.dim("✓ = downloaded, ○ = not downloaded"));
-  console.log(chalk.dim("Models are downloaded automatically on first use."));
+  console.log(chalk.dim("─".repeat(90)));
+  console.log(chalk.dim("✓ = downloaded, ○ = not downloaded (local models only)"));
+  console.log(chalk.dim("Local models are downloaded automatically on first use."));
+  console.log();
+}
+
+/**
+ * Show model table for cloud providers
+ */
+function showModelTable(models: ModelConfig[]): void {
+  for (const model of models) {
+    const contextStr = formatNumber(model.contextWindow);
+    const outputStr = formatNumber(model.maxOutputTokens);
+    const priceStr = model.pricing
+      ? `$${model.pricing.inputPerMillion}/$${model.pricing.outputPerMillion}`
+      : "-";
+    const batchStr = String(model.recommendedBatchSize);
+
+    const codeTag = model.codeOptimized ? chalk.cyan(" [code]") : "";
+    const reasonTag = model.isReasoningModel ? chalk.yellow(" [reason]") : "";
+
+    console.log(
+      `  ${chalk.white(model.id.padEnd(30))} ${contextStr.padStart(6)} ctx  ${outputStr.padStart(6)} out  ${priceStr.padStart(10)}/M  batch:${batchStr.padStart(3)}${codeTag}${reasonTag}`
+    );
+  }
   console.log();
 }

@@ -291,7 +291,16 @@ export class GraphRAGSummarizer {
         onProgress?.(((i + 1) / eligibleFiles.length) * 100);
       }
     } catch (error) {
-      logger.error({ error }, "Failed to generate file summaries");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(
+        {
+          err: error,
+          errorMessage,
+          errorStack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to generate file summaries: %s",
+        errorMessage
+      );
     }
   }
 
@@ -303,7 +312,7 @@ export class GraphRAGSummarizer {
     filePath: string,
     functions: FunctionSummary[]
   ): Promise<FileSummary | null> {
-    if (!this.llmService.isReady()) {
+    if (!this.llmService.isReady) {
       // Fallback: combine function summaries
       const combinedTags = [...new Set(functions.flatMap((f) => f.tags))];
       const avgConfidence =
@@ -433,7 +442,7 @@ Provide a JSON summary with: summary, purpose, mainEntities, tags, confidence`;
     // Get dependencies from imports
     const dependencies = await this.getModuleDependencies(filePaths);
 
-    if (!this.llmService.isReady()) {
+    if (!this.llmService.isReady) {
       // Fallback summary
       const combinedTags = [...new Set(fileSummaries.flatMap((f) => f.tags))];
       const avgConfidence =
@@ -542,7 +551,7 @@ Provide a JSON summary with: summary, responsibilities, tags, confidence`;
       return;
     }
 
-    if (!this.llmService.isReady()) {
+    if (!this.llmService.isReady) {
       // Fallback summary
       const _combinedTags = [...new Set(modules.flatMap((m) => m.tags))]; // Reserved for future use
 
@@ -593,7 +602,16 @@ Provide a JSON summary with: summary, architecture, keyFeatures, techStack, conf
         confidence: parsed.confidence,
       };
     } catch (error) {
-      logger.error({ error }, "Failed to generate system summary");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(
+        {
+          err: error,
+          errorMessage,
+          errorStack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to generate system summary: %s",
+        errorMessage
+      );
     }
   }
 

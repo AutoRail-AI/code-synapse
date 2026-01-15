@@ -264,9 +264,53 @@ export function generateCozoScript(): string[] {
 }
 
 /**
+ * Tables added in V13+ that have their own migrations.
+ * These tables use PascalCase naming and are created by migrations 003-005.
+ * Excluding them from generateExecutableCozoScript() to avoid naming conflicts.
+ */
+const V13_PLUS_TABLES = new Set([
+  // V13 - Justification Layer
+  "Justification",
+  "ClarificationQuestion",
+  "ProjectContext",
+  // V14 - Classification Layer
+  "EntityClassification",
+  // V15 - Ledger & Adaptive Indexing
+  "LedgerEntry",
+  "AdaptiveSession",
+  "ObservedQuery",
+  "ObservedChange",
+  "SemanticCorrelation",
+  "AdaptiveReindexRequest",
+  "IndexingPriority",
+]);
+
+/**
+ * Relationships added in V13+ that have their own migrations.
+ */
+const V13_PLUS_RELATIONSHIPS = new Set([
+  // V13 - Justification Layer
+  "HAS_JUSTIFICATION",
+  "JUSTIFICATION_HIERARCHY",
+  "HAS_CLARIFICATION",
+  // V14 - Classification Layer
+  "HAS_CLASSIFICATION",
+  "CLASSIFICATION_DEPENDS_ON",
+  // V15 - Adaptive Indexing
+  "QUERY_RETURNED",
+  "CHANGE_AFFECTED",
+  "CORRELATION_QUERY",
+  "CORRELATION_CHANGE",
+  "SESSION_QUERY",
+  "SESSION_CHANGE",
+]);
+
+/**
  * Generates executable CozoScript statements (without comments)
  *
  * Note: Does NOT include schema_version relation - that is managed by MigrationRunner.
+ * Note: Does NOT include V13+ tables/relationships - those use PascalCase naming
+ *       and are created by their own migrations (003-005).
  *
  * @returns Array of executable CozoScript statements
  */
@@ -276,16 +320,18 @@ export function generateExecutableCozoScript(): string[] {
   // NOTE: schema_version relation is created by MigrationRunner.ensureVersionTable(),
   // not here. This avoids conflicts during migration.
 
-  // Generate node relations
+  // Generate node relations (excluding V13+ tables which have dedicated migrations)
   for (const [nodeName, properties] of Object.entries(SCHEMA.nodes)) {
     if (nodeName === "_SchemaVersion") continue;
+    if (V13_PLUS_TABLES.has(nodeName)) continue; // Skip V13+ tables
     statements.push(
       generateNodeRelation(nodeName, properties as Record<string, PropertyDefinition>)
     );
   }
 
-  // Generate relationship relations
+  // Generate relationship relations (excluding V13+ relationships)
   for (const [relName, relDef] of Object.entries(SCHEMA.relationships)) {
+    if (V13_PLUS_RELATIONSHIPS.has(relName)) continue; // Skip V13+ relationships
     const { from, to, properties } = relDef as {
       from: readonly string[];
       to: readonly string[];

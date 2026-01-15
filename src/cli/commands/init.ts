@@ -25,10 +25,30 @@ import {
 
 const logger = createLogger("init");
 
+/**
+ * Get default model ID for an API provider
+ */
+function getDefaultApiModel(provider: "openai" | "anthropic" | "google"): string {
+  const defaults: Record<string, string> = {
+    anthropic: "claude-sonnet-4-20250514",
+    openai: "gpt-4o",
+    google: "gemini-1.5-pro",
+  };
+  return defaults[provider] || "claude-sonnet-4-20250514";
+}
+
 export interface InitOptions {
   force?: boolean;
   skipLlm?: boolean;
   model?: string;
+  /** Model provider (local, openai, anthropic, google) */
+  modelProvider?: "local" | "openai" | "anthropic" | "google";
+  /** API keys for cloud providers */
+  apiKeys?: {
+    openai?: string;
+    anthropic?: string;
+    google?: string;
+  };
 }
 
 /**
@@ -239,30 +259,55 @@ async function detectProjectConfig(options: InitOptions): Promise<ProjectConfig>
   const extendedConfig = config as ProjectConfig & {
     skipLlm?: boolean;
     llmModel?: string;
+    modelProvider?: "local" | "openai" | "anthropic" | "google";
+    apiKeys?: {
+      openai?: string;
+      anthropic?: string;
+      google?: string;
+    };
   };
 
   if (options.skipLlm) {
     extendedConfig.skipLlm = true;
   } else {
-    // Set model - use provided model or default to balanced
-    let modelId: string = MODEL_PRESETS.balanced;
+    // Set model based on provider type
+    let modelId: string;
 
-    if (options.model) {
-      // Check if it's a preset name
-      if (options.model in MODEL_PRESETS) {
-        modelId = MODEL_PRESETS[options.model as ModelPreset];
-      } else {
-        // Check if it's a direct model ID
-        const model = getModelById(options.model);
-        if (model) {
-          modelId = options.model;
+    if (options.modelProvider && options.modelProvider !== "local") {
+      // For API providers, use the model name directly (e.g., "claude-3-5-sonnet", "gpt-4o")
+      // Don't validate against local model list
+      modelId = options.model || getDefaultApiModel(options.modelProvider);
+      logger.debug({ modelProvider: options.modelProvider, modelId }, "Using API model");
+    } else {
+      // For local provider, validate against known local models
+      modelId = MODEL_PRESETS.balanced; // Default
+
+      if (options.model) {
+        // Check if it's a preset name
+        if (options.model in MODEL_PRESETS) {
+          modelId = MODEL_PRESETS[options.model as ModelPreset];
         } else {
-          logger.warn({ model: options.model }, "Unknown model, using balanced preset");
+          // Check if it's a direct model ID
+          const model = getModelById(options.model);
+          if (model) {
+            modelId = options.model;
+          } else {
+            logger.warn({ model: options.model }, "Unknown local model, using balanced preset");
+          }
         }
       }
     }
 
     extendedConfig.llmModel = modelId;
+  }
+
+  // Store provider settings if provided
+  if (options.modelProvider) {
+    extendedConfig.modelProvider = options.modelProvider;
+  }
+
+  if (options.apiKeys) {
+    extendedConfig.apiKeys = options.apiKeys;
   }
 
   return extendedConfig;

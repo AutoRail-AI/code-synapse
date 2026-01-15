@@ -60,16 +60,59 @@ export interface IGraphStoreForPropagation {
  * 4. Re-aggregate bottom-up with enriched context
  */
 export class ContextPropagator {
+  // Performance optimization: Cache file hierarchies to avoid repeated rebuilds
+  private hierarchyCache: Map<string, HierarchyNode[]> = new Map();
+
+  // Cache file paths to avoid repeated lookups
+  private filePathCache: Map<string, string> = new Map();
+
+  // Cache project context (rarely changes)
+  private projectContextCache: ProjectContext | null = null;
+
   constructor(private graphStore: IGraphStoreForPropagation) {}
+
+  /**
+   * Clear all caches (useful for testing or after major index updates)
+   */
+  clearCaches(): void {
+    this.hierarchyCache.clear();
+    this.filePathCache.clear();
+    this.projectContextCache = null;
+  }
+
+  /**
+   * Clear hierarchy cache for specific file (for incremental updates)
+   */
+  invalidateFileHierarchy(filePath: string): void {
+    this.hierarchyCache.delete(filePath);
+  }
 
   // ===========================================================================
   // Hierarchy Building
   // ===========================================================================
 
   /**
-   * Build the entity hierarchy for a file
+   * Build the entity hierarchy for a file (with caching)
    */
   async buildFileHierarchy(filePath: string): Promise<HierarchyNode[]> {
+    // Check cache first
+    const cached = this.hierarchyCache.get(filePath);
+    if (cached) {
+      return cached;
+    }
+
+    const nodes = await this._buildFileHierarchyUncached(filePath);
+
+    // Cache the result
+    this.hierarchyCache.set(filePath, nodes);
+
+    return nodes;
+  }
+
+  /**
+   * Internal method to build hierarchy without cache
+   */
+  private async _buildFileHierarchyUncached(filePath: string): Promise<HierarchyNode[]> {
     const nodes: HierarchyNode[] = [];
 
     // Get file node
@@ -77,7 +120,7 @@ export class ContextPropagator {
       id: string;
       relativePath: string;
     }>(
-      `?[id, relativePath] := *File{id, relativePath}, relativePath = $path`,
+      `?[id, relative_path] := *file{id, relative_path}, relative_path = $path`,
       { path: filePath }
     );
 
@@ -105,7 +148,7 @@ export class ContextPropagator {
       id: string;
       name: string;
     }>(
-      `?[id, name] := *Class{id, name, fileId}, fileId = $fileId`,
+      `?[id, name] := *class{id, name, file_id}, file_id = $fileId`,
       { fileId }
     );
 
@@ -127,7 +170,7 @@ export class ContextPropagator {
         functionId: string;
         name: string;
       }>(
-        `?[functionId, name] := *HAS_METHOD{from_id: $classId, to_id: functionId}, *Function{id: functionId, name}`,
+        `?[functionId, name] := *has_method{from_id: $classId, to_id: functionId}, *function{id: functionId, name}`,
         { classId: cls.id }
       );
 
@@ -151,7 +194,7 @@ export class ContextPropagator {
       id: string;
       name: string;
     }>(
-      `?[id, name] := *Interface{id, name, fileId}, fileId = $fileId`,
+      `?[id, name] := *interface{id, name, file_id}, file_id = $fileId`,
       { fileId }
     );
 
@@ -175,9 +218,9 @@ export class ContextPropagator {
       name: string;
     }>(
       `?[id, name] :=
-        *Function{id, name, fileId},
-        fileId = $fileId,
-        not *HAS_METHOD{to_id: id}`,
+        *function{id, name, file_id},
+        file_id = $fileId,
+        not *has_method{to_id: id}`,
       { fileId }
     );
 
@@ -259,16 +302,16 @@ export class ContextPropagator {
         const result = await this.graphStore.query<{
           id: string;
           name: string;
-          fileId: string;
-          startLine: number;
-          endLine: number;
+          file_id: string;
+          start_line: number;
+          end_line: number;
           signature: string;
-          isExported: boolean;
-          isAsync: boolean;
-          docComment: string | null;
+          is_exported: boolean;
+          is_async: boolean;
+          doc_comment: string | null;
         }>(
-          `?[id, name, fileId, startLine, endLine, signature, isExported, isAsync, docComment] :=
-            *Function{id, name, fileId, startLine, endLine, signature, isExported, isAsync, docComment},
+          `?[id, name, file_id, start_line, end_line, signature, is_exported, is_async, doc_comment] :=
+            *function{id, name, file_id, start_line, end_line, signature, is_exported, is_async, doc_comment},
             id = $entityId`,
           { entityId }
         );
@@ -278,20 +321,20 @@ export class ContextPropagator {
         }
 
         const fn = result.rows[0]!;
-        const filePath = await this.getFilePath(fn.fileId);
+        const filePath = await this.getFilePath(fn.file_id);
 
         return {
           id: fn.id,
           type: entityType,
           name: fn.name,
           filePath,
-          startLine: fn.startLine,
-          endLine: fn.endLine,
+          startLine: fn.start_line,
+          endLine: fn.end_line,
           signature: fn.signature,
           codeSnippet: fn.signature, // Would need file read for full snippet
-          docComment: fn.docComment || undefined,
-          isExported: fn.isExported,
-          isAsync: fn.isAsync,
+          docComment: fn.doc_comment || undefined,
+          isExported: fn.is_exported,
+          isAsync: fn.is_async,
         };
       }
 
@@ -299,14 +342,14 @@ export class ContextPropagator {
         const result = await this.graphStore.query<{
           id: string;
           name: string;
-          fileId: string;
-          startLine: number;
-          endLine: number;
-          isExported: boolean;
-          docComment: string | null;
+          file_id: string;
+          start_line: number;
+          end_line: number;
+          is_exported: boolean;
+          doc_comment: string | null;
         }>(
-          `?[id, name, fileId, startLine, endLine, isExported, docComment] :=
-            *Class{id, name, fileId, startLine, endLine, isExported, docComment},
+          `?[id, name, file_id, start_line, end_line, is_exported, doc_comment] :=
+            *class{id, name, file_id, start_line, end_line, is_exported, doc_comment},
             id = $entityId`,
           { entityId }
         );
@@ -316,18 +359,18 @@ export class ContextPropagator {
         }
 
         const cls = result.rows[0]!;
-        const filePath = await this.getFilePath(cls.fileId);
+        const filePath = await this.getFilePath(cls.file_id);
 
         return {
           id: cls.id,
           type: "class",
           name: cls.name,
           filePath,
-          startLine: cls.startLine,
-          endLine: cls.endLine,
+          startLine: cls.start_line,
+          endLine: cls.end_line,
           codeSnippet: `class ${cls.name}`,
-          docComment: cls.docComment || undefined,
-          isExported: cls.isExported,
+          docComment: cls.doc_comment || undefined,
+          isExported: cls.is_exported,
         };
       }
 
@@ -335,14 +378,14 @@ export class ContextPropagator {
         const result = await this.graphStore.query<{
           id: string;
           name: string;
-          fileId: string;
-          startLine: number;
-          endLine: number;
-          isExported: boolean;
-          docComment: string | null;
+          file_id: string;
+          start_line: number;
+          end_line: number;
+          is_exported: boolean;
+          doc_comment: string | null;
         }>(
-          `?[id, name, fileId, startLine, endLine, isExported, docComment] :=
-            *Interface{id, name, fileId, startLine, endLine, isExported, docComment},
+          `?[id, name, file_id, start_line, end_line, is_exported, doc_comment] :=
+            *interface{id, name, file_id, start_line, end_line, is_exported, doc_comment},
             id = $entityId`,
           { entityId }
         );
@@ -352,27 +395,27 @@ export class ContextPropagator {
         }
 
         const iface = result.rows[0]!;
-        const filePath = await this.getFilePath(iface.fileId);
+        const filePath = await this.getFilePath(iface.file_id);
 
         return {
           id: iface.id,
           type: "interface",
           name: iface.name,
           filePath,
-          startLine: iface.startLine,
-          endLine: iface.endLine,
+          startLine: iface.start_line,
+          endLine: iface.end_line,
           codeSnippet: `interface ${iface.name}`,
-          docComment: iface.docComment || undefined,
-          isExported: iface.isExported,
+          docComment: iface.doc_comment || undefined,
+          isExported: iface.is_exported,
         };
       }
 
       case "file": {
         const result = await this.graphStore.query<{
           id: string;
-          relativePath: string;
+          relative_path: string;
         }>(
-          `?[id, relativePath] := *File{id, relativePath}, id = $entityId`,
+          `?[id, relative_path] := *file{id, relative_path}, id = $entityId`,
           { entityId }
         );
 
@@ -385,8 +428,8 @@ export class ContextPropagator {
         return {
           id: file.id,
           type: "file",
-          name: file.relativePath.split("/").pop() || file.relativePath,
-          filePath: file.relativePath,
+          name: file.relative_path.split("/").pop() || file.relative_path,
+          filePath: file.relative_path,
           startLine: 1,
           endLine: 1,
           codeSnippet: "",
@@ -400,14 +443,25 @@ export class ContextPropagator {
   }
 
   /**
-   * Get file path from file ID
+   * Get file path from file ID (with caching)
    */
   private async getFilePath(fileId: string): Promise<string> {
-    const result = await this.graphStore.query<{ relativePath: string }>(
-      `?[relativePath] := *File{id, relativePath}, id = $fileId`,
+    // Check cache first
+    const cached = this.filePathCache.get(fileId);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const result = await this.graphStore.query<{ relative_path: string }>(
+      `?[relative_path] := *file{id, relative_path}, id = $fileId`,
       { fileId }
     );
-    return result.rows[0]?.relativePath || "";
+    const filePath = result.rows[0]?.relative_path || "";
+
+    // Cache the result
+    this.filePathCache.set(fileId, filePath);
+
+    return filePath;
   }
 
   /**
@@ -421,22 +475,22 @@ export class ContextPropagator {
     // Functions/methods might have class parent
     if (entityType === "function" || entityType === "method") {
       const result = await this.graphStore.query<{
-        classId: string;
-        className: string;
+        class_id: string;
+        class_name: string;
       }>(
-        `?[classId, className] :=
-          *HAS_METHOD{from_id: classId, to_id: $entityId},
-          *Class{id: classId, name: className}`,
+        `?[class_id, class_name] :=
+          *has_method{from_id: class_id, to_id: $entityId},
+          *class{id: class_id, name: class_name}`,
         { entityId }
       );
 
       if (result.rows.length > 0) {
         const parent = result.rows[0]!;
         return {
-          id: parent.classId,
+          id: parent.class_id,
           type: "class",
-          name: parent.className,
-          justification: existingJustifications.get(parent.classId),
+          name: parent.class_name,
+          justification: existingJustifications.get(parent.class_id),
         };
       }
     }
@@ -444,29 +498,29 @@ export class ContextPropagator {
     // Classes/interfaces/functions have file parent
     if (["class", "interface", "function"].includes(entityType)) {
       const tableMap: Record<string, string> = {
-        class: "Class",
-        interface: "Interface",
-        function: "Function",
+        class: "class",
+        interface: "interface",
+        function: "function",
       };
       const table = tableMap[entityType];
 
       const result = await this.graphStore.query<{
-        fileId: string;
-        filePath: string;
+        file_id: string;
+        file_path: string;
       }>(
-        `?[fileId, filePath] :=
-          *${table}{id: $entityId, fileId},
-          *File{id: fileId, relativePath: filePath}`,
+        `?[file_id, file_path] :=
+          *${table}{id: $entityId, file_id},
+          *file{id: file_id, relative_path: file_path}`,
         { entityId }
       );
 
       if (result.rows.length > 0) {
         const parent = result.rows[0]!;
         return {
-          id: parent.fileId,
+          id: parent.file_id,
           type: "file",
-          name: parent.filePath.split("/").pop() || parent.filePath,
-          justification: existingJustifications.get(parent.fileId),
+          name: parent.file_path.split("/").pop() || parent.file_path,
+          justification: existingJustifications.get(parent.file_id),
         };
       }
     }
@@ -487,21 +541,21 @@ export class ContextPropagator {
     // Get siblings in same file
     if (entityType === "function" || entityType === "class" || entityType === "interface") {
       const tableMap: Record<string, string> = {
-        function: "Function",
-        class: "Class",
-        interface: "Interface",
+        function: "function",
+        class: "class",
+        interface: "interface",
       };
       const table = tableMap[entityType];
 
       const result = await this.graphStore.query<{
         id: string;
         name: string;
-        fileId: string;
+        file_id: string;
       }>(
-        `?[id, name, fileId] :=
-          *${table}{id: $entityId, fileId: myFileId},
-          *${table}{id, name, fileId},
-          fileId = myFileId,
+        `?[id, name, file_id] :=
+          *${table}{id: $entityId, file_id: my_file_id},
+          *${table}{id, name, file_id},
+          file_id = my_file_id,
           id != $entityId`,
         { entityId }
       );
@@ -533,19 +587,19 @@ export class ContextPropagator {
     if (entityType === "class") {
       // Get methods
       const result = await this.graphStore.query<{
-        functionId: string;
+        function_id: string;
         name: string;
       }>(
-        `?[functionId, name] :=
-          *HAS_METHOD{from_id: $entityId, to_id: functionId},
-          *Function{id: functionId, name}`,
+        `?[function_id, name] :=
+          *has_method{from_id: $entityId, to_id: function_id},
+          *function{id: function_id, name}`,
         { entityId }
       );
 
       for (const row of result.rows) {
-        const justification = existingJustifications.get(row.functionId);
+        const justification = existingJustifications.get(row.function_id);
         children.push({
-          id: row.functionId,
+          id: row.function_id,
           type: "method",
           name: row.name,
           purposeSummary: justification?.purposeSummary,
@@ -561,8 +615,8 @@ export class ContextPropagator {
         name: string;
       }>(
         `?[id, name] :=
-          *Function{id, name, fileId},
-          fileId = $entityId`,
+          *function{id, name, file_id},
+          file_id = $entityId`,
         { entityId }
       );
 
@@ -583,8 +637,8 @@ export class ContextPropagator {
         name: string;
       }>(
         `?[id, name] :=
-          *Class{id, name, fileId},
-          fileId = $entityId`,
+          *class{id, name, file_id},
+          file_id = $entityId`,
         { entityId }
       );
 
@@ -615,20 +669,20 @@ export class ContextPropagator {
     // Get file imports
     if (entityType === "file") {
       const result = await this.graphStore.query<{
-        toPath: string;
-        importedSymbols: string[];
+        to_path: string;
+        imported_symbols: string[];
       }>(
-        `?[toPath, importedSymbols] :=
-          *IMPORTS{from_id: $entityId, to_id: toId, importedSymbols},
-          *File{id: toId, relativePath: toPath}`,
+        `?[to_path, imported_symbols] :=
+          *imports{from_id: $entityId, to_id: to_id, imported_symbols},
+          *file{id: to_id, relative_path: to_path}`,
         { entityId }
       );
 
       for (const row of result.rows) {
         dependencies.push({
-          modulePath: row.toPath,
-          importedNames: row.importedSymbols || [],
-          isExternal: row.toPath.includes("node_modules"),
+          modulePath: row.to_path,
+          importedNames: row.imported_symbols || [],
+          isExternal: row.to_path.includes("node_modules"),
         });
       }
     }
@@ -650,44 +704,44 @@ export class ContextPropagator {
     if (entityType === "function" || entityType === "method") {
       // Get callers
       const callerResult = await this.graphStore.query<{
-        callerId: string;
-        callerName: string;
-        filePath: string;
+        caller_id: string;
+        caller_name: string;
+        file_path: string;
       }>(
-        `?[callerId, callerName, filePath] :=
-          *CALLS{from_id: callerId, to_id: $entityId},
-          *Function{id: callerId, name: callerName, fileId},
-          *File{id: fileId, relativePath: filePath}`,
+        `?[caller_id, caller_name, file_path] :=
+          *calls{from_id: caller_id, to_id: $entityId},
+          *function{id: caller_id, name: caller_name, file_id},
+          *file{id: file_id, relative_path: file_path}`,
         { entityId }
       );
 
       for (const row of callerResult.rows.slice(0, 10)) {
-        const justification = existingJustifications.get(row.callerId);
+        const justification = existingJustifications.get(row.caller_id);
         callers.push({
-          functionName: row.callerName,
-          filePath: row.filePath,
+          functionName: row.caller_name,
+          filePath: row.file_path,
           purposeSummary: justification?.purposeSummary,
         });
       }
 
       // Get callees
       const calleeResult = await this.graphStore.query<{
-        calleeId: string;
-        calleeName: string;
-        filePath: string;
+        callee_id: string;
+        callee_name: string;
+        file_path: string;
       }>(
-        `?[calleeId, calleeName, filePath] :=
-          *CALLS{from_id: $entityId, to_id: calleeId},
-          *Function{id: calleeId, name: calleeName, fileId},
-          *File{id: fileId, relativePath: filePath}`,
+        `?[callee_id, callee_name, file_path] :=
+          *calls{from_id: $entityId, to_id: callee_id},
+          *function{id: callee_id, name: callee_name, file_id},
+          *file{id: file_id, relative_path: file_path}`,
         { entityId }
       );
 
       for (const row of calleeResult.rows.slice(0, 10)) {
-        const justification = existingJustifications.get(row.calleeId);
+        const justification = existingJustifications.get(row.callee_id);
         callees.push({
-          functionName: row.calleeName,
-          filePath: row.filePath,
+          functionName: row.callee_name,
+          filePath: row.file_path,
           purposeSummary: justification?.purposeSummary,
         });
       }
@@ -697,37 +751,48 @@ export class ContextPropagator {
   }
 
   /**
-   * Get project context
+   * Get project context (with caching - rarely changes)
    */
   private async getProjectContext(): Promise<ProjectContext> {
+    // Check cache first
+    if (this.projectContextCache) {
+      return this.projectContextCache;
+    }
+
     // Try to get stored project context
     const result = await this.graphStore.query<{
-      projectName: string;
-      projectDescription: string | null;
+      project_name: string;
+      project_description: string | null;
       domain: string | null;
       framework: string | null;
-      knownFeatures: string[];
+      known_features: string[];
     }>(
-      `?[projectName, projectDescription, domain, framework, knownFeatures] :=
-        *ProjectContext{projectName, projectDescription, domain, framework, knownFeatures}`
+      `?[project_name, project_description, domain, framework, known_features] :=
+        *project_context{project_name, project_description, domain, framework, known_features}`
     );
 
+    let context: ProjectContext;
     if (result.rows.length > 0) {
       const ctx = result.rows[0]!;
-      return {
-        projectName: ctx.projectName,
-        projectDescription: ctx.projectDescription || undefined,
+      context = {
+        projectName: ctx.project_name,
+        projectDescription: ctx.project_description || undefined,
         domain: ctx.domain || undefined,
         framework: ctx.framework || undefined,
-        knownFeatures: ctx.knownFeatures || [],
+        knownFeatures: ctx.known_features || [],
+      };
+    } else {
+      // Default context
+      context = {
+        projectName: "Unknown Project",
+        knownFeatures: [],
       };
     }
 
-    // Default context
-    return {
-      projectName: "Unknown Project",
-      knownFeatures: [],
-    };
+    // Cache the result
+    this.projectContextCache = context;
+
+    return context;
   }
 
   // ===========================================================================

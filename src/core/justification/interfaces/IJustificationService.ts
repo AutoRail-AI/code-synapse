@@ -274,6 +274,21 @@ export interface JustifyOptions {
   /** Batch size for processing */
   batchSize?: number;
 
+  /** Number of entities to process in a single LLM call (batch inference) */
+  llmBatchSize?: number;
+
+  /** Skip trivial entities like simple getters/setters (uses defaults) */
+  skipTrivial?: boolean;
+
+  /** Use dynamic batching based on LLM context window size */
+  useDynamicBatching?: boolean;
+
+  /** Filter out gitignored and build artifact paths */
+  filterIgnoredPaths?: boolean;
+
+  /** Model ID for dynamic batch sizing (used to determine context window) */
+  modelId?: string;
+
   /** Progress callback */
   onProgress?: (progress: JustificationProgress) => void;
 

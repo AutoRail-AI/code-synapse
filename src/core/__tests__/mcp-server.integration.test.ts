@@ -147,12 +147,17 @@ describe.skipIf(SKIP_NATIVE_TESTS)("MCP Server Integration", () => {
     it("should list tools via MCP protocol", async () => {
       const result = await client.listTools();
       expect(result.tools).toBeDefined();
-      expect(result.tools.length).toBe(8);
+      expect(result.tools.length).toBe(12);
 
       const toolNames = result.tools.map((t) => t.name);
       expect(toolNames).toContain("search_code");
       expect(toolNames).toContain("get_function");
       expect(toolNames).toContain("get_project_stats");
+      // New tools for AI agent integration
+      expect(toolNames).toContain("notify_file_changed");
+      expect(toolNames).toContain("request_reindex");
+      expect(toolNames).toContain("enhance_prompt");
+      expect(toolNames).toContain("create_generation_context");
     });
 
     it("should list resources via MCP protocol", async () => {

@@ -1,25 +1,18 @@
 /**
  * Migration Registry
  *
- * Exports all migrations in order. Add new migrations here.
+ * Exports all migrations in order.
  *
  * @module
  */
 
 import type { Migration } from "../migration-runner.js";
 import { migration as migration001 } from "./001_initial_schema.js";
-import { migration as migration002 } from "./002_add_vector_indices.js";
 
 /**
  * All registered migrations in version order.
- * Add new migrations to this array as they are created.
  */
-export const migrations: Migration[] = [
-  migration001,
-  migration002,
-  // Add future migrations here:
-  // migration003,
-];
+export const migrations: Migration[] = [migration001];
 
 /**
  * Gets a migration by version number.

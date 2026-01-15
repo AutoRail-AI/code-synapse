@@ -24,10 +24,40 @@ import {
 } from "../../core/justification/index.js";
 import {
   createLLMServiceWithPreset,
+  createInitializedAPILLMService,
+  MODEL_PRESETS,
   type ModelPreset,
+  type APIProvider,
+  type ILLMService,
 } from "../../core/llm/index.js";
 
 const logger = createLogger("justify");
+
+/**
+ * Get default model ID for an API provider
+ */
+function getDefaultApiModel(provider: string): string {
+  const defaults: Record<string, string> = {
+    anthropic: "claude-sonnet-4-20250514",
+    openai: "gpt-4o",
+    google: "gemini-1.5-pro",
+  };
+  return defaults[provider] || "claude-sonnet-4-20250514";
+}
+
+/**
+ * Extended config with LLM settings
+ */
+interface CodeSynapseConfig extends ProjectConfig {
+  llmModel?: string;
+  skipLlm?: boolean;
+  modelProvider?: "local" | "openai" | "anthropic" | "google";
+  apiKeys?: {
+    anthropic?: string;
+    openai?: string;
+    google?: string;
+  };
+}
 
 export interface JustifyOptions {
   /** Force re-justification of all entities */
@@ -42,6 +72,10 @@ export interface JustifyOptions {
   file?: string;
   /** Show statistics only */
   stats?: boolean;
+  /** Override model provider (local, openai, anthropic, google) */
+  provider?: string;
+  /** Override model ID for this run */
+  modelId?: string;
 }
 
 /**
@@ -227,29 +261,70 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
 
   const spinner = ora("Initializing...").start();
 
+  // Track resources for cleanup
+  let store: Awaited<ReturnType<typeof createGraphStore>> | null = null;
+  let llmService: ILLMService | null = null;
+
   try {
     // Initialize graph store
     spinner.text = "Connecting to database...";
     const graphDbPath = getGraphDbPath();
-    const store = await createGraphStore({ path: graphDbPath });
+    store = await createGraphStore({ path: graphDbPath });
+
+    // Read extended config for modelProvider setting
+    const extendedConfig = readJson<CodeSynapseConfig>(configPath);
+
+    // Command-line options override config settings
+    const modelProvider = (options.provider as APIProvider | "local") ?? extendedConfig?.modelProvider ?? "local";
+    const savedModelId = options.modelId ?? extendedConfig?.llmModel;
+
+    // Get API key from config if available
+    const apiKey = extendedConfig?.apiKeys?.[modelProvider as keyof typeof extendedConfig.apiKeys];
 
     // Initialize LLM service if not skipping
-    let llmService = undefined;
+    let actualModelId: string | undefined;
+
     if (!options.skipLlm) {
-      spinner.text = "Loading LLM model...";
       const preset = options.model || "balanced";
+
       try {
-        llmService = createLLMServiceWithPreset(preset);
-        await llmService.initialize();
-        spinner.text = `LLM model loaded (${preset})`;
-      } catch {
-        spinner.warn(chalk.yellow("LLM not available, using code analysis only"));
-        llmService = undefined;
+        if (modelProvider === "anthropic" || modelProvider === "openai" || modelProvider === "google") {
+          // Use API-based LLM service
+          // If saved modelId is a local model (contains "qwen", "llama", "codellama", "deepseek"),
+          // don't pass it - let the API service use its default
+          const isLocalModel = savedModelId &&
+            (savedModelId.includes("qwen") || savedModelId.includes("llama") ||
+             savedModelId.includes("codellama") || savedModelId.includes("deepseek"));
+          const apiModelId = isLocalModel ? undefined : savedModelId;
+
+          spinner.text = `Connecting to ${modelProvider} API...`;
+          llmService = await createInitializedAPILLMService({
+            provider: modelProvider as APIProvider,
+            modelId: apiModelId,
+            apiKey: apiKey,
+          });
+          spinner.text = `${modelProvider} API connected`;
+          actualModelId = apiModelId || getDefaultApiModel(modelProvider);
+          console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId}) for LLM inference`));
+        } else {
+          // Use local LLM service
+          spinner.text = "Loading local LLM model...";
+          const localService = createLLMServiceWithPreset(preset);
+          await localService.initialize();
+          llmService = localService;
+          actualModelId = MODEL_PRESETS[preset];
+          spinner.text = `Local LLM model loaded (${preset})`;
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        spinner.warn(chalk.yellow(`LLM not available: ${errorMessage}`));
+        console.log(chalk.dim("  Continuing with code analysis only"));
+        llmService = null;
       }
     }
 
     // Create justification service
-    const justificationService = createLLMJustificationService(store, llmService);
+    const justificationService = createLLMJustificationService(store, llmService ?? undefined);
     await justificationService.initialize();
 
     // Stats mode
@@ -272,11 +347,6 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
       console.log(`  Pending clarification: ${stats.pendingClarification}`);
       console.log(`  User confirmed:        ${stats.userConfirmed}`);
       console.log();
-
-      await store.close();
-      if (llmService) {
-        await llmService.close();
-      }
       return;
     }
 
@@ -293,11 +363,6 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
       console.log(
         `  Coverage:   ${formatConfidence(stats.coveragePercentage / 100)}`
       );
-
-      await store.close();
-      if (llmService) {
-        await llmService.close();
-      }
       return;
     }
 
@@ -309,6 +374,7 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
       result = await justificationService.justifyFile(options.file, {
         force: options.force,
         skipLLM: options.skipLlm,
+        modelId: actualModelId,
         onProgress: (progress: JustificationProgress) => {
           spinner.text = `${progress.phase}: ${progress.current}/${progress.total}`;
         },
@@ -317,6 +383,7 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
       result = await justificationService.justifyProject({
         force: options.force,
         skipLLM: options.skipLlm,
+        modelId: actualModelId,
         onProgress: (progress: JustificationProgress) => {
           spinner.text = `${progress.phase}: ${progress.current}/${progress.total}`;
         },
@@ -365,16 +432,26 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
     console.log(chalk.dim("─".repeat(50)));
     console.log(chalk.dim("Run 'code-synapse justify --stats' to view statistics"));
 
-    // Cleanup
-    await store.close();
-    if (llmService) {
-      await llmService.close();
-    }
-
     logger.info({ result: result.stats }, "Justification complete");
   } catch (error) {
     spinner.fail(chalk.red("Justification failed"));
     logger.error({ err: error }, "Justification failed");
     throw error;
+  } finally {
+    // Always cleanup resources
+    if (llmService) {
+      try {
+        await llmService.shutdown();
+      } catch {
+        // Ignore shutdown errors
+      }
+    }
+    if (store) {
+      try {
+        await store.close();
+      } catch {
+        // Ignore close errors
+      }
+    }
   }
 }

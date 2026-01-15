@@ -11,6 +11,9 @@ import { Parser, Language, type Tree, Edit } from "web-tree-sitter";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AsyncDisposable } from "../../utils/disposable.js";
+import { createLogger } from "../../utils/logger.js";
+
+const logger = createLogger("parser-manager");
 
 // =============================================================================
 // Types
@@ -501,13 +504,11 @@ export class ParserManager implements AsyncDisposable {
     } catch (error) {
       // Grammar not available - this is expected for some languages
       // that don't ship with pre-built WASM files or have ABI incompatibilities
-      let errorMessage: string;
-      if (error instanceof Error) {
-        errorMessage = error.message || error.name || "Unknown error";
-      } else {
-        errorMessage = String(error) || "Unknown error";
-      }
-      console.warn(`[ParserManager] Could not load grammar for ${language}: ${errorMessage}`);
+      // Log at debug level to avoid cluttering the console output
+      logger.debug(
+        { language, error: error instanceof Error ? error.message : String(error) },
+        "Grammar not available for language"
+      );
       return false;
     }
   }

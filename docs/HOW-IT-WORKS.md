@@ -199,8 +199,10 @@ src/
 │ Process:                                                                  │
 │   1. ProjectDetector analyzes package.json, tsconfig.json                │
 │   2. Detects framework (Next.js, NestJS, React, etc.)                    │
-│   3. FileScanner uses fast-glob to find source files                     │
-│   4. Filters by sourcePatterns, ignores node_modules, dist, etc.         │
+│   3. Reads .gitignore and converts patterns to glob format               │
+│   4. Combines 90+ default ignore patterns + .gitignore + framework rules │
+│   5. FileScanner uses fast-glob to find source files                     │
+│   6. Filters files by sourcePatterns and ignorePatterns                  │
 │ Output: List of FileInfo { path, hash, language }                        │
 └──────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -283,6 +285,60 @@ AI Agent Request                    MCP Server                      CozoDB
       │<──────────────────────────────────                             │
       │ { content: [{ type: "text",      │                             │
       │   text: "Found 5 matches..." }]} │                             │
+```
+
+### File Filtering
+
+Code-Synapse intelligently filters files to index only source code, skipping generated files, dependencies, and build artifacts.
+
+**Three-Layer Filtering:**
+
+1. **Default Patterns (90+ rules)** - Built-in exclusions for common directories and files
+2. **Gitignore Support** - Automatically parses `.gitignore` and converts patterns
+3. **Framework-Specific** - Additional exclusions based on detected framework
+
+**Default Ignore Categories:**
+
+| Category | Patterns |
+|----------|----------|
+| **Dependencies** | `node_modules/`, `vendor/`, `bower_components/`, `.pnpm/`, `.yarn/` |
+| **Build Outputs** | `dist/`, `build/`, `out/`, `target/`, `bin/`, `obj/` |
+| **Framework Caches** | `.next/`, `.nuxt/`, `.astro/`, `.svelte-kit/`, `.vercel/`, `.serverless/` |
+| **Tool Caches** | `.cache/`, `.turbo/`, `.nx/`, `.parcel-cache/`, `.vite/`, `.webpack/` |
+| **Test/Coverage** | `coverage/`, `__tests__/`, `__mocks__/`, `__snapshots__/`, `*.test.ts` |
+| **Version Control** | `.git/`, `.svn/`, `.hg/` |
+| **IDE/Editor** | `.idea/`, `.vscode/`, `.vs/`, `*.swp`, `*.swo` |
+| **Virtual Envs** | `.venv/`, `venv/`, `__pycache__/`, `site-packages/` |
+| **Generated** | `*.min.js`, `*.bundle.js`, `*.d.ts`, lock files |
+| **Temporary** | `tmp/`, `temp/`, `logs/`, `*.log` |
+
+**Gitignore Pattern Conversion:**
+
+The scanner reads `.gitignore` and converts patterns to glob format:
+
+```
+# .gitignore          →  Glob pattern
+node_modules          →  **/node_modules, **/node_modules/**
+/build                →  build, build/**
+*.log                 →  **/*.log
+dist/                 →  **/dist/**
+!important.js         →  (skipped - negations not supported)
+```
+
+**How it works in code:**
+
+```typescript
+// In ProjectDetector.detect()
+const baseIgnorePatterns = getIgnorePatterns(framework);  // Default + framework rules
+const gitignorePatterns = await parseGitignore();         // From .gitignore
+const ignorePatterns = [...new Set([...baseIgnorePatterns, ...gitignorePatterns])];
+
+// FileScanner uses these patterns with fast-glob
+const files = await glob(sourcePatterns, {
+  cwd: rootPath,
+  ignore: ignorePatterns,
+  absolute: true
+});
 ```
 
 ---

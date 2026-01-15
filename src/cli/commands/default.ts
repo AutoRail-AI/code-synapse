@@ -1,10 +1,11 @@
 /**
  * Default command - Auto-initialize, index, and start the MCP server + Web Viewer
  *
- * When run without any existing configuration, this command launches an
- * interactive setup wizard to help users configure their model provider
- * (local or cloud) and API keys.
+ * This command shares a single database connection across all steps to avoid
+ * RocksDB lock conflicts.
  */
+
+// Note: Max listeners is set in cli/index.ts at module level
 
 import chalk from "chalk";
 import ora from "ora";
@@ -16,17 +17,34 @@ import {
   getConfigPath,
   getProjectRoot,
   getGraphDbPath,
+  readJson,
   createLogger,
 } from "../../utils/index.js";
 import { findAvailablePort, isPortAvailable } from "../../utils/port.js";
 import { initCommand } from "./init.js";
-import { indexCommand } from "./index.js";
 import { startCommand } from "./start.js";
-import { justifyCommand } from "./justify.js";
-import { createGraphStore } from "../../core/graph/index.js";
+import { createGraphStore, type IGraphStore } from "../../core/graph/index.js";
 import { createGraphViewer, startViewerServer } from "../../viewer/index.js";
-import type { ModelPreset } from "../../core/llm/index.js";
-import { InteractiveSetup } from "./setup.js";
+import { createIParser } from "../../core/parser/index.js";
+import {
+  createIndexerCoordinator,
+  detectProject,
+  type IndexingProgressEvent,
+} from "../../core/indexer/index.js";
+import {
+  createLLMJustificationService,
+  type JustificationProgress,
+} from "../../core/justification/index.js";
+import {
+  createLLMServiceWithPreset,
+  createInitializedAPILLMService,
+  MODEL_PRESETS,
+  type ModelPreset,
+  type APIProvider,
+  type ILLMService,
+} from "../../core/llm/index.js";
+import type { ProjectConfig } from "../../types/index.js";
+import { InteractiveSetup, type CodeSynapseConfig } from "./setup.js";
 
 const logger = createLogger("default");
 
@@ -42,12 +60,49 @@ export interface DefaultOptions {
   justifyOnly?: boolean;
   /** LLM model preset for justification */
   model?: ModelPreset;
-  /** Skip interactive setup */
-  skipSetup?: boolean;
 }
 
 const PORT_RANGE_START = 3100;
 const PORT_RANGE_END = 3200;
+
+/**
+ * Get default model ID for an API provider
+ */
+function getDefaultApiModel(provider: string): string {
+  const defaults: Record<string, string> = {
+    anthropic: "claude-sonnet-4-20250514",
+    openai: "gpt-4o",
+    google: "gemini-1.5-pro",
+  };
+  return defaults[provider] || "claude-sonnet-4-20250514";
+}
+
+/**
+ * Format duration in human readable format
+ */
+function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds.toFixed(0)}s`;
+}
+
+/**
+ * Format confidence with color
+ */
+function formatConfidence(score: number): string {
+  const percent = Math.round(score * 100);
+  if (score >= 0.8) {
+    return chalk.green(`${percent}%`);
+  } else if (score >= 0.5) {
+    return chalk.yellow(`${percent}%`);
+  } else if (score >= 0.3) {
+    return chalk.red(`${percent}%`);
+  }
+  return chalk.gray(`${percent}%`);
+}
 
 /**
  * Prompt user for a port number
@@ -85,75 +140,316 @@ async function promptForPort(): Promise<number> {
 }
 
 /**
+ * Run indexing with shared database connection
+ */
+async function runIndexing(
+  store: IGraphStore,
+  config: ProjectConfig,
+  spinner: ReturnType<typeof ora>
+): Promise<boolean> {
+  const startTime = Date.now();
+
+  try {
+    // Detect project
+    spinner.text = "Detecting project structure...";
+    const project = await detectProject(config.root);
+
+    if (!project) {
+      spinner.fail(chalk.red("Could not detect project"));
+      return false;
+    }
+
+    // Initialize parser
+    spinner.text = "Initializing parser...";
+    const parser = await createIParser();
+
+    // Create indexer coordinator
+    const indexer = createIndexerCoordinator({
+      parser,
+      store,
+      project,
+      batchSize: 10,
+      continueOnError: true,
+      onProgress: (event: IndexingProgressEvent) => {
+        const phaseEmoji: Record<string, string> = {
+          scanning: "🔍",
+          parsing: "📄",
+          extracting: "⚙️",
+          writing: "💾",
+          complete: "✅",
+        };
+        const emoji = phaseEmoji[event.phase] || "⏳";
+        const progress = `${event.processed}/${event.total}`;
+        const percent = `${event.percentage}%`;
+
+        if (event.currentFile) {
+          const shortFile = event.currentFile.length > 30
+            ? "..." + event.currentFile.slice(-27)
+            : event.currentFile;
+          spinner.text = `${emoji} ${event.message} (${progress}, ${percent}) - ${shortFile}`;
+        } else {
+          spinner.text = `${emoji} ${event.message} (${progress}, ${percent})`;
+        }
+      },
+    });
+
+    // Run indexing
+    spinner.text = "Scanning project files...";
+    const result = await indexer.indexProject();
+
+    const duration = (Date.now() - startTime) / 1000;
+
+    if (result.success) {
+      spinner.succeed(chalk.green("Indexing complete!"));
+    } else {
+      spinner.warn(chalk.yellow("Indexing completed with errors"));
+    }
+
+    // Display results
+    console.log();
+    console.log(chalk.white.bold("Results"));
+    console.log(`  Files indexed:         ${result.filesIndexed}`);
+    console.log(`  Files failed:          ${result.filesFailed}`);
+    console.log(`  Entities extracted:    ${result.entitiesWritten}`);
+    console.log(`  Relationships:         ${result.relationshipsWritten}`);
+    console.log(`  Duration:              ${formatDuration(duration)}`);
+
+    // Show phase breakdown
+    console.log();
+    console.log(chalk.white.bold("Phases"));
+    console.log(`  Scanning:    ${result.phases.scanning.files} files in ${formatDuration(result.phases.scanning.durationMs / 1000)}`);
+    console.log(`  Parsing:     ${result.phases.parsing.files} files in ${formatDuration(result.phases.parsing.durationMs / 1000)}`);
+    console.log(`  Extracting:  ${result.phases.extracting.files} files in ${formatDuration(result.phases.extracting.durationMs / 1000)}`);
+    console.log(`  Writing:     ${result.phases.writing.files} files in ${formatDuration(result.phases.writing.durationMs / 1000)}`);
+
+    if (result.errors.length > 0) {
+      console.log();
+      console.log(chalk.yellow.bold(`Errors (${result.errors.length})`));
+      for (const err of result.errors.slice(0, 5)) {
+        console.log(`  ${chalk.red("✗")} ${err.filePath}: ${err.error}`);
+      }
+      if (result.errors.length > 5) {
+        console.log(chalk.dim(`  ... and ${result.errors.length - 5} more errors`));
+      }
+    }
+
+    console.log();
+    console.log(chalk.dim("─".repeat(40)));
+
+    return result.success;
+  } catch (error) {
+    spinner.fail(chalk.red("Indexing failed"));
+    logger.error({ err: error }, "Indexing failed");
+    return false;
+  }
+}
+
+/**
+ * Run justification with shared database connection
+ */
+async function runJustification(
+  store: IGraphStore,
+  modelPreset: ModelPreset | undefined,
+  spinner: ReturnType<typeof ora>
+): Promise<boolean> {
+  let llmService: ILLMService | null = null;
+
+  try {
+    // Read config to get model provider setting
+    const configPath = getConfigPath();
+    const config = readJson<CodeSynapseConfig>(configPath);
+    const modelProvider = config?.modelProvider ?? "local";
+    const savedModelId = config?.llmModel;
+
+    // Get API key from config if available
+    const apiKey = config?.apiKeys?.[modelProvider as keyof typeof config.apiKeys];
+
+    // Initialize LLM service based on provider
+    const preset = modelPreset || "balanced";
+    let actualModelId: string | undefined;
+
+    try {
+      if (modelProvider === "anthropic" || modelProvider === "openai" || modelProvider === "google") {
+        // Use API-based LLM service
+        // If saved modelId is a local model (contains "qwen", "llama", "codellama", "deepseek"),
+        // don't pass it - let the API service use its default
+        const isLocalModel = savedModelId &&
+          (savedModelId.includes("qwen") || savedModelId.includes("llama") ||
+           savedModelId.includes("codellama") || savedModelId.includes("deepseek"));
+        const apiModelId = isLocalModel ? undefined : savedModelId;
+
+        spinner.text = `Connecting to ${modelProvider} API...`;
+        llmService = await createInitializedAPILLMService({
+          provider: modelProvider as APIProvider,
+          modelId: apiModelId,
+          apiKey: apiKey,
+        });
+        spinner.text = `${modelProvider} API connected`;
+        actualModelId = apiModelId || getDefaultApiModel(modelProvider);
+        console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId}) for LLM inference`));
+      } else {
+        // Use local LLM service
+        spinner.text = "Loading LLM model...";
+        const localService = createLLMServiceWithPreset(preset);
+        await localService.initialize();
+        llmService = localService;
+        actualModelId = MODEL_PRESETS[preset];
+        spinner.text = `LLM model loaded (${preset})`;
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      spinner.warn(chalk.yellow(`LLM not available: ${errorMessage}`));
+      console.log(chalk.dim("  Continuing with code analysis only"));
+      llmService = null;
+    }
+
+    // Create justification service
+    const justificationService = createLLMJustificationService(store, llmService ?? undefined);
+    await justificationService.initialize();
+
+    // Run justification
+    spinner.text = "Analyzing code...";
+
+    const result = await justificationService.justifyProject({
+      force: false,
+      skipLLM: llmService === null,
+      modelId: actualModelId,
+      onProgress: (progress: JustificationProgress) => {
+        spinner.text = `${progress.phase}: ${progress.current}/${progress.total}`;
+      },
+    });
+
+    spinner.succeed(chalk.green("Justification complete!"));
+
+    // Display results
+    console.log();
+    console.log(chalk.white.bold("Justification Results"));
+    console.log(`  Entities justified:    ${result.stats.succeeded}`);
+    console.log(`  Entities failed:       ${result.stats.failed}`);
+    console.log(`  Entities skipped:      ${result.stats.skipped}`);
+    console.log(`  Pending clarification: ${result.stats.pendingClarification}`);
+    console.log(
+      `  Average confidence:    ${formatConfidence(result.stats.averageConfidence)}`
+    );
+    console.log(`  Duration:              ${formatDuration(result.stats.durationMs / 1000)}`);
+
+    console.log();
+    console.log(chalk.dim("─".repeat(50)));
+
+    return true;
+  } catch (error) {
+    spinner.fail(chalk.red("Justification failed"));
+    logger.error({ err: error }, "Justification failed");
+    return false;
+  } finally {
+    if (llmService) {
+      try {
+        await llmService.shutdown();
+      } catch {
+        // Ignore shutdown errors
+      }
+    }
+  }
+}
+
+/**
  * Default command - handles init, index, and start in one go
  * Starts both the MCP server and the Web Viewer
+ * Uses a shared database connection to avoid RocksDB lock conflicts.
  */
 export async function defaultCommand(options: DefaultOptions): Promise<void> {
-  logger.info({ options }, "Running default command");
+  // Track resources for cleanup
+  let viewerServer: Awaited<ReturnType<typeof startViewerServer>> | null = null;
+  let graphStore: IGraphStore | null = null;
+  let viewer: ReturnType<typeof createGraphViewer> | null = null;
+
+  // Step 1: Check if initialized, if not run interactive setup (before any logging)
+  const configPath = getConfigPath();
+  if (!fileExists(configPath)) {
+    // Run interactive setup to get user preferences
+    const setup = new InteractiveSetup();
+    const setupConfig = await setup.run();
+
+    // Now we can log (after interactive setup is complete)
+    logger.debug({ options }, "Running default command");
+
+    const spinner = ora("Initializing project...").start();
+    try {
+      await initCommand({
+        model: setupConfig?.llmModel,
+        skipLlm: setupConfig?.skipLlm ?? false,
+        modelProvider: setupConfig?.modelProvider,
+        apiKeys: setupConfig?.apiKeys,
+      });
+      spinner.succeed(chalk.green("Project initialized"));
+    } catch (error) {
+      spinner.fail(chalk.red("Failed to initialize project"));
+      throw error;
+    }
+  } else {
+    logger.debug({ options }, "Running default command");
+  }
 
   const spinner = ora("Checking project status...").start();
 
-  // Track resources for cleanup
-  let viewerServer: Awaited<ReturnType<typeof startViewerServer>> | null = null;
-  let graphStore: Awaited<ReturnType<typeof createGraphStore>> | null = null;
-  let viewer: ReturnType<typeof createGraphViewer> | null = null;
-
   try {
-    // Step 1: Check if initialized, if not run interactive setup + init
-    const configPath = getConfigPath();
-    if (!fileExists(configPath)) {
-      spinner.info(chalk.yellow("Project not initialized"));
-
-      // Run interactive setup wizard (unless skipped)
-      if (!options.skipSetup) {
-        spinner.stop();
-        console.log();
-        console.log(chalk.cyan.bold("Welcome to Code-Synapse!"));
-        console.log(chalk.dim("Let's configure your AI model preferences first."));
-        console.log();
-
-        const setup = new InteractiveSetup();
-        await setup.run();
-        console.log();
-      }
-
-      spinner.start("Initializing project...");
-      await initCommand({});
-      spinner.succeed(chalk.green("Project initialized"));
-    } else {
+    if (fileExists(configPath)) {
       spinner.succeed(chalk.green("Project already initialized"));
     }
 
-    // Step 2: Run indexing (unless skipped or justify-only)
+    // Load configuration
+    const config = readJson<ProjectConfig>(configPath);
+    if (!config) {
+      spinner.fail(chalk.red("Failed to read configuration"));
+      return;
+    }
+
+    // Get database path
+    const projectRoot = getProjectRoot();
+    const dbPath = getGraphDbPath(projectRoot);
+
+    // Step 2: Open shared database connection
+    spinner.start("Opening database...");
+    graphStore = await createGraphStore({
+      path: dbPath,
+      engine: "rocksdb",
+      runMigrations: true,
+    });
+    await graphStore.initialize();
+    spinner.succeed(chalk.green("Database opened"));
+
+    // Step 3: Run indexing (unless skipped or justify-only)
     if (!options.skipIndex && !options.justifyOnly) {
+      console.log();
+      console.log(chalk.cyan.bold("Indexing Project"));
+      console.log(chalk.dim("─".repeat(40)));
+      console.log();
+
       spinner.start("Indexing project...");
-      await indexCommand({});
-      spinner.succeed(chalk.green("Project indexed"));
+      await runIndexing(graphStore, config, spinner);
     } else if (options.justifyOnly) {
       spinner.info(chalk.dim("Skipping indexing (--justify-only flag)"));
     } else {
       spinner.info(chalk.dim("Skipping indexing (--skip-index flag)"));
     }
 
-    // Step 3: Run business justification (unless skipped)
+    // Step 4: Run business justification (unless skipped)
     if (!options.skipJustify) {
+      console.log();
+      console.log(chalk.cyan.bold("Business Justification Layer"));
+      console.log(chalk.dim("─".repeat(50)));
+      console.log();
+
       spinner.start("Running business justification...");
-      try {
-        await justifyCommand({
-          model: options.model,
-          skipLlm: false,
-        });
-        spinner.succeed(chalk.green("Business justification complete"));
-      } catch (error) {
-        // Don't fail the entire command if justification fails
-        spinner.warn(chalk.yellow("Business justification skipped (LLM not available)"));
-        logger.warn({ err: error }, "Justification failed, continuing...");
+      const justifySuccess = await runJustification(graphStore, options.model, spinner);
+      if (!justifySuccess) {
+        spinner.warn(chalk.yellow("Business justification had issues, continuing..."));
       }
     } else {
       spinner.info(chalk.dim("Skipping justification (--skip-justify flag)"));
     }
 
-    // Step 4: Find available ports (one for MCP, one for Viewer)
+    // Step 5: Find available ports (one for MCP, one for Viewer)
     let mcpPort: number;
     let viewerPort: number;
 
@@ -218,59 +514,41 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       viewerPort = 0; // Not used
     }
 
-    // Step 5: Start the Web Viewer (if not skipped)
+    // Step 6: Start the Web Viewer (if not skipped)
     if (!options.skipViewer) {
       spinner.start("Starting Web Viewer...");
 
-      const projectRoot = getProjectRoot();
-      const dbPath = getGraphDbPath(projectRoot);
+      // Create viewer using the shared graph store
+      viewer = createGraphViewer(graphStore);
+      await viewer.initialize();
 
-      // Check if database exists
-      if (!fs.existsSync(dbPath)) {
-        spinner.warn(chalk.yellow("No index database found - skipping Viewer"));
-        console.log(chalk.dim("Run indexing first to enable the Viewer."));
-      } else {
-        // Create graph store (read-only access)
-        logger.info({ dbPath }, "Opening graph database for Viewer");
-        graphStore = await createGraphStore({
-          path: dbPath,
-          engine: "rocksdb",
-          runMigrations: false,
-        });
-        await graphStore.initialize();
+      // Get stats for display
+      const stats = await viewer.getOverviewStats();
 
-        // Create viewer
-        viewer = createGraphViewer(graphStore);
-        await viewer.initialize();
+      // Start viewer server
+      viewerServer = await startViewerServer(viewer, viewerPort, "127.0.0.1");
 
-        // Get stats for display
-        const stats = await viewer.getOverviewStats();
+      spinner.succeed(chalk.green(`Web Viewer started on port ${viewerPort}`));
 
-        // Start viewer server
-        viewerServer = await startViewerServer(viewer, viewerPort, "127.0.0.1");
-
-        spinner.succeed(chalk.green(`Web Viewer started on port ${viewerPort}`));
-
-        // Display stats
-        console.log();
-        console.log(chalk.bold("Index Statistics:"));
-        console.log(chalk.dim("─".repeat(40)));
-        console.log(`  Files:         ${chalk.cyan(stats.totalFiles)}`);
-        console.log(`  Functions:     ${chalk.cyan(stats.totalFunctions)}`);
-        console.log(`  Classes:       ${chalk.cyan(stats.totalClasses)}`);
-        console.log(`  Interfaces:    ${chalk.cyan(stats.totalInterfaces)}`);
-        console.log(`  Relationships: ${chalk.cyan(stats.totalRelationships)}`);
-        console.log(`  Embeddings:    ${chalk.cyan(Math.round(stats.embeddingCoverage * 100))}%`);
-        console.log(chalk.dim("─".repeat(40)));
-        console.log();
-        console.log(chalk.green.bold("Web Viewer is running!"));
-        console.log(`  ${chalk.cyan("→")} Dashboard: ${chalk.underline(`http://127.0.0.1:${viewerPort}`)}`);
-        console.log(`  ${chalk.cyan("→")} NL Search: ${chalk.underline(`http://127.0.0.1:${viewerPort}/api/nl-search?q=your+query`)}`);
-        console.log();
-      }
+      // Display stats
+      console.log();
+      console.log(chalk.bold("Index Statistics:"));
+      console.log(chalk.dim("─".repeat(40)));
+      console.log(`  Files:         ${chalk.cyan(stats.totalFiles)}`);
+      console.log(`  Functions:     ${chalk.cyan(stats.totalFunctions)}`);
+      console.log(`  Classes:       ${chalk.cyan(stats.totalClasses)}`);
+      console.log(`  Interfaces:    ${chalk.cyan(stats.totalInterfaces)}`);
+      console.log(`  Relationships: ${chalk.cyan(stats.totalRelationships)}`);
+      console.log(`  Embeddings:    ${chalk.cyan(Math.round(stats.embeddingCoverage * 100))}%`);
+      console.log(chalk.dim("─".repeat(40)));
+      console.log();
+      console.log(chalk.green.bold("Web Viewer is running!"));
+      console.log(`  ${chalk.cyan("→")} Dashboard: ${chalk.underline(`http://127.0.0.1:${viewerPort}`)}`);
+      console.log(`  ${chalk.cyan("→")} NL Search: ${chalk.underline(`http://127.0.0.1:${viewerPort}/api/nl-search?q=your+query`)}`);
+      console.log();
     }
 
-    // Step 6: Setup cleanup handler for viewer
+    // Step 7: Setup cleanup handler
     const cleanup = async () => {
       if (viewerServer) {
         logger.info("Stopping Viewer server...");
@@ -279,9 +557,7 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       if (viewer) {
         await viewer.close();
       }
-      if (graphStore) {
-        await graphStore.close();
-      }
+      // Note: graphStore is closed in the finally block
     };
 
     // Handle shutdown signals
@@ -293,16 +569,26 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
     process.once("SIGINT", handleShutdown);
     process.once("SIGTERM", handleShutdown);
 
-    // Step 7: Start the MCP server (this blocks until shutdown)
+    // Step 8: Start the MCP server (this blocks until shutdown)
+    // Pass the existing graphStore to avoid RocksDB lock conflicts
     console.log();
     await startCommand({
       port: mcpPort,
       debug: options.debug,
+      existingStore: graphStore,
     });
   } catch (error) {
     spinner.fail(chalk.red("Failed to start Code-Synapse"));
     logger.error({ err: error }, "Default command failed");
     throw error;
+  } finally {
+    // Always cleanup the shared database connection
+    if (graphStore) {
+      try {
+        await graphStore.close();
+      } catch {
+        // Ignore close errors
+      }
+    }
   }
 }
-

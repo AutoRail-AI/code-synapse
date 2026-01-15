@@ -15,10 +15,12 @@ import {
   type Llama,
   type LlamaModel,
   type LlamaContext,
+  type LlamaContextSequence,
 } from "node-llama-cpp";
 import { createLogger } from "../../utils/logger.js";
 import type { AsyncDisposable } from "../../utils/disposable.js";
 import { resolveModel, getModelById, MODEL_PRESETS, type ModelSpec, type ModelPreset } from "./models.js";
+import type { ILLMService } from "./interfaces/ILLMService.js";
 
 const logger = createLogger("llm-service");
 
@@ -100,13 +102,14 @@ interface CacheEntry {
 // LLM Service
 // =============================================================================
 
-export class LLMService implements AsyncDisposable {
+export class LLMService implements AsyncDisposable, ILLMService {
   private config: LLMServiceConfig;
   private resolvedModelPath: string | null = null;
   private modelSpec: ModelSpec | null = null;
   private llama: Llama | null = null;
   private model: LlamaModel | null = null;
   private context: LlamaContext | null = null;
+  private contextSequence: LlamaContextSequence | null = null;
   private cache: Map<string, CacheEntry> = new Map();
   private stats: LLMStats = {
     totalCalls: 0,
@@ -184,17 +187,34 @@ export class LLMService implements AsyncDisposable {
         gpuLayers: this.config.gpuLayers,
       });
 
-      // Create context
+      // Create context with explicit sequence count
       this.context = await this.model.createContext({
         contextSize: this.config.contextSize,
+        sequences: 1,  // Explicitly create 1 sequence
       });
+
+      // Get and store the dedicated sequence for reuse
+      // This avoids "No sequences left" errors from repeated getSequence() calls
+      this.contextSequence = this.context.getSequence();
 
       this.stats.modelLoaded = true;
       logger.info({
         modelName: this.modelSpec?.name || "Custom Model",
       }, "LLM service initialized successfully");
     } catch (error) {
-      logger.error({ error }, "Failed to initialize LLM service");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      logger.error(
+        {
+          err: error,
+          errorMessage,
+          errorStack,
+          modelId: this.config.modelId,
+          modelPath: this.resolvedModelPath || this.config.modelPath,
+        },
+        "Failed to initialize LLM service: %s",
+        errorMessage
+      );
       throw error;
     }
   }
@@ -202,7 +222,7 @@ export class LLMService implements AsyncDisposable {
   /**
    * Check if the model is loaded and ready
    */
-  isReady(): boolean {
+  get isReady(): boolean {
     return this.model !== null && this.context !== null;
   }
 
@@ -210,7 +230,7 @@ export class LLMService implements AsyncDisposable {
    * Generate text completion using chat session
    */
   async complete(prompt: string, options: InferenceOptions = {}): Promise<InferenceResult> {
-    if (!this.isReady()) {
+    if (!this.isReady) {
       throw new Error("LLM service not initialized. Call initialize() first.");
     }
 
@@ -237,12 +257,13 @@ export class LLMService implements AsyncDisposable {
 
     const startTime = Date.now();
 
-    try {
-      // Create a chat session for this completion
-      const session = new LlamaChatSession({
-        contextSequence: this.context!.getSequence(),
-      });
+    // Create a chat session using the stored sequence
+    // We reuse the same sequence for all completions to avoid "No sequences left" errors
+    const session = new LlamaChatSession({
+      contextSequence: this.contextSequence!,
+    });
 
+    try {
       let text: string;
       let parsed: unknown;
 
@@ -304,13 +325,30 @@ export class LLMService implements AsyncDisposable {
         "Inference complete"
       );
 
-      // Dispose of the session to free up the context sequence
-      session.dispose();
-
       return result;
     } catch (error) {
-      logger.error({ error }, "Inference failed");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      const promptPreview = prompt.length > 200 ? prompt.substring(0, 200) + "..." : prompt;
+      logger.error(
+        {
+          err: error,
+          errorMessage,
+          errorStack,
+          promptPreview,
+          maxTokens,
+          temperature,
+          hasJsonSchema: !!jsonSchema,
+          modelId: this.config.modelId,
+        },
+        "LLM inference failed: %s",
+        errorMessage
+      );
       throw error;
+    } finally {
+      // Dispose of the session to clean up internal state
+      // Note: We reuse the same contextSequence, so we just dispose the session wrapper
+      session.dispose();
     }
   }
 
@@ -367,6 +405,9 @@ export class LLMService implements AsyncDisposable {
   async close(): Promise<void> {
     logger.info("Closing LLM service");
 
+    // Clear the context sequence reference
+    this.contextSequence = null;
+
     if (this.context) {
       await this.context.dispose();
       this.context = null;
@@ -382,6 +423,20 @@ export class LLMService implements AsyncDisposable {
     this.cache.clear();
 
     logger.info("LLM service closed");
+  }
+
+  /**
+   * Alias for complete() to match ILLMService interface
+   */
+  async infer(prompt: string, options?: InferenceOptions): Promise<InferenceResult> {
+    return this.complete(prompt, options);
+  }
+
+  /**
+   * Alias for close() to match ILLMService interface
+   */
+  async shutdown(): Promise<void> {
+    return this.close();
   }
 
   /**

@@ -334,6 +334,18 @@ User                          AI Agent
 3. **Architectural Layer** - Service boundaries, API contracts, design patterns
 4. **Business Logic Layer** - Local SLM (Qwen 2.5) for intent inference
 
+### File Filtering
+
+The scanner uses three layers to exclude non-source files:
+
+| Layer | Source | Examples |
+|-------|--------|----------|
+| **Default (90+ patterns)** | Built-in | `node_modules/`, `dist/`, `build/`, `.cache/`, `coverage/` |
+| **Gitignore** | `.gitignore` file | Custom project exclusions, auto-converted to glob |
+| **Framework-specific** | Detected framework | `.next/` (Next.js), `.nuxt/` (Nuxt), `.astro/` (Astro) |
+
+Implementation: `src/core/indexer/project-detector.ts` - `parseGitignore()` and `DEFAULT_IGNORE_PATTERNS`
+
 ### LLM Model Selection
 
 The LLM module (`src/core/llm/`) supports 12 models across 4 families with automatic download:
@@ -375,9 +387,8 @@ getModelSelectionGuide();                       // Human-readable guide
 
 ```bash
 # Default command (all-in-one)
-code-synapse                # Auto: setup → init → index → justify → viewer → start
+code-synapse                # Auto: init → index → justify → viewer → start (uses recommended defaults)
 code-synapse --skip-justify # Skip business justification
-code-synapse --skip-setup   # Skip interactive setup wizard
 code-synapse --justify-only # Run only justification
 code-synapse -m balanced    # Set LLM model preset
 

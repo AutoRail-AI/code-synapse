@@ -12,6 +12,9 @@ import type {
   EntityForJustification,
   LLMJustificationResponse,
 } from "../models/justification.js";
+import { createLogger } from "../../../utils/logger.js";
+
+const logger = createLogger("justification-prompts");
 
 // =============================================================================
 // GBNF Grammar for Structured Output
@@ -48,37 +51,71 @@ ws ::= [ \\t\\n]*
 
 /**
  * Base system prompt for justification inference
+ *
+ * SEMANTIC CONSTRAINTS (strictly enforced):
+ * - purposeSummary: WHAT the code does (one sentence, imperative form)
+ * - businessValue: WHY this exists from product/business perspective
+ * - featureContext: Domain noun (e.g., "Authentication", "Payment Processing")
+ * - tags: Domain-specific categorization keywords
+ * - confidenceScore: Must auto-generate clarification questions when < 0.5
  */
-export const JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect analyzing code to understand its business purpose and value.
+export const JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect analyzing code to extract structured business knowledge.
 
-Your task is to infer WHY code exists, not just WHAT it does.
+Your task is to create HIGH-FIDELITY justifications that encode INTENT, not just syntax.
 
-For each code entity, you must determine:
-1. PURPOSE: What does this code accomplish?
-2. BUSINESS VALUE: Why does this exist from a product/business perspective?
-3. FEATURE CONTEXT: Which feature or domain does this belong to?
-4. CONFIDENCE: How certain are you about your analysis?
+## STRICT FIELD SEMANTICS
 
-Guidelines:
-- Focus on the "why" rather than the "how"
-- Consider naming conventions as strong signals
-- Use surrounding context (callers, callees, imports) to understand purpose
-- If the code's purpose is unclear, indicate low confidence
-- Generate clarification questions for uncertain cases
-- Tags should be domain-specific (e.g., "authentication", "payment", "user-management")
+1. **purposeSummary** (REQUIRED - one sentence max)
+   - Describes WHAT this code does in imperative form
+   - Example: "Validates user credentials against the authentication database"
+   - NOT: "This is a function that validates..." (no "this is" phrases)
+   - NOT: "Handles authentication" (too vague)
+
+2. **businessValue** (REQUIRED)
+   - Answers WHY this code exists from a product perspective
+   - Example: "Enables secure user authentication, preventing unauthorized access"
+   - NOT: "Useful for authentication" (doesn't explain business impact)
+
+3. **featureContext** (REQUIRED)
+   - A domain NOUN representing the feature area
+   - Examples: "Authentication", "Payment Processing", "User Management", "API Gateway"
+   - NOT: "handles authentication" (use nouns, not verb phrases)
+
+4. **tags** (REQUIRED - 2-5 domain-specific tags)
+   - Domain keywords for categorization
+   - Examples: ["authentication", "security", "validation", "user-credential"]
+   - NOT: ["function", "async", "exported"] (no syntax-level tags)
+
+5. **confidenceScore** (REQUIRED - 0.0 to 1.0)
+   - High (≥0.8): Clear purpose from code/docs/naming
+   - Medium (0.5-0.79): Reasonable inference but some ambiguity
+   - Low (0.3-0.49): Guessing based on patterns
+   - Uncertain (<0.3): Cannot determine purpose
+   - IMPORTANT: If confidence < 0.5, you MUST set needsClarification=true and provide questions
+
+6. **reasoning** (REQUIRED)
+   - Chain of evidence: what signals led to your conclusions
+   - Example: "Function name 'validateCredentials' + parameter 'password' + calls to 'hashPassword' indicates authentication validation"
+
+## QUALITY REQUIREMENTS
+
+- Every justification must be ACTIONABLE for both humans and AI agents
+- Focus on BUSINESS INTENT, not implementation details
+- If you cannot determine purpose with confidence ≥0.5, request clarification
+- Do not hallucinate business value - admit uncertainty
 
 Output Format:
 You MUST output valid JSON matching this exact structure:
 {
-  "purposeSummary": "One sentence describing what this does",
+  "purposeSummary": "One sentence describing what this does (imperative form)",
   "businessValue": "Why this exists from business/product perspective",
-  "featureContext": "The feature/domain this belongs to",
-  "detailedDescription": "Detailed explanation of the code's role",
-  "tags": ["tag1", "tag2"],
+  "featureContext": "Feature/Domain noun",
+  "detailedDescription": "Detailed explanation if needed",
+  "tags": ["domain-tag1", "domain-tag2"],
   "confidenceScore": 0.0-1.0,
-  "reasoning": "Your reasoning chain",
+  "reasoning": "Evidence chain: naming + context + patterns",
   "needsClarification": true/false,
-  "clarificationQuestions": ["Question 1?", "Question 2?"]
+  "clarificationQuestions": ["Specific question 1?", "Specific question 2?"]
 }`;
 
 // =============================================================================
@@ -591,4 +628,305 @@ function inferTagsFromName(name: string): string[] {
   if (/^test|spec|mock/i.test(name)) tags.push("testing");
 
   return tags;
+}
+
+// =============================================================================
+// Batch Processing Prompts
+// =============================================================================
+
+/**
+ * Batch entity for prompt generation
+ */
+export interface BatchEntityInput {
+  id: string;
+  name: string;
+  type: string;
+  filePath: string;
+  codeSnippet: string;
+  signature?: string;
+  docComment?: string;
+  isExported?: boolean;
+}
+
+/**
+ * Batch response for a single entity
+ */
+export interface BatchEntityResponse {
+  id: string;
+  purposeSummary: string;
+  businessValue: string;
+  featureContext: string;
+  tags: string[];
+  confidenceScore: number;
+}
+
+/**
+ * System prompt optimized for batch processing
+ *
+ * Enforces the same strict semantic constraints as single-entity prompts
+ */
+export const BATCH_JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect extracting structured business knowledge from code.
+
+Analyze MULTIPLE code entities and output a JSON array with high-fidelity justifications.
+
+## STRICT FIELD SEMANTICS
+
+1. **purposeSummary** (one sentence, imperative form)
+   - WHAT this code does
+   - Example: "Validates user credentials against the database"
+   - NOT: "This function validates..." or "Handles validation"
+
+2. **businessValue** (required)
+   - WHY this exists from product/business perspective
+   - Example: "Enables secure authentication, preventing unauthorized access"
+
+3. **featureContext** (domain NOUN)
+   - The feature area this belongs to
+   - Examples: "Authentication", "Payment Processing", "User Management"
+   - NOT verb phrases like "handles auth"
+
+4. **tags** (2-5 domain-specific keywords)
+   - Examples: ["authentication", "security", "validation"]
+   - NOT syntax tags: ["function", "async", "exported"]
+
+5. **confidenceScore** (0.0-1.0)
+   - ≥0.8: Clear from code/docs/naming
+   - 0.5-0.79: Reasonable but some ambiguity
+   - <0.5: Uncertain, needs clarification
+
+## QUALITY REQUIREMENTS
+
+- Focus on BUSINESS INTENT, not implementation
+- Be concise but precise
+- Admit uncertainty with low confidence scores
+
+Output Format:
+You MUST output valid JSON array:
+[
+  {
+    "id": "entity_id_from_input",
+    "purposeSummary": "One sentence, imperative form",
+    "businessValue": "Why this exists for the product",
+    "featureContext": "Domain noun",
+    "tags": ["domain-tag1", "domain-tag2"],
+    "confidenceScore": 0.0-1.0
+  }
+]`;
+
+/**
+ * Generate a batch prompt for multiple entities
+ */
+export function generateBatchPrompt(entities: BatchEntityInput[]): string {
+  const parts: string[] = [];
+
+  parts.push("# Batch Analysis Request\n");
+  parts.push(`Analyze these ${entities.length} code entities and provide justifications for each.\n`);
+
+  for (let i = 0; i < entities.length; i++) {
+    const entity = entities[i]!;
+    parts.push(`## Entity ${i + 1} (ID: ${entity.id})`);
+    parts.push(`- **Name**: \`${entity.name}\``);
+    parts.push(`- **Type**: ${entity.type}`);
+    parts.push(`- **File**: \`${entity.filePath}\``);
+    if (entity.signature) {
+      parts.push(`- **Signature**: \`${entity.signature}\``);
+    }
+    if (entity.docComment) {
+      parts.push(`- **Doc**: ${entity.docComment.split("\n")[0]}`);
+    }
+    parts.push("```");
+    // Truncate code to first 10 lines for batch processing
+    const lines = entity.codeSnippet.split("\n");
+    parts.push(lines.slice(0, 10).join("\n"));
+    if (lines.length > 10) {
+      parts.push(`... (${lines.length - 10} more lines)`);
+    }
+    parts.push("```");
+    parts.push("");
+  }
+
+  parts.push("## Your Task");
+  parts.push(`Analyze all ${entities.length} entities above and output a JSON array with justifications.`);
+  parts.push("Each object in the array must have the 'id' field matching the entity ID shown above.");
+
+  return parts.join("\n");
+}
+
+/**
+ * JSON schema for batch response
+ */
+export const BATCH_JUSTIFICATION_JSON_SCHEMA = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      purposeSummary: { type: "string" },
+      businessValue: { type: "string" },
+      featureContext: { type: "string" },
+      tags: { type: "array", items: { type: "string" } },
+      confidenceScore: { type: "number" },
+    },
+    required: ["id", "purposeSummary", "businessValue", "confidenceScore"],
+  },
+};
+
+/**
+ * Parse batch LLM response into structured justifications
+ * Handles both camelCase and snake_case property names from different LLM providers
+ */
+export function parseBatchResponse(
+  response: string
+): Map<string, BatchEntityResponse> {
+  const results = new Map<string, BatchEntityResponse>();
+
+  try {
+    // Try to extract JSON content - handle multiple formats:
+    // 1. Raw JSON array
+    // 2. JSON wrapped in markdown code blocks (```json ... ```)
+    // 3. JSON with text before/after
+    let jsonText = response;
+
+    // Check if response is wrapped in markdown code blocks
+    const markdownMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (markdownMatch && markdownMatch[1]) {
+      // Extract content from within markdown blocks
+      jsonText = markdownMatch[1].trim();
+      logger.debug("Extracted JSON from markdown code blocks");
+    }
+
+    // Try to extract JSON array from the text
+    const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      // If still no match, try the original response (in case markdown extraction went wrong)
+      const fallbackMatch = response.match(/\[[\s\S]*\]/);
+      if (!fallbackMatch) {
+        logger.debug(
+          { responseLength: response.length, preview: response.slice(0, 200) },
+          "No JSON array found in batch response"
+        );
+        return results;
+      }
+      jsonText = fallbackMatch[0];
+    } else {
+      jsonText = jsonMatch[0];
+    }
+
+    // Try to parse, and if it fails due to truncation, try to fix it
+    let parsed: unknown[];
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (parseError) {
+      // JSON might be truncated - try to fix by finding last complete object
+      logger.debug("JSON parse failed, attempting to fix truncated response");
+      const fixedJson = fixTruncatedJsonArray(jsonText);
+      if (fixedJson) {
+        parsed = JSON.parse(fixedJson);
+        logger.debug({ fixedItemCount: parsed.length }, "Successfully fixed truncated JSON");
+      } else {
+        throw parseError;
+      }
+    }
+
+    if (!Array.isArray(parsed)) {
+      logger.debug({ parsedType: typeof parsed }, "Parsed response is not an array");
+      return results;
+    }
+
+    logger.debug({ itemCount: parsed.length }, "Parsing batch response items");
+
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const obj = item as Record<string, unknown>;
+
+      // Handle both camelCase and snake_case property names
+      const purposeSummary = obj.purposeSummary || obj.purpose_summary;
+      const businessValue = obj.businessValue || obj.business_value;
+      const featureContext = obj.featureContext || obj.feature_context;
+      const confidenceScore = obj.confidenceScore ?? obj.confidence_score;
+
+      if (!obj.id || !purposeSummary) {
+        logger.debug(
+          { itemId: obj.id, hasPurposeSummary: !!purposeSummary, itemKeys: Object.keys(obj) },
+          "Skipping item with missing required fields"
+        );
+        continue;
+      }
+
+      results.set(String(obj.id), {
+        id: String(obj.id),
+        purposeSummary: String(purposeSummary || ""),
+        businessValue: String(businessValue || ""),
+        featureContext: String(featureContext || ""),
+        tags: Array.isArray(obj.tags) ? (obj.tags as string[]) : [],
+        confidenceScore: Math.max(0, Math.min(1, Number(confidenceScore) || 0.5)),
+      });
+    }
+
+    logger.debug({ resultCount: results.size }, "Batch response parsing complete");
+  } catch (error) {
+    logger.debug(
+      { error: String(error), preview: response.slice(0, 200) },
+      "Failed to parse batch response JSON"
+    );
+  }
+
+  return results;
+}
+
+/**
+ * Attempt to fix a truncated JSON array by finding the last complete object
+ */
+function fixTruncatedJsonArray(jsonStr: string): string | null {
+  // Find the last complete object by looking for the pattern },\n  { or }]
+  // Work backwards from the end to find a valid closing point
+
+  // First, try to find the last complete object ending with }
+  let lastValidEnd = -1;
+  let braceCount = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < jsonStr.length; i++) {
+    const char = jsonStr[i];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escapeNext = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === "{") {
+      braceCount++;
+    } else if (char === "}") {
+      braceCount--;
+      if (braceCount === 0) {
+        // Found end of a complete object at array level
+        lastValidEnd = i;
+      }
+    }
+  }
+
+  if (lastValidEnd > 0) {
+    // Truncate at the last valid object and close the array
+    const truncated = jsonStr.slice(0, lastValidEnd + 1);
+    // Check if it needs the closing bracket
+    const trimmed = truncated.trim();
+    if (trimmed.endsWith("}")) {
+      return trimmed + "]";
+    }
+  }
+
+  return null;
 }

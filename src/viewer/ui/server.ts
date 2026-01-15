@@ -122,9 +122,16 @@ export class ViewerServer {
 
     // Files
     this.addRoute("GET", "/api/files", this.handleListFiles.bind(this));
+    this.addRoute("GET", "/api/files/tree", this.handleFileTree.bind(this));
+    this.addRoute("GET", "/api/files/content", this.handleFileContent.bind(this));
+    this.addRoute("GET", "/api/files/entities", this.handleFileEntities.bind(this));
     this.addRoute("GET", "/api/files/:id", this.handleGetFile.bind(this));
     this.addRoute("GET", "/api/files/:id/imports", this.handleGetFileImports.bind(this));
     this.addRoute("GET", "/api/files/:id/importers", this.handleGetFileImporters.bind(this));
+
+    // Generic Entities
+    this.addRoute("GET", "/api/entities/:id", this.handleGetEntity.bind(this));
+    this.addRoute("GET", "/api/entities/:id/relationships", this.handleGetEntityRelationships.bind(this));
 
     // Functions
     this.addRoute("GET", "/api/functions", this.handleListFunctions.bind(this));
@@ -145,14 +152,32 @@ export class ViewerServer {
 
     // Search
     this.addRoute("GET", "/api/search", this.handleSearch.bind(this));
+    this.addRoute("GET", "/api/search/natural", this.handleNLSearch.bind(this));
+    this.addRoute("GET", "/api/search/semantic", this.handleSemanticSearch.bind(this));
+    this.addRoute("GET", "/api/search/exact", this.handleSearch.bind(this));
     this.addRoute("GET", "/api/nl-search", this.handleNLSearch.bind(this));
     this.addRoute("GET", "/api/nl-search/patterns", this.handleNLSearchPatterns.bind(this));
 
+    // Graph Visualization
+    this.addRoute("GET", "/api/graph", this.handleGraphData.bind(this));
+    this.addRoute("GET", "/api/graph/calls", this.handleCallGraph.bind(this));
+    this.addRoute("GET", "/api/graph/dependencies", this.handleDependencyGraph.bind(this));
+
     // Justifications (Business Context)
     this.addRoute("GET", "/api/stats/justifications", this.handleStatsJustifications.bind(this));
+    this.addRoute("GET", "/api/justifications/stats", this.handleStatsJustifications.bind(this));
     this.addRoute("GET", "/api/justifications", this.handleListJustifications.bind(this));
     this.addRoute("GET", "/api/justifications/features", this.handleGetFeatureAreas.bind(this));
     this.addRoute("GET", "/api/justifications/search", this.handleSearchJustifications.bind(this));
+
+    // New hierarchical and uncertainty endpoints
+    this.addRoute("GET", "/api/justifications/uncertainty-hotspots", this.handleUncertaintyHotspots.bind(this));
+    this.addRoute("GET", "/api/justifications/low-confidence", this.handleLowConfidenceEntities.bind(this));
+    this.addRoute("GET", "/api/justifications/uncertain-features", this.handleUncertainFeatures.bind(this));
+    this.addRoute("GET", "/api/justifications/features/:feature", this.handleGetJustificationsByFeature.bind(this));
+    this.addRoute("GET", "/api/justifications/file-hierarchy/:filePath", this.handleFileHierarchyJustifications.bind(this));
+    this.addRoute("GET", "/api/justifications/:entityId/children", this.handleGetJustificationChildren.bind(this));
+    this.addRoute("GET", "/api/justifications/:entityId/ancestors", this.handleGetJustificationAncestors.bind(this));
     this.addRoute("GET", "/api/justifications/:entityId", this.handleGetJustification.bind(this));
 
     // Classification (Domain/Infrastructure)
@@ -201,6 +226,11 @@ export class ViewerServer {
     this.addRoute("GET", "/api/reconciliation/gaps", this.handleDetectGaps.bind(this));
     this.addRoute("GET", "/api/reconciliation/validation", this.handleValidateLedgerIntegrity.bind(this));
 
+    // Operations (POST endpoints for triggering actions)
+    this.addRoute("POST", "/api/operations/reindex", this.handleOperationReindex.bind(this));
+    this.addRoute("POST", "/api/operations/justify", this.handleOperationJustify.bind(this));
+    this.addRoute("POST", "/api/operations/classify", this.handleOperationClassify.bind(this));
+
     // Health
     this.addRoute("GET", "/api/health", this.handleHealth.bind(this));
   }
@@ -235,7 +265,7 @@ export class ViewerServer {
 
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (method === "OPTIONS") {
@@ -440,6 +470,227 @@ export class ViewerServer {
     this.sendJSON(res, importers);
   }
 
+  private async handleFileTree(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    try {
+      // Get all files and build a tree structure
+      const files = await this.viewer.listFiles({ limit: 10000 });
+
+      interface TreeNode {
+        name: string;
+        path: string;
+        type: 'file' | 'directory';
+        children?: TreeNode[];
+        entityCount?: number;
+      }
+
+      const root: TreeNode[] = [];
+      const pathMap = new Map<string, TreeNode>();
+
+      for (const file of files) {
+        const parts = file.relativePath.split('/');
+        let currentPath = '';
+        let currentLevel = root;
+
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i]!;
+          currentPath = currentPath ? `${currentPath}/${part}` : part;
+
+          if (i === parts.length - 1) {
+            // This is the file
+            currentLevel.push({
+              name: part,
+              path: file.relativePath,
+              type: 'file',
+              entityCount: file.entityCount,
+            });
+          } else {
+            // This is a directory
+            let dir = pathMap.get(currentPath);
+            if (!dir) {
+              dir = {
+                name: part,
+                path: currentPath,
+                type: 'directory',
+                children: [],
+              };
+              pathMap.set(currentPath, dir);
+              currentLevel.push(dir);
+            }
+            currentLevel = dir.children!;
+          }
+        }
+      }
+
+      this.sendJSON(res, root);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to build file tree", error);
+    }
+  }
+
+  private async handleFileContent(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const filePath = params.query.get("path");
+    if (!filePath) {
+      this.sendError(res, 400, "Missing 'path' query parameter");
+      return;
+    }
+
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(content);
+    } catch (error) {
+      this.sendError(res, 404, "File not found or not readable", error);
+    }
+  }
+
+  private async handleFileEntities(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const filePath = params.query.get("path");
+    if (!filePath) {
+      this.sendError(res, 400, "Missing 'path' query parameter");
+      return;
+    }
+
+    try {
+      // Get all files to find the one with matching path
+      const files = await this.viewer.listFiles({ limit: 10000 });
+      const file = files.find(f => f.relativePath === filePath || f.path === filePath);
+
+      if (!file) {
+        this.sendJSON(res, []);
+        return;
+      }
+
+      // Get functions, classes, interfaces for this file
+      const functions = await this.viewer.getFunctionsByFile(file.id);
+      const classes = await this.viewer.listClasses({ limit: 1000 });
+      const interfaces = await this.viewer.listInterfaces({ limit: 1000 });
+
+      const entities = [
+        ...functions.map(f => ({
+          id: f.id,
+          name: f.name,
+          kind: 'function' as const,
+          filePath: f.filePath,
+          startLine: f.startLine,
+          endLine: f.endLine,
+        })),
+        ...classes.filter(c => c.filePath === file.path).map(c => ({
+          id: c.id,
+          name: c.name,
+          kind: 'class' as const,
+          filePath: c.filePath,
+          startLine: c.startLine,
+          endLine: c.endLine,
+        })),
+        ...interfaces.filter(i => i.filePath === file.path).map(i => ({
+          id: i.id,
+          name: i.name,
+          kind: 'interface' as const,
+          filePath: i.filePath,
+          startLine: i.startLine,
+          endLine: i.endLine,
+        })),
+      ];
+
+      this.sendJSON(res, entities);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get file entities", error);
+    }
+  }
+
+  // ===========================================================================
+  // API Handlers - Generic Entities
+  // ===========================================================================
+
+  private async handleGetEntity(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const id = params.pathParams.id!;
+
+    // Try to find the entity in different collections
+    const fn = await this.viewer.getFunction(id);
+    if (fn) {
+      const callers = await this.viewer.getCallers(id);
+      const callees = await this.viewer.getCallees(id);
+      this.sendJSON(res, {
+        ...fn,
+        kind: 'function',
+        relationships: [
+          ...callers.map(c => ({ type: 'called_by', target: c.name, targetKind: 'function' })),
+          ...callees.map(c => ({ type: 'calls', target: c.name, targetKind: 'function' })),
+        ],
+      });
+      return;
+    }
+
+    const cls = await this.viewer.getClass(id);
+    if (cls) {
+      this.sendJSON(res, { ...cls, kind: 'class', relationships: [] });
+      return;
+    }
+
+    const iface = await this.viewer.getInterface(id);
+    if (iface) {
+      this.sendJSON(res, { ...iface, kind: 'interface', relationships: [] });
+      return;
+    }
+
+    const file = await this.viewer.getFile(id);
+    if (file) {
+      this.sendJSON(res, { ...file, kind: 'file', relationships: [] });
+      return;
+    }
+
+    this.sendError(res, 404, "Entity not found");
+  }
+
+  private async handleGetEntityRelationships(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const id = params.pathParams.id!;
+
+    // Try to find relationships based on entity type
+    const fn = await this.viewer.getFunction(id);
+    if (fn) {
+      const callers = await this.viewer.getCallers(id);
+      const callees = await this.viewer.getCallees(id);
+      this.sendJSON(res, [
+        ...callers.map(c => ({ type: 'called_by', target: { id: c.id, name: c.name, kind: 'function', filePath: c.filePath } })),
+        ...callees.map(c => ({ type: 'calls', target: { id: c.id, name: c.name, kind: 'function', filePath: c.filePath } })),
+      ]);
+      return;
+    }
+
+    const file = await this.viewer.getFile(id);
+    if (file) {
+      const imports = await this.viewer.getImports(id);
+      const importers = await this.viewer.getImporters(id);
+      this.sendJSON(res, [
+        ...imports.map(i => ({ type: 'imports', target: { id: i.id, name: i.relativePath, kind: 'file', filePath: i.path } })),
+        ...importers.map(i => ({ type: 'imported_by', target: { id: i.id, name: i.relativePath, kind: 'file', filePath: i.path } })),
+      ]);
+      return;
+    }
+
+    this.sendJSON(res, []);
+  }
+
   // ===========================================================================
   // API Handlers - Functions
   // ===========================================================================
@@ -455,7 +706,29 @@ export class ViewerServer {
     const orderDirection = params.query.get("orderDirection") as "asc" | "desc" || "asc";
 
     const functions = await this.viewer.listFunctions({ limit, offset, orderBy, orderDirection });
-    this.sendJSON(res, functions);
+
+    // Enhance with justification and classification data
+    const enhanced = await Promise.all(
+      functions.map(async (fn) => {
+        const [justification, classification] = await Promise.all([
+          this.viewer.getJustification(fn.id).catch(() => null),
+          this.classificationStorage?.get(fn.id).catch(() => null),
+        ]);
+
+        return {
+          ...fn,
+          kind: 'function' as const,
+          confidence: justification?.confidenceScore,
+          justification: justification?.purposeSummary,
+          classification: classification?.category,
+          subCategory: classification?.category === 'domain'
+            ? classification?.domainMetadata?.area
+            : classification?.infrastructureMetadata?.layer,
+        };
+      })
+    );
+
+    this.sendJSON(res, enhanced);
   }
 
   private async handleMostCalledFunctions(
@@ -529,7 +802,29 @@ export class ViewerServer {
     const orderDirection = params.query.get("orderDirection") as "asc" | "desc" || "asc";
 
     const classes = await this.viewer.listClasses({ limit, offset, orderBy, orderDirection });
-    this.sendJSON(res, classes);
+
+    // Enhance with justification and classification data
+    const enhanced = await Promise.all(
+      classes.map(async (cls) => {
+        const [justification, classification] = await Promise.all([
+          this.viewer.getJustification(cls.id).catch(() => null),
+          this.classificationStorage?.get(cls.id).catch(() => null),
+        ]);
+
+        return {
+          ...cls,
+          kind: 'class' as const,
+          confidence: justification?.confidenceScore,
+          justification: justification?.purposeSummary,
+          classification: classification?.category,
+          subCategory: classification?.category === 'domain'
+            ? classification?.domainMetadata?.area
+            : classification?.infrastructureMetadata?.layer,
+        };
+      })
+    );
+
+    this.sendJSON(res, enhanced);
   }
 
   private async handleGetClass(
@@ -573,7 +868,29 @@ export class ViewerServer {
     const orderDirection = params.query.get("orderDirection") as "asc" | "desc" || "asc";
 
     const interfaces = await this.viewer.listInterfaces({ limit, offset, orderBy, orderDirection });
-    this.sendJSON(res, interfaces);
+
+    // Enhance with justification and classification data
+    const enhanced = await Promise.all(
+      interfaces.map(async (iface) => {
+        const [justification, classification] = await Promise.all([
+          this.viewer.getJustification(iface.id).catch(() => null),
+          this.classificationStorage?.get(iface.id).catch(() => null),
+        ]);
+
+        return {
+          ...iface,
+          kind: 'interface' as const,
+          confidence: justification?.confidenceScore,
+          justification: justification?.purposeSummary,
+          classification: classification?.category,
+          subCategory: classification?.category === 'domain'
+            ? classification?.domainMetadata?.area
+            : classification?.infrastructureMetadata?.layer,
+        };
+      })
+    );
+
+    this.sendJSON(res, enhanced);
   }
 
   private async handleGetInterface(
@@ -663,6 +980,183 @@ export class ViewerServer {
     this.sendJSON(res, patterns);
   }
 
+  private async handleSemanticSearch(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const query = params.query.get("q") || "";
+    const limit = parseInt(params.query.get("limit") || "10", 10);
+
+    if (!query) {
+      this.sendJSON(res, []);
+      return;
+    }
+
+    // Use NL search which includes semantic capabilities
+    const cozoViewer = this.viewer as CozoGraphViewer;
+    if (typeof cozoViewer.nlSearch !== "function") {
+      this.sendError(res, 501, "Semantic search not available");
+      return;
+    }
+
+    const response = await cozoViewer.nlSearch(query);
+    const results = response.results.slice(0, limit).map(r => ({
+      entity: {
+        id: r.id,
+        name: r.name,
+        kind: r.entityType,
+        filePath: r.filePath,
+        startLine: r.line || 0,
+        endLine: r.line || 0,
+      },
+      score: r.relevanceScore,
+      highlights: r.context ? [r.context] : [],
+    }));
+
+    this.sendJSON(res, results);
+  }
+
+  // ===========================================================================
+  // API Handlers - Graph Visualization
+  // ===========================================================================
+
+  private async handleGraphData(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const center = params.query.get("center");
+    const depth = parseInt(params.query.get("depth") || "2", 10);
+    const kinds = params.query.get("kinds")?.split(",") || [];
+
+    try {
+      // Get entities and relationships to build graph
+      const [functions, classes, interfaces] = await Promise.all([
+        this.viewer.listFunctions({ limit: 500 }),
+        this.viewer.listClasses({ limit: 200 }),
+        this.viewer.listInterfaces({ limit: 200 }),
+      ]);
+
+      const nodes: Array<{ id: string; label: string; kind: string }> = [];
+      const edges: Array<{ source: string; target: string; type: string }> = [];
+
+      // Add function nodes
+      if (kinds.length === 0 || kinds.includes("function")) {
+        for (const fn of functions) {
+          nodes.push({ id: fn.id, label: fn.name, kind: "function" });
+        }
+      }
+
+      // Add class nodes
+      if (kinds.length === 0 || kinds.includes("class")) {
+        for (const cls of classes) {
+          nodes.push({ id: cls.id, label: cls.name, kind: "class" });
+        }
+      }
+
+      // Add interface nodes
+      if (kinds.length === 0 || kinds.includes("interface")) {
+        for (const iface of interfaces) {
+          nodes.push({ id: iface.id, label: iface.name, kind: "interface" });
+        }
+      }
+
+      // Get call relationships for functions
+      for (const fn of functions.slice(0, 100)) {
+        const callees = await this.viewer.getCallees(fn.id);
+        for (const callee of callees) {
+          edges.push({ source: fn.id, target: callee.id, type: "calls" });
+        }
+      }
+
+      this.sendJSON(res, { nodes, edges });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to generate graph data", error);
+    }
+  }
+
+  private async handleCallGraph(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const id = params.query.get("id");
+    const depth = parseInt(params.query.get("depth") || "2", 10);
+
+    if (!id) {
+      this.sendError(res, 400, "Missing 'id' query parameter");
+      return;
+    }
+
+    try {
+      const callGraph = await this.viewer.getCallGraph(id, depth);
+
+      // Convert call graph to nodes and edges format
+      const nodes: Array<{ id: string; label: string; kind: string }> = [];
+      const edges: Array<{ source: string; target: string; type: string }> = [];
+      const visited = new Set<string>();
+
+      const traverse = (node: typeof callGraph) => {
+        if (visited.has(node.id)) return;
+        visited.add(node.id);
+
+        nodes.push({ id: node.id, label: node.name, kind: "function" });
+
+        for (const callee of node.callees) {
+          edges.push({ source: node.id, target: callee.id, type: "calls" });
+          traverse(callee);
+        }
+      };
+
+      traverse(callGraph);
+
+      this.sendJSON(res, { nodes, edges });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to generate call graph", error);
+    }
+  }
+
+  private async handleDependencyGraph(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const id = params.query.get("id");
+
+    if (!id) {
+      this.sendError(res, 400, "Missing 'id' query parameter");
+      return;
+    }
+
+    try {
+      const importGraph = await this.viewer.getImportGraph(id, 2);
+
+      // Convert import graph to nodes and edges format
+      const nodes: Array<{ id: string; label: string; kind: string }> = [];
+      const edges: Array<{ source: string; target: string; type: string }> = [];
+      const visited = new Set<string>();
+
+      const traverse = (node: typeof importGraph) => {
+        if (visited.has(node.id)) return;
+        visited.add(node.id);
+
+        nodes.push({ id: node.id, label: node.relativePath, kind: "file" });
+
+        for (const imp of node.imports) {
+          edges.push({ source: node.id, target: imp.id, type: "imports" });
+          traverse(imp);
+        }
+      };
+
+      traverse(importGraph);
+
+      this.sendJSON(res, { nodes, edges });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to generate dependency graph", error);
+    }
+  }
+
   // ===========================================================================
   // API Handlers - Health
   // ===========================================================================
@@ -673,7 +1167,26 @@ export class ViewerServer {
     _params: RouteParams
   ): Promise<void> {
     const health = await this.viewer.getIndexHealth();
-    this.sendJSON(res, health);
+
+    // Transform to UI expected format
+    this.sendJSON(res, {
+      status: health.status,
+      components: {
+        database: { status: health.isHealthy ? 'healthy' : 'unhealthy' },
+        indexer: {
+          status: health.coverage.percentage > 90 ? 'healthy' : health.coverage.percentage > 50 ? 'degraded' : 'unhealthy',
+          message: `${health.coverage.filesIndexed}/${health.coverage.filesTotal} files indexed`,
+        },
+        embeddings: {
+          status: health.embeddings.percentage > 90 ? 'healthy' : health.embeddings.percentage > 50 ? 'degraded' : 'unhealthy',
+          message: `${health.embeddings.functionsWithEmbeddings}/${health.embeddings.functionsTotal} functions embedded`,
+        },
+        relationships: {
+          status: health.relationships.percentage > 80 ? 'healthy' : health.relationships.percentage > 50 ? 'degraded' : 'unhealthy',
+          message: `${health.relationships.resolvedCalls} calls resolved, ${health.relationships.unresolvedCalls} unresolved`,
+        },
+      },
+    });
   }
 
   // ===========================================================================
@@ -686,7 +1199,22 @@ export class ViewerServer {
     _params: RouteParams
   ): Promise<void> {
     const stats = await this.viewer.getJustificationStats();
-    this.sendJSON(res, stats);
+
+    // Transform to UI expected format
+    this.sendJSON(res, {
+      total: stats.justifiedEntities,
+      byConfidence: {
+        high: stats.highConfidence,
+        medium: stats.mediumConfidence,
+        low: stats.lowConfidence,
+      },
+      bySource: {
+        inferred: stats.justifiedEntities - stats.userConfirmed,
+        manual: stats.userConfirmed,
+        pending: stats.pendingClarification,
+      },
+      coverage: stats.coveragePercentage / 100,
+    });
   }
 
   private async handleListJustifications(
@@ -751,6 +1279,158 @@ export class ViewerServer {
   }
 
   // ===========================================================================
+  // API Handlers - Justifications (Hierarchical & Uncertainty)
+  // ===========================================================================
+
+  private async handleUncertaintyHotspots(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const limit = parseInt(params.query.get("limit") || "20", 10);
+
+    const cozoViewer = this.viewer as CozoGraphViewer;
+    if (typeof cozoViewer.getUncertaintyHotspots !== "function") {
+      this.sendError(res, 501, "Uncertainty hotspots not available");
+      return;
+    }
+
+    try {
+      const hotspots = await cozoViewer.getUncertaintyHotspots(limit);
+      this.sendJSON(res, hotspots);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get uncertainty hotspots", error);
+    }
+  }
+
+  private async handleLowConfidenceEntities(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const limit = parseInt(params.query.get("limit") || "50", 10);
+
+    const cozoViewer = this.viewer as CozoGraphViewer;
+    if (typeof cozoViewer.getLowestConfidenceEntities !== "function") {
+      this.sendError(res, 501, "Low confidence entity query not available");
+      return;
+    }
+
+    try {
+      const entities = await cozoViewer.getLowestConfidenceEntities(limit);
+      this.sendJSON(res, entities);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get low confidence entities", error);
+    }
+  }
+
+  private async handleUncertainFeatures(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const limit = parseInt(params.query.get("limit") || "10", 10);
+
+    const cozoViewer = this.viewer as CozoGraphViewer;
+    if (typeof cozoViewer.getUncertainFeatures !== "function") {
+      this.sendError(res, 501, "Uncertain features query not available");
+      return;
+    }
+
+    try {
+      const features = await cozoViewer.getUncertainFeatures(limit);
+      this.sendJSON(res, features);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get uncertain features", error);
+    }
+  }
+
+  private async handleGetJustificationsByFeature(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const feature = decodeURIComponent(params.pathParams.feature!);
+    const limit = parseInt(params.query.get("limit") || "100", 10);
+
+    const cozoViewer = this.viewer as CozoGraphViewer;
+    if (typeof cozoViewer.getJustificationsByFeature !== "function") {
+      this.sendError(res, 501, "Feature-based justification query not available");
+      return;
+    }
+
+    try {
+      const justifications = await cozoViewer.getJustificationsByFeature(feature, limit);
+      this.sendJSON(res, justifications);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get justifications by feature", error);
+    }
+  }
+
+  private async handleFileHierarchyJustifications(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const filePath = decodeURIComponent(params.pathParams.filePath!);
+
+    const cozoViewer = this.viewer as CozoGraphViewer;
+    if (typeof cozoViewer.getFileHierarchyJustifications !== "function") {
+      this.sendError(res, 501, "File hierarchy justification query not available");
+      return;
+    }
+
+    try {
+      const hierarchy = await cozoViewer.getFileHierarchyJustifications(filePath);
+      this.sendJSON(res, hierarchy);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get file hierarchy justifications", error);
+    }
+  }
+
+  private async handleGetJustificationChildren(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const entityId = params.pathParams.entityId!;
+
+    const cozoViewer = this.viewer as CozoGraphViewer;
+    if (typeof cozoViewer.getJustificationChildren !== "function") {
+      this.sendError(res, 501, "Justification children query not available");
+      return;
+    }
+
+    try {
+      const children = await cozoViewer.getJustificationChildren(entityId);
+      this.sendJSON(res, children);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get justification children", error);
+    }
+  }
+
+  private async handleGetJustificationAncestors(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: RouteParams
+  ): Promise<void> {
+    const entityId = params.pathParams.entityId!;
+
+    const cozoViewer = this.viewer as CozoGraphViewer;
+    if (typeof cozoViewer.getJustificationAncestors !== "function") {
+      this.sendError(res, 501, "Justification ancestors query not available");
+      return;
+    }
+
+    try {
+      const ancestors = await cozoViewer.getJustificationAncestors(entityId);
+      this.sendJSON(res, ancestors);
+    } catch (error) {
+      this.sendError(res, 500, "Failed to get justification ancestors", error);
+    }
+  }
+
+  // ===========================================================================
   // API Handlers - Classification (Domain/Infrastructure)
   // ===========================================================================
 
@@ -760,13 +1440,26 @@ export class ViewerServer {
     _params: RouteParams
   ): Promise<void> {
     if (!this.classificationStorage) {
-      this.sendJSON(res, { error: "Classification storage not available" }, 503);
+      this.sendJSON(res, { total: 0, byCategory: {}, bySubCategory: {} });
       return;
     }
 
     try {
       const stats = await this.classificationStorage.getStats();
-      this.sendJSON(res, stats);
+
+      // Transform to UI expected format
+      this.sendJSON(res, {
+        total: stats.classifiedEntities,
+        byCategory: {
+          domain: stats.domainCount,
+          infrastructure: stats.infrastructureCount,
+          unknown: stats.unknownCount,
+        },
+        bySubCategory: {
+          ...stats.byArea,
+          ...stats.byLayer,
+        },
+      });
     } catch (error) {
       this.sendError(res, 500, "Failed to get classification stats", error);
     }
@@ -1582,6 +2275,89 @@ export class ViewerServer {
     } catch (error) {
       this.sendError(res, 500, "Failed to validate ledger integrity", error);
     }
+  }
+
+  // ===========================================================================
+  // API Handlers - Operations
+  // ===========================================================================
+
+  private async handleOperationReindex(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    try {
+      // Parse body
+      const body = await this.parseBody(req);
+      const { path } = body as { path?: string };
+
+      // For now, return a message that reindexing is handled externally
+      this.sendJSON(res, {
+        status: "accepted",
+        message: path
+          ? `Reindex requested for path: ${path}. Use CLI 'code-synapse index' to reindex.`
+          : "Full reindex requested. Use CLI 'code-synapse index' to reindex.",
+      });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to trigger reindex", error);
+    }
+  }
+
+  private async handleOperationJustify(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    try {
+      const body = await this.parseBody(req);
+      const { entityId, force } = body as { entityId?: string; force?: boolean };
+
+      // For now, return a message that justification is handled externally
+      this.sendJSON(res, {
+        status: "accepted",
+        message: entityId
+          ? `Justification requested for entity: ${entityId}. Use CLI 'code-synapse justify' to run justification.`
+          : "Full justification requested. Use CLI 'code-synapse justify' to run justification.",
+      });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to trigger justification", error);
+    }
+  }
+
+  private async handleOperationClassify(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    try {
+      const body = await this.parseBody(req);
+      const { entityId, force } = body as { entityId?: string; force?: boolean };
+
+      // For now, return a message that classification is handled externally
+      this.sendJSON(res, {
+        status: "accepted",
+        message: entityId
+          ? `Classification requested for entity: ${entityId}. Classification runs automatically during indexing.`
+          : "Full classification requested. Classification runs automatically during indexing.",
+      });
+    } catch (error) {
+      this.sendError(res, 500, "Failed to trigger classification", error);
+    }
+  }
+
+  private parseBody(req: http.IncomingMessage): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          resolve(body ? JSON.parse(body) : {});
+        } catch {
+          resolve({});
+        }
+      });
+      req.on('error', reject);
+    });
   }
 
   // ===========================================================================

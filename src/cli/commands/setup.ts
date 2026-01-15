@@ -1,16 +1,15 @@
 /**
  * Interactive Setup Wizard
  *
+ * Modern, enterprise-grade setup experience using @clack/prompts.
  * Guides users through configuring Code-Synapse with:
  * - Model provider selection (local vs cloud)
  * - API key configuration for cloud providers
  * - Model selection
- * - Other preferences
  */
 
+import * as p from "@clack/prompts";
 import chalk from "chalk";
-import * as readline from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 import {
   fileExists,
   getConfigPath,
@@ -22,7 +21,6 @@ import type { ProjectConfig } from "../../types/index.js";
 import {
   MODEL_PRESETS,
   getModelById,
-  getAvailableModels,
   type ModelPreset,
 } from "../../core/llm/index.js";
 
@@ -61,12 +59,14 @@ const PROVIDERS: Record<ModelProvider, {
   description: string;
   requiresApiKey: boolean;
   envVar?: string;
+  defaultModel: string;
   models: Array<{ id: string; name: string; description: string }>;
 }> = {
   local: {
-    name: "Local Models (Recommended)",
-    description: "Run models locally on your machine. Privacy-first, no API costs.",
+    name: "Local Models",
+    description: "Run models locally. Privacy-first, no API costs.",
     requiresApiKey: false,
+    defaultModel: "qwen2.5-coder-3b",
     models: [
       { id: "qwen2.5-coder-0.5b", name: "Qwen 2.5 Coder 0.5B", description: "Ultra-fast, 1GB RAM" },
       { id: "qwen2.5-coder-1.5b", name: "Qwen 2.5 Coder 1.5B", description: "Low memory, 2GB RAM" },
@@ -80,6 +80,7 @@ const PROVIDERS: Record<ModelProvider, {
     description: "GPT-4o models. Requires API key.",
     requiresApiKey: true,
     envVar: "OPENAI_API_KEY",
+    defaultModel: "gpt-4o",
     models: [
       { id: "gpt-4o", name: "GPT-4o", description: "Most capable, higher cost" },
       { id: "gpt-4o-mini", name: "GPT-4o Mini", description: "Fast and affordable" },
@@ -90,16 +91,19 @@ const PROVIDERS: Record<ModelProvider, {
     description: "Claude models. Requires API key.",
     requiresApiKey: true,
     envVar: "ANTHROPIC_API_KEY",
+    defaultModel: "claude-sonnet-4-20250514",
     models: [
-      { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", description: "Best for code" },
-      { id: "claude-3-haiku", name: "Claude 3 Haiku", description: "Fast and affordable" },
+      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", description: "Best for code (recommended)" },
+      { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", description: "Fast and capable" },
+      { id: "claude-3-haiku-20240307", name: "Claude 3 Haiku", description: "Fast and affordable" },
     ],
   },
   google: {
-    name: "Google AI (Gemini)",
+    name: "Google AI",
     description: "Gemini models. Requires API key.",
     requiresApiKey: true,
     envVar: "GOOGLE_API_KEY",
+    defaultModel: "gemini-1.5-pro",
     models: [
       { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", description: "Large context, high quality" },
       { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", description: "Fast and efficient" },
@@ -112,284 +116,224 @@ const PROVIDERS: Record<ModelProvider, {
 // =============================================================================
 
 export class InteractiveSetup {
-  private rl: readline.Interface | null = null;
-
-  private async getReadline(): Promise<readline.Interface> {
-    if (!this.rl) {
-      this.rl = readline.createInterface({
-        input: stdin,
-        output: stdout,
-      });
-    }
-    return this.rl;
-  }
-
-  private async close(): Promise<void> {
-    if (this.rl) {
-      this.rl.close();
-      this.rl = null;
-    }
-  }
-
-  private async ask(question: string): Promise<string> {
-    const rl = await this.getReadline();
-    return rl.question(question);
-  }
-
-  private async askChoice(
-    question: string,
-    options: Array<{ key: string; label: string; description?: string }>
-  ): Promise<string> {
-    console.log();
-    console.log(chalk.cyan.bold(question));
-    console.log();
-
-    for (const opt of options) {
-      console.log(`  ${chalk.yellow(`[${opt.key}]`)} ${opt.label}`);
-      if (opt.description) {
-        console.log(chalk.dim(`      ${opt.description}`));
-      }
-    }
-
-    console.log();
-    const validKeys = options.map((o) => o.key.toLowerCase());
-
-    while (true) {
-      const answer = (await this.ask(chalk.dim("Enter choice: "))).trim().toLowerCase();
-      if (validKeys.includes(answer)) {
-        return answer;
-      }
-      console.log(chalk.red(`Invalid choice. Please enter one of: ${validKeys.join(", ")}`));
-    }
-  }
-
-  private async askYesNo(question: string, defaultValue = true): Promise<boolean> {
-    const defaultHint = defaultValue ? "Y/n" : "y/N";
-    const answer = (await this.ask(`${question} ${chalk.dim(`(${defaultHint})`)}: `)).trim().toLowerCase();
-
-    if (answer === "") {
-      return defaultValue;
-    }
-    return answer === "y" || answer === "yes";
-  }
-
-  private async askApiKey(provider: ModelProvider): Promise<string | undefined> {
-    const providerInfo = PROVIDERS[provider];
-    if (!providerInfo.requiresApiKey) return undefined;
-
-    // Check environment variable first
-    const envValue = providerInfo.envVar ? process.env[providerInfo.envVar] : undefined;
-    if (envValue) {
-      console.log(chalk.green(`✓ Found ${providerInfo.envVar} in environment`));
-      const useEnv = await this.askYesNo("Use the API key from environment?", true);
-      if (useEnv) {
-        return envValue;
-      }
-    }
-
-    console.log();
-    console.log(chalk.yellow(`${providerInfo.name} requires an API key.`));
-    console.log(chalk.dim(`You can also set ${providerInfo.envVar} in your environment.`));
-    console.log();
-
-    const apiKey = await this.ask(chalk.dim("Enter API key (will be stored locally): "));
-    return apiKey.trim() || undefined;
-  }
-
   /**
    * Run the full interactive setup wizard
    */
   async run(): Promise<CodeSynapseConfig | null> {
-    console.log();
-    console.log(chalk.cyan.bold("╔══════════════════════════════════════════════════════════════╗"));
-    console.log(chalk.cyan.bold("║               Welcome to Code-Synapse Setup                  ║"));
-    console.log(chalk.cyan.bold("║         Let's configure your AI code intelligence           ║"));
-    console.log(chalk.cyan.bold("╚══════════════════════════════════════════════════════════════╝"));
-    console.log();
+    console.clear();
 
-    try {
-      // Step 1: Choose model provider
-      const providerChoice = await this.askChoice(
-        "Which model provider would you like to use?",
-        [
-          { key: "1", label: PROVIDERS.local.name, description: PROVIDERS.local.description },
-          { key: "2", label: PROVIDERS.openai.name, description: PROVIDERS.openai.description },
-          { key: "3", label: PROVIDERS.anthropic.name, description: PROVIDERS.anthropic.description },
-          { key: "4", label: PROVIDERS.google.name, description: PROVIDERS.google.description },
-          { key: "s", label: "Skip LLM features", description: "Use Code-Synapse without AI features" },
-        ]
+    p.intro(chalk.bgCyan.black(" Code-Synapse Setup "));
+
+    // Load existing config
+    const configPath = getConfigPath();
+    let config: CodeSynapseConfig = fileExists(configPath)
+      ? (readJson<CodeSynapseConfig>(configPath) ?? {} as CodeSynapseConfig)
+      : {} as CodeSynapseConfig;
+
+    if (!config.apiKeys) {
+      config.apiKeys = {};
+    }
+
+    // Step 1: Choose model provider
+    const providerResult = await p.select({
+      message: "Select your AI provider",
+      options: [
+        {
+          value: "local",
+          label: "Local Models",
+          hint: "recommended - privacy-first, no API costs"
+        },
+        {
+          value: "anthropic",
+          label: "Anthropic (Claude)",
+          hint: "requires API key"
+        },
+        {
+          value: "openai",
+          label: "OpenAI (GPT-4)",
+          hint: "requires API key"
+        },
+        {
+          value: "google",
+          label: "Google (Gemini)",
+          hint: "requires API key"
+        },
+        {
+          value: "skip",
+          label: "Skip AI features",
+          hint: "use code analysis only"
+        },
+      ],
+    });
+
+    if (p.isCancel(providerResult)) {
+      p.cancel("Setup cancelled");
+      return null;
+    }
+
+    if (providerResult === "skip") {
+      config.skipLlm = true;
+      config.modelProvider = undefined;
+
+      p.note(
+        "AI features disabled.\nYou can enable them later with: code-synapse config --setup",
+        "Info"
       );
 
-      const providerMap: Record<string, ModelProvider | "skip"> = {
-        "1": "local",
-        "2": "openai",
-        "3": "anthropic",
-        "4": "google",
-        "s": "skip",
-      };
+      p.outro(chalk.green("Setup complete!"));
+      return config;
+    }
 
-      const provider = providerMap[providerChoice];
+    const provider = providerResult as ModelProvider;
+    const providerInfo = PROVIDERS[provider];
+    config.modelProvider = provider;
+    config.skipLlm = false;
 
-      // Load existing config if available
-      const configPath = getConfigPath();
-      let config: CodeSynapseConfig = fileExists(configPath)
-        ? (readJson<CodeSynapseConfig>(configPath) ?? {} as CodeSynapseConfig)
-        : {} as CodeSynapseConfig;
+    // Step 2: Get API key if needed
+    if (providerInfo.requiresApiKey) {
+      // Check environment variable first
+      const envValue = providerInfo.envVar ? process.env[providerInfo.envVar] : undefined;
 
-      // Initialize apiKeys object if needed
-      if (!config.apiKeys) {
-        config.apiKeys = {};
-      }
+      if (envValue) {
+        const useEnv = await p.confirm({
+          message: `Found ${providerInfo.envVar} in environment. Use it?`,
+          initialValue: true,
+        });
 
-      if (provider === "skip") {
-        config.skipLlm = true;
-        config.modelProvider = undefined;
-        console.log();
-        console.log(chalk.yellow("LLM features disabled. You can enable them later with:"));
-        console.log(chalk.dim("  code-synapse config --setup"));
-        await this.close();
-        return config;
-      }
+        if (p.isCancel(useEnv)) {
+          p.cancel("Setup cancelled");
+          return null;
+        }
 
-      // TypeScript: after the skip check, provider is definitely ModelProvider
-      const selectedProvider = provider as ModelProvider;
-      config.modelProvider = selectedProvider;
-      config.skipLlm = false;
-
-      const providerInfo = PROVIDERS[selectedProvider];
-
-      // Step 2: Get API key if needed
-      if (providerInfo.requiresApiKey) {
-        const apiKey = await this.askApiKey(selectedProvider);
-        if (!apiKey) {
-          console.log();
-          console.log(chalk.yellow("No API key provided. You'll need to set it before using LLM features."));
-          console.log(chalk.dim(`Set ${providerInfo.envVar} in your environment or run setup again.`));
-        } else {
-          config.apiKeys[selectedProvider as keyof typeof config.apiKeys] = apiKey;
-          console.log(chalk.green("✓ API key saved"));
+        if (useEnv) {
+          config.apiKeys[provider as keyof typeof config.apiKeys] = envValue;
+          p.log.success("Using API key from environment");
         }
       }
 
-      // Step 3: Choose model
-      const models = providerInfo.models;
-      const modelOptions = models.map((m: { id: string; name: string; description: string }, i: number) => ({
-        key: String(i + 1),
-        label: m.name,
-        description: m.description,
-      }));
+      if (!config.apiKeys[provider as keyof typeof config.apiKeys]) {
+        const apiKey = await p.password({
+          message: `Enter your ${providerInfo.name} API key`,
+          validate: (value) => {
+            if (!value || value.trim().length === 0) {
+              return "API key is required";
+            }
+            if (provider === "anthropic" && !value.startsWith("sk-ant-")) {
+              return "Anthropic API keys start with 'sk-ant-'";
+            }
+            if (provider === "openai" && !value.startsWith("sk-")) {
+              return "OpenAI API keys start with 'sk-'";
+            }
+          },
+        });
 
-      console.log();
-      const modelChoice = await this.askChoice(
-        `Which ${providerInfo.name} model would you like to use?`,
-        modelOptions
-      );
+        if (p.isCancel(apiKey)) {
+          p.cancel("Setup cancelled");
+          return null;
+        }
 
-      const selectedModel = models[parseInt(modelChoice) - 1];
-      if (selectedModel) {
-        config.llmModel = selectedModel.id;
-        console.log();
-        console.log(chalk.green(`✓ Model set to: ${selectedModel.name}`));
+        config.apiKeys[provider as keyof typeof config.apiKeys] = apiKey;
+        p.log.success("API key saved securely");
       }
-
-      // Step 4: Additional preferences for local models
-      if (selectedProvider === "local") {
-        console.log();
-        console.log(chalk.dim("Local models are downloaded automatically on first use."));
-        console.log(chalk.dim(`Selected model will use approximately ${this.getModelSize(selectedModel?.id)} of disk space.`));
-      }
-
-      await this.close();
-
-      // Save configuration
-      if (fileExists(configPath)) {
-        writeJson(configPath, config);
-        console.log();
-        console.log(chalk.green("✓ Configuration saved"));
-      }
-
-      return config;
-    } catch (error) {
-      await this.close();
-      throw error;
     }
+
+    // Step 3: Choose model
+    const modelOptions = providerInfo.models.map((m) => ({
+      value: m.id,
+      label: m.name,
+      hint: m.description,
+    }));
+
+    const modelResult = await p.select({
+      message: `Select ${providerInfo.name} model`,
+      options: modelOptions,
+      initialValue: providerInfo.defaultModel,
+    });
+
+    if (p.isCancel(modelResult)) {
+      p.cancel("Setup cancelled");
+      return null;
+    }
+
+    config.llmModel = modelResult as string;
+    const selectedModel = providerInfo.models.find((m) => m.id === modelResult);
+
+    // Step 4: Summary and confirmation
+    const summary = [
+      `Provider: ${chalk.cyan(providerInfo.name)}`,
+      `Model: ${chalk.cyan(selectedModel?.name || modelResult)}`,
+    ];
+
+    if (provider === "local" && selectedModel) {
+      const model = getModelById(selectedModel.id);
+      if (model) {
+        summary.push(`RAM needed: ${chalk.yellow(model.minRamGb + "GB")}`);
+        summary.push(`Download size: ${chalk.yellow(model.fileSizeGb + "GB")}`);
+      }
+    }
+
+    p.note(summary.join("\n"), "Configuration");
+
+    // Save configuration
+    if (fileExists(configPath)) {
+      writeJson(configPath, config);
+    }
+
+    p.outro(chalk.green("Setup complete! Run `code-synapse` to start."));
+
+    return config;
   }
 
   /**
-   * Quick setup - just ask for model provider and key
+   * Quick setup - minimal prompts for experienced users
    */
   async quickSetup(): Promise<ModelProviderConfig | null> {
-    try {
-      // Step 1: Choose provider
-      const providerChoice = await this.askChoice(
-        "Select model provider:",
-        [
-          { key: "1", label: "Local (free, private)", description: "Runs on your machine" },
-          { key: "2", label: "OpenAI", description: "Requires API key" },
-          { key: "3", label: "Anthropic", description: "Requires API key" },
-          { key: "4", label: "Google", description: "Requires API key" },
-        ]
-      );
+    const providerResult = await p.select({
+      message: "Select provider",
+      options: [
+        { value: "local", label: "Local", hint: "free, private" },
+        { value: "anthropic", label: "Anthropic", hint: "Claude models" },
+        { value: "openai", label: "OpenAI", hint: "GPT models" },
+        { value: "google", label: "Google", hint: "Gemini models" },
+      ],
+    });
 
-      const providerMap: Record<string, ModelProvider> = {
-        "1": "local",
-        "2": "openai",
-        "3": "anthropic",
-        "4": "google",
-      };
-
-      const provider = providerMap[providerChoice]!;
-      const result: ModelProviderConfig = { provider };
-      const providerInfo = PROVIDERS[provider];
-
-      // Step 2: Get API key if needed
-      if (providerInfo.requiresApiKey) {
-        result.apiKey = await this.askApiKey(provider);
-      }
-
-      // Step 3: Choose model for local
-      if (provider === "local") {
-        const presetChoice = await this.askChoice(
-          "Select model size:",
-          [
-            { key: "1", label: "Fastest (0.5B)", description: "Ultra-fast, minimal resources" },
-            { key: "2", label: "Minimal (1.5B)", description: "Good for low-memory systems" },
-            { key: "3", label: "Balanced (3B)", description: "Recommended for most users" },
-            { key: "4", label: "Quality (7B)", description: "Higher quality, needs 8GB RAM" },
-            { key: "5", label: "Maximum (14B)", description: "Best quality, needs 16GB RAM" },
-          ]
-        );
-
-        const presetMap: Record<string, ModelPreset> = {
-          "1": "fastest",
-          "2": "minimal",
-          "3": "balanced",
-          "4": "quality",
-          "5": "maximum",
-        };
-
-        const preset = presetMap[presetChoice];
-        result.preset = preset;
-        if (preset) {
-          result.modelId = MODEL_PRESETS[preset];
-        }
-      } else {
-        // Use default model for cloud providers
-        result.modelId = providerInfo.models[0]?.id;
-      }
-
-      await this.close();
-      return result;
-    } catch (error) {
-      await this.close();
-      throw error;
+    if (p.isCancel(providerResult)) {
+      return null;
     }
-  }
 
-  private getModelSize(modelId?: string): string {
-    if (!modelId) return "unknown";
-    const model = getModelById(modelId);
-    return model ? `${model.fileSizeGb}GB` : "unknown";
+    const provider = providerResult as ModelProvider;
+    const providerInfo = PROVIDERS[provider];
+    const result: ModelProviderConfig = { provider };
+
+    if (providerInfo.requiresApiKey) {
+      const apiKey = await p.password({
+        message: "API key",
+      });
+      if (p.isCancel(apiKey)) return null;
+      result.apiKey = apiKey;
+    }
+
+    if (provider === "local") {
+      const presetResult = await p.select({
+        message: "Model size",
+        options: [
+          { value: "fastest", label: "Fastest (0.5B)", hint: "1GB RAM" },
+          { value: "minimal", label: "Minimal (1.5B)", hint: "2GB RAM" },
+          { value: "balanced", label: "Balanced (3B)", hint: "4GB RAM - recommended" },
+          { value: "quality", label: "Quality (7B)", hint: "8GB RAM" },
+          { value: "maximum", label: "Maximum (14B)", hint: "16GB RAM" },
+        ],
+        initialValue: "balanced",
+      });
+      if (p.isCancel(presetResult)) return null;
+      result.preset = presetResult as ModelPreset;
+      result.modelId = MODEL_PRESETS[result.preset];
+    } else {
+      result.modelId = providerInfo.defaultModel;
+    }
+
+    return result;
   }
 }
 
@@ -412,7 +356,7 @@ export async function setupCommand(options: SetupOptions): Promise<void> {
 
   const configPath = getConfigPath();
 
-  // If specific options provided, apply them directly
+  // If specific options provided, apply them directly (non-interactive)
   if (options.provider || options.apiKey || options.model) {
     const config: CodeSynapseConfig = fileExists(configPath)
       ? (readJson<CodeSynapseConfig>(configPath) ?? {} as CodeSynapseConfig)
@@ -425,26 +369,26 @@ export async function setupCommand(options: SetupOptions): Promise<void> {
     if (options.provider) {
       const provider = options.provider.toLowerCase() as ModelProvider;
       if (!PROVIDERS[provider]) {
-        console.log(chalk.red(`Unknown provider: ${options.provider}`));
-        console.log(chalk.dim("Valid providers: local, openai, anthropic, google"));
+        p.log.error(`Unknown provider: ${options.provider}`);
+        p.log.info("Valid providers: local, openai, anthropic, google");
         return;
       }
       config.modelProvider = provider;
       config.skipLlm = false;
-      console.log(chalk.green(`✓ Provider set to: ${PROVIDERS[provider].name}`));
+      p.log.success(`Provider set to ${PROVIDERS[provider].name}`);
     }
 
     if (options.apiKey && config.modelProvider) {
       const provider = config.modelProvider;
       if (PROVIDERS[provider].requiresApiKey) {
         config.apiKeys[provider as keyof typeof config.apiKeys] = options.apiKey;
-        console.log(chalk.green(`✓ API key saved for ${PROVIDERS[provider].name}`));
+        p.log.success(`API key saved for ${PROVIDERS[provider].name}`);
       }
     }
 
     if (options.model) {
       config.llmModel = options.model;
-      console.log(chalk.green(`✓ Model set to: ${options.model}`));
+      p.log.success(`Model set to ${options.model}`);
     }
 
     writeJson(configPath, config);

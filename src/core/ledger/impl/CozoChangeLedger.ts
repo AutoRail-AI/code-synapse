@@ -557,7 +557,19 @@ export class CozoChangeLedger implements IChangeLedger {
         try {
           callback(entry);
         } catch (error) {
-          logger.error({ error }, "Subscriber callback failed");
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.error(
+            {
+              err: error,
+              errorMessage,
+              errorStack: error instanceof Error ? error.stack : undefined,
+              entryId: entry.id,
+              eventType: entry.eventType,
+            },
+            "Subscriber callback failed for event %s: %s",
+            entry.eventType,
+            errorMessage
+          );
         }
       }
     }

@@ -73,6 +73,9 @@ export async function indexCommand(options: IndexOptions): Promise<void> {
   const spinner = ora("Initializing...").start();
   const startTime = Date.now();
 
+  // Track resources for cleanup
+  let store: Awaited<ReturnType<typeof createGraphStore>> | null = null;
+
   try {
     // Detect project
     spinner.text = "Detecting project structure...";
@@ -91,7 +94,7 @@ export async function indexCommand(options: IndexOptions): Promise<void> {
     // Initialize graph store
     spinner.text = "Initializing database...";
     const graphDbPath = getGraphDbPath();
-    const store = await createGraphStore({ path: graphDbPath });
+    store = await createGraphStore({ path: graphDbPath });
 
     // Create indexer coordinator
     const indexer = createIndexerCoordinator({
@@ -110,9 +113,6 @@ export async function indexCommand(options: IndexOptions): Promise<void> {
     const result = await indexer.indexProject();
 
     const duration = (Date.now() - startTime) / 1000;
-
-    // Close resources
-    await store.close();
 
     if (result.success) {
       spinner.succeed(chalk.green("Indexing complete!"));
@@ -162,6 +162,15 @@ export async function indexCommand(options: IndexOptions): Promise<void> {
     spinner.fail(chalk.red("Indexing failed"));
     logger.error({ err: error }, "Indexing failed");
     throw error;
+  } finally {
+    // Always cleanup resources
+    if (store) {
+      try {
+        await store.close();
+      } catch {
+        // Ignore close errors
+      }
+    }
   }
 }
 

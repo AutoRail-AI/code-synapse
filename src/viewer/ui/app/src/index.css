@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom base styles */
+@layer base {
+  :root {
+    --color-bg: #0f172a;
+    --color-bg-secondary: #1e293b;
+    --color-bg-tertiary: #334155;
+    --color-text: #f8fafc;
+    --color-text-secondary: #94a3b8;
+    --color-border: #475569;
+    --color-accent: #3b82f6;
+  }
+
+  body {
+    @apply bg-slate-900 text-slate-100 font-sans antialiased;
+  }
+
+  * {
+    @apply border-slate-700;
+  }
+}
+
+/* Custom component styles */
+@layer components {
+  /* Entity type badges */
+  .badge-function {
+    @apply bg-blue-500/20 text-blue-400 border-blue-500/30;
+  }
+  .badge-class {
+    @apply bg-purple-500/20 text-purple-400 border-purple-500/30;
+  }
+  .badge-interface {
+    @apply bg-cyan-500/20 text-cyan-400 border-cyan-500/30;
+  }
+  .badge-variable {
+    @apply bg-gray-500/20 text-gray-400 border-gray-500/30;
+  }
+  .badge-file {
+    @apply bg-yellow-500/20 text-yellow-400 border-yellow-500/30;
+  }
+
+  /* Confidence indicators */
+  .confidence-high {
+    @apply bg-green-500;
+  }
+  .confidence-medium {
+    @apply bg-yellow-500;
+  }
+  .confidence-low {
+    @apply bg-orange-500;
+  }
+  .confidence-uncertain {
+    @apply bg-red-500 animate-pulse;
+  }
+
+  /* Feature/Domain badges */
+  .badge-domain {
+    @apply bg-blue-500/20 text-blue-400;
+  }
+  .badge-infrastructure {
+    @apply bg-gray-500/20 text-gray-400;
+  }
+
+  /* Panel styles */
+  .panel {
+    @apply bg-slate-800 border border-slate-700 rounded-lg;
+  }
+
+  .panel-header {
+    @apply px-4 py-3 border-b border-slate-700 font-semibold text-sm uppercase tracking-wide text-slate-400;
+  }
+
+  .panel-content {
+    @apply p-4;
+  }
+
+  /* Button styles */
+  .btn {
+    @apply px-4 py-2 rounded-md font-medium transition-colors duration-150;
+  }
+
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-700 text-white;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 text-slate-200;
+  }
+
+  .btn-ghost {
+    @apply hover:bg-slate-700 text-slate-300;
+  }
+
+  /* Nav tab styles */
+  .nav-tab {
+    @apply px-4 py-2 text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-md transition-colors;
+  }
+
+  .nav-tab.active {
+    @apply text-white bg-slate-700;
+  }
+
+  /* Input styles */
+  .input {
+    @apply w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-md text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+  }
+
+  /* Scrollbar styles */
+  .custom-scrollbar::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-slate-800;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-slate-600 rounded-full hover:bg-slate-500;
+  }
+}
+
+/* Utility classes */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Truncate with ellipsis */
+  .truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .truncate-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}

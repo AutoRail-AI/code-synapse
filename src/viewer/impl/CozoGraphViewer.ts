@@ -497,7 +497,7 @@ export class CozoGraphViewer implements IGraphViewer {
     // Simple class list query
     const script = `
       ?[id, name, file_id, file_path, start_line, end_line, is_exported, is_abstract, extends_class, implements_interfaces, doc_comment] :=
-        *class{id, name, file_id, start_line, end_line, is_exported, is_abstract, extends: extends_class, implements: implements_interfaces, doc_comment},
+        *class{id, name, file_id, start_line, end_line, is_exported, is_abstract, extends_class, implements_interfaces, doc_comment},
         *file{id: file_id, relative_path: file_path}
       :order ${orderDir}${orderBy}
       :limit ${limit}
@@ -542,7 +542,7 @@ export class CozoGraphViewer implements IGraphViewer {
     // Simple class lookup
     const script = `
       ?[id, name, file_id, file_path, start_line, end_line, is_exported, is_abstract, extends_class, implements_interfaces, doc_comment] :=
-        *class{id, name, file_id, start_line, end_line, is_exported, is_abstract, extends: extends_class, implements: implements_interfaces, doc_comment},
+        *class{id, name, file_id, start_line, end_line, is_exported, is_abstract, extends_class, implements_interfaces, doc_comment},
         id = $id,
         *file{id: file_id, relative_path: file_path}
     `;
@@ -590,11 +590,11 @@ export class CozoGraphViewer implements IGraphViewer {
     const orderBy = options?.orderBy ?? "name";
     const orderDir = options?.orderDirection === "desc" ? "-" : "";
 
+    // Simplified query without property_count calculation (which can fail on null properties)
     const script = `
-      ?[id, name, file_id, file_path, start_line, end_line, is_exported, extends_interfaces, doc_comment, property_count] :=
-        *interface{id, name, file_id, start_line, end_line, is_exported, extends_interfaces, doc_comment, properties},
-        *file{id: file_id, relative_path: file_path},
-        property_count = if(is_null(properties), 0, length(properties))
+      ?[id, name, file_id, file_path, start_line, end_line, is_exported, extends_interfaces, doc_comment] :=
+        *interface{id, name, file_id, start_line, end_line, is_exported, extends_interfaces, doc_comment},
+        *file{id: file_id, relative_path: file_path}
 
       :order ${orderDir}${orderBy}
       :limit ${limit}
@@ -612,7 +612,6 @@ export class CozoGraphViewer implements IGraphViewer {
         is_exported: boolean;
         extends_interfaces: string[];
         doc_comment: string | null;
-        property_count: number;
       }>(script);
 
       return result.rows.map((row) => ({
@@ -624,7 +623,7 @@ export class CozoGraphViewer implements IGraphViewer {
         endLine: row.end_line,
         isExported: row.is_exported,
         extendsInterfaces: row.extends_interfaces ?? [],
-        propertyCount: row.property_count,
+        propertyCount: 0, // Simplified - not calculating
         docComment: row.doc_comment ?? undefined,
       }));
     } catch {
@@ -633,12 +632,12 @@ export class CozoGraphViewer implements IGraphViewer {
   }
 
   async getInterface(id: string): Promise<InterfaceInfo | null> {
+    // Simplified query without property_count calculation
     const script = `
-      ?[id, name, file_id, file_path, start_line, end_line, is_exported, extends_interfaces, doc_comment, property_count] :=
-        *interface{id, name, file_id, start_line, end_line, is_exported, extends_interfaces, doc_comment, properties},
+      ?[id, name, file_id, file_path, start_line, end_line, is_exported, extends_interfaces, doc_comment] :=
+        *interface{id, name, file_id, start_line, end_line, is_exported, extends_interfaces, doc_comment},
         id = $id,
-        *file{id: file_id, relative_path: file_path},
-        property_count = if(is_null(properties), 0, length(properties))
+        *file{id: file_id, relative_path: file_path}
     `;
 
     try {
@@ -652,7 +651,6 @@ export class CozoGraphViewer implements IGraphViewer {
         is_exported: boolean;
         extends_interfaces: string[];
         doc_comment: string | null;
-        property_count: number;
       }>(script, { id });
 
       if (result.rows.length === 0) return null;
@@ -667,7 +665,7 @@ export class CozoGraphViewer implements IGraphViewer {
         endLine: row.end_line,
         isExported: row.is_exported,
         extendsInterfaces: row.extends_interfaces ?? [],
-        propertyCount: row.property_count,
+        propertyCount: 0, // Simplified - not calculating
         docComment: row.doc_comment ?? undefined,
       };
     } catch {
@@ -1444,38 +1442,43 @@ export class CozoGraphViewer implements IGraphViewer {
     try {
       // Total justifications
       const totalResult = await this.store.query<CountRow>(
-        `?[count(id)] := *Justification{id}`
+        `?[count(id)] := *justification{id}`
       );
 
       // By confidence level
       const highResult = await this.store.query<CountRow>(
-        `?[count(id)] := *Justification{id, confidenceScore}, confidenceScore >= 0.8`
+        `?[count(id)] := *justification{id, confidence_score}, confidence_score >= 0.8`
       );
 
       const mediumResult = await this.store.query<CountRow>(
-        `?[count(id)] := *Justification{id, confidenceScore}, confidenceScore >= 0.5, confidenceScore < 0.8`
+        `?[count(id)] := *justification{id, confidence_score}, confidence_score >= 0.5, confidence_score < 0.8`
       );
 
       const lowResult = await this.store.query<CountRow>(
-        `?[count(id)] := *Justification{id, confidenceScore}, confidenceScore < 0.5`
+        `?[count(id)] := *justification{id, confidence_score}, confidence_score < 0.5`
       );
 
       const pendingResult = await this.store.query<CountRow>(
-        `?[count(id)] := *Justification{id, clarificationPending}, clarificationPending = true`
+        `?[count(id)] := *justification{id, clarification_pending}, clarification_pending = true`
       );
 
       const confirmedResult = await this.store.query<CountRow>(
-        `?[count(id)] := *Justification{id, lastConfirmedByUser}, lastConfirmedByUser != null`
+        `?[count(id)] := *justification{id, last_confirmed_by_user}, last_confirmed_by_user != null`
       );
 
-      // Total justifiable entities
-      const entityCountResult = await this.store.query<CountRow>(`
-        functions[count(id)] := *function{id}
-        classes[count(id)] := *class{id}
-        interfaces[count(id)] := *interface{id}
-        files[count(id)] := *file{id}
-        ?[sum(c)] := functions[c]; classes[c]; interfaces[c]; files[c]
-      `);
+      // Total justifiable entities - query each type separately
+      const functionsCount = await this.store.query<CountRow>(
+        `?[count(id)] := *function{id}`
+      );
+      const classesCount = await this.store.query<CountRow>(
+        `?[count(id)] := *class{id}`
+      );
+      const interfacesCount = await this.store.query<CountRow>(
+        `?[count(id)] := *interface{id}`
+      );
+      const filesCount = await this.store.query<CountRow>(
+        `?[count(id)] := *file{id}`
+      );
 
       const getCount = (row?: CountRow): number => {
         if (!row) return 0;
@@ -1484,7 +1487,11 @@ export class CozoGraphViewer implements IGraphViewer {
       };
 
       const totalJustifications = getCount(totalResult.rows[0]);
-      const totalEntities = getCount(entityCountResult.rows[0]);
+      const totalEntities =
+        getCount(functionsCount.rows[0]) +
+        getCount(classesCount.rows[0]) +
+        getCount(interfacesCount.rows[0]) +
+        getCount(filesCount.rows[0]);
 
       return {
         totalEntities,
@@ -1514,29 +1521,29 @@ export class CozoGraphViewer implements IGraphViewer {
     try {
       const result = await this.store.query<{
         id: string;
-        entityId: string;
-        entityType: string;
+        entity_id: string;
+        entity_type: string;
         name: string;
-        filePath: string;
-        purposeSummary: string;
-        businessValue: string;
-        featureContext: string;
-        detailedDescription: string | null;
+        file_path: string;
+        purpose_summary: string;
+        business_value: string;
+        feature_context: string;
+        detailed_description: string | null;
         tags: string;
-        inferredFrom: string;
-        confidenceScore: number;
-        confidenceLevel: string;
-        clarificationPending: boolean;
-        createdAt: number;
-        updatedAt: number;
+        inferred_from: string;
+        confidence_score: number;
+        confidence_level: string;
+        clarification_pending: boolean;
+        created_at: number;
+        updated_at: number;
       }>(
-        `?[id, entityId, entityType, name, filePath, purposeSummary, businessValue,
-          featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
-          confidenceLevel, clarificationPending, createdAt, updatedAt] :=
-          *Justification{id, entityId, entityType, name, filePath, purposeSummary, businessValue,
-            featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
-            confidenceLevel, clarificationPending, createdAt, updatedAt},
-          entityId = $entityId`,
+        `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, clarification_pending, created_at, updated_at] :=
+          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            feature_context, detailed_description, tags, inferred_from, confidence_score,
+            confidence_level, clarification_pending, created_at, updated_at},
+          entity_id = $entityId`,
         { entityId }
       );
 
@@ -1552,34 +1559,42 @@ export class CozoGraphViewer implements IGraphViewer {
   async listJustifications(options?: ListOptions): Promise<JustificationInfo[]> {
     const limit = options?.limit ?? 100;
     const offset = options?.offset ?? 0;
-    const orderBy = options?.orderBy ?? "name";
+    // Map camelCase to snake_case for ordering
+    const orderByMap: Record<string, string> = {
+      name: "name",
+      entityType: "entity_type",
+      confidenceScore: "confidence_score",
+      createdAt: "created_at",
+      updatedAt: "updated_at",
+    };
+    const orderBy = orderByMap[options?.orderBy ?? "name"] ?? "name";
     const orderDir = options?.orderDirection === "desc" ? "-" : "";
 
     try {
       const result = await this.store.query<{
         id: string;
-        entityId: string;
-        entityType: string;
+        entity_id: string;
+        entity_type: string;
         name: string;
-        filePath: string;
-        purposeSummary: string;
-        businessValue: string;
-        featureContext: string;
-        detailedDescription: string | null;
+        file_path: string;
+        purpose_summary: string;
+        business_value: string;
+        feature_context: string;
+        detailed_description: string | null;
         tags: string;
-        inferredFrom: string;
-        confidenceScore: number;
-        confidenceLevel: string;
-        clarificationPending: boolean;
-        createdAt: number;
-        updatedAt: number;
+        inferred_from: string;
+        confidence_score: number;
+        confidence_level: string;
+        clarification_pending: boolean;
+        created_at: number;
+        updated_at: number;
       }>(
-        `?[id, entityId, entityType, name, filePath, purposeSummary, businessValue,
-          featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
-          confidenceLevel, clarificationPending, createdAt, updatedAt] :=
-          *Justification{id, entityId, entityType, name, filePath, purposeSummary, businessValue,
-            featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
-            confidenceLevel, clarificationPending, createdAt, updatedAt}
+        `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, clarification_pending, created_at, updated_at] :=
+          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            feature_context, detailed_description, tags, inferred_from, confidence_score,
+            confidence_level, clarification_pending, created_at, updated_at}
         :order ${orderDir}${orderBy}
         :limit ${limit}
         :offset ${offset}`
@@ -1595,32 +1610,32 @@ export class CozoGraphViewer implements IGraphViewer {
     try {
       const result = await this.store.query<{
         id: string;
-        entityId: string;
-        entityType: string;
+        entity_id: string;
+        entity_type: string;
         name: string;
-        filePath: string;
-        purposeSummary: string;
-        businessValue: string;
-        featureContext: string;
-        detailedDescription: string | null;
+        file_path: string;
+        purpose_summary: string;
+        business_value: string;
+        feature_context: string;
+        detailed_description: string | null;
         tags: string;
-        inferredFrom: string;
-        confidenceScore: number;
-        confidenceLevel: string;
-        clarificationPending: boolean;
-        createdAt: number;
-        updatedAt: number;
+        inferred_from: string;
+        confidence_score: number;
+        confidence_level: string;
+        clarification_pending: boolean;
+        created_at: number;
+        updated_at: number;
       }>(
-        `?[id, entityId, entityType, name, filePath, purposeSummary, businessValue,
-          featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
-          confidenceLevel, clarificationPending, createdAt, updatedAt] :=
-          *Justification{id, entityId, entityType, name, filePath, purposeSummary, businessValue,
-            featureContext, detailedDescription, tags, inferredFrom, confidenceScore,
-            confidenceLevel, clarificationPending, createdAt, updatedAt},
+        `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, clarification_pending, created_at, updated_at] :=
+          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            feature_context, detailed_description, tags, inferred_from, confidence_score,
+            confidence_level, clarification_pending, created_at, updated_at},
           or(
-            str_includes(lowercase(purposeSummary), lowercase($query)),
-            str_includes(lowercase(businessValue), lowercase($query)),
-            str_includes(lowercase(featureContext), lowercase($query)),
+            str_includes(lowercase(purpose_summary), lowercase($query)),
+            str_includes(lowercase(business_value), lowercase($query)),
+            str_includes(lowercase(feature_context), lowercase($query)),
             str_includes(lowercase(name), lowercase($query))
           )
         :limit $limit`,
@@ -1635,37 +1650,37 @@ export class CozoGraphViewer implements IGraphViewer {
 
   async getFeatureAreas(): Promise<FeatureAreaSummary[]> {
     try {
-      // Group justifications by featureContext
+      // Group justifications by feature_context
       const result = await this.store.query<{
-        featureContext: string;
+        feature_context: string;
         "count(id)": number;
       }>(
-        `?[featureContext, count(id)] :=
-          *Justification{id, featureContext},
-          featureContext != ""
+        `?[feature_context, count(id)] :=
+          *justification{id, feature_context},
+          feature_context != ""
         :order -count(id)`
       );
 
       // For each feature area, calculate average confidence and collect tags
       const features: FeatureAreaSummary[] = [];
       for (const row of result.rows) {
-        const featureArea = row.featureContext;
+        const featureArea = row.feature_context;
         const entityCount = row["count(id)"] ?? 0;
 
         // Get average confidence for this feature
-        const confidenceResult = await this.store.query<{ confidenceScore: number }>(
-          `?[confidenceScore] := *Justification{confidenceScore, featureContext}, featureContext = $featureArea`,
+        const confidenceResult = await this.store.query<{ confidence_score: number }>(
+          `?[confidence_score] := *justification{confidence_score, feature_context}, feature_context = $featureArea`,
           { featureArea }
         );
 
-        const scores = confidenceResult.rows.map((r) => r.confidenceScore);
+        const scores = confidenceResult.rows.map((r) => r.confidence_score);
         const avgConfidence = scores.length > 0
           ? scores.reduce((a, b) => a + b, 0) / scores.length
           : 0;
 
         // Get unique tags for this feature
         const tagsResult = await this.store.query<{ tags: string }>(
-          `?[tags] := *Justification{tags, featureContext}, featureContext = $featureArea`,
+          `?[tags] := *justification{tags, feature_context}, feature_context = $featureArea`,
           { featureArea }
         );
 
@@ -1695,26 +1710,416 @@ export class CozoGraphViewer implements IGraphViewer {
     }
   }
 
+  // ===========================================================================
+  // Hierarchical & Uncertainty Queries (Agent-First)
+  // ===========================================================================
+
   /**
-   * Convert database row to JustificationInfo
+   * Get files ranked by uncertainty (most low-confidence justifications)
+   */
+  async getUncertaintyHotspots(limit: number = 20): Promise<
+    Array<{
+      filePath: string;
+      lowConfidenceCount: number;
+      pendingClarificationCount: number;
+      averageConfidence: number;
+      totalEntities: number;
+    }>
+  > {
+    try {
+      // Get justifications grouped by file, calculating uncertainty metrics
+      const result = await this.store.query<{
+        file_path: string;
+        total_count: number;
+        avg_confidence: number;
+      }>(
+        `?[file_path, total_count, avg_confidence] :=
+          *justification{file_path, confidence_score},
+          total_count = count(file_path),
+          avg_confidence = mean(confidence_score)
+        :order avg_confidence
+        :limit $limit`,
+        { limit }
+      );
+
+      // For each file, get additional metrics
+      const hotspots = [];
+      for (const row of result.rows) {
+        const lowConfResult = await this.store.query<{ "count(id)": number }>(
+          `?[count(id)] := *justification{id, file_path, confidence_score}, file_path = $filePath, confidence_score < 0.5`,
+          { filePath: row.file_path }
+        );
+        const pendingResult = await this.store.query<{ "count(id)": number }>(
+          `?[count(id)] := *justification{id, file_path, clarification_pending}, file_path = $filePath, clarification_pending = true`,
+          { filePath: row.file_path }
+        );
+
+        hotspots.push({
+          filePath: row.file_path,
+          lowConfidenceCount: lowConfResult.rows[0]?.["count(id)"] ?? 0,
+          pendingClarificationCount: pendingResult.rows[0]?.["count(id)"] ?? 0,
+          averageConfidence: row.avg_confidence,
+          totalEntities: row.total_count,
+        });
+      }
+
+      // Sort by low confidence count descending
+      return hotspots.sort((a, b) => b.lowConfidenceCount - a.lowConfidenceCount);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get entities with lowest confidence (most uncertain)
+   */
+  async getLowestConfidenceEntities(limit: number = 50): Promise<JustificationInfo[]> {
+    try {
+      const result = await this.store.query<{
+        id: string;
+        entity_id: string;
+        entity_type: string;
+        name: string;
+        file_path: string;
+        purpose_summary: string;
+        business_value: string;
+        feature_context: string;
+        detailed_description: string | null;
+        tags: string;
+        inferred_from: string;
+        confidence_score: number;
+        confidence_level: string;
+        clarification_pending: boolean;
+        created_at: number;
+        updated_at: number;
+      }>(
+        `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, clarification_pending, created_at, updated_at] :=
+          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            feature_context, detailed_description, tags, inferred_from, confidence_score,
+            confidence_level, clarification_pending, created_at, updated_at}
+        :order confidence_score
+        :limit $limit`,
+        { limit }
+      );
+
+      return result.rows.map((row) => this.rowToJustificationInfo(row));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get features with lowest average confidence
+   */
+  async getUncertainFeatures(limit: number = 10): Promise<
+    Array<{
+      featureContext: string;
+      averageConfidence: number;
+      entityCount: number;
+      lowConfidenceCount: number;
+    }>
+  > {
+    try {
+      const result = await this.store.query<{
+        feature_context: string;
+        avg_confidence: number;
+        entity_count: number;
+      }>(
+        `?[feature_context, avg_confidence, entity_count] :=
+          *justification{feature_context, confidence_score},
+          feature_context != "",
+          feature_context != "General",
+          avg_confidence = mean(confidence_score),
+          entity_count = count(feature_context)
+        :order avg_confidence
+        :limit $limit`,
+        { limit }
+      );
+
+      // Get low confidence counts for each feature
+      const features = [];
+      for (const row of result.rows) {
+        const lowConfResult = await this.store.query<{ "count(id)": number }>(
+          `?[count(id)] := *justification{id, feature_context, confidence_score}, feature_context = $fc, confidence_score < 0.5`,
+          { fc: row.feature_context }
+        );
+
+        features.push({
+          featureContext: row.feature_context,
+          averageConfidence: row.avg_confidence,
+          entityCount: row.entity_count,
+          lowConfidenceCount: lowConfResult.rows[0]?.["count(id)"] ?? 0,
+        });
+      }
+
+      return features;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get justifications by feature context
+   */
+  async getJustificationsByFeature(feature: string, limit: number = 100): Promise<JustificationInfo[]> {
+    try {
+      const result = await this.store.query<{
+        id: string;
+        entity_id: string;
+        entity_type: string;
+        name: string;
+        file_path: string;
+        purpose_summary: string;
+        business_value: string;
+        feature_context: string;
+        detailed_description: string | null;
+        tags: string;
+        inferred_from: string;
+        confidence_score: number;
+        confidence_level: string;
+        clarification_pending: boolean;
+        created_at: number;
+        updated_at: number;
+      }>(
+        `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, clarification_pending, created_at, updated_at] :=
+          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            feature_context, detailed_description, tags, inferred_from, confidence_score,
+            confidence_level, clarification_pending, created_at, updated_at},
+          feature_context = $feature
+        :order -confidence_score
+        :limit $limit`,
+        { feature, limit }
+      );
+
+      return result.rows.map((row) => this.rowToJustificationInfo(row));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get file hierarchy with justifications
+   */
+  async getFileHierarchyJustifications(filePath: string): Promise<{
+    file: JustificationInfo | null;
+    topLevel: JustificationInfo[];
+    nested: Record<string, JustificationInfo[]>;
+  }> {
+    try {
+      const result = await this.store.query<{
+        id: string;
+        entity_id: string;
+        entity_type: string;
+        name: string;
+        file_path: string;
+        purpose_summary: string;
+        business_value: string;
+        feature_context: string;
+        detailed_description: string | null;
+        tags: string;
+        inferred_from: string;
+        confidence_score: number;
+        confidence_level: string;
+        clarification_pending: boolean;
+        parent_justification_id: string | null;
+        hierarchy_depth: number;
+        created_at: number;
+        updated_at: number;
+      }>(
+        `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, clarification_pending, parent_justification_id, hierarchy_depth,
+          created_at, updated_at] :=
+          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            feature_context, detailed_description, tags, inferred_from, confidence_score,
+            confidence_level, clarification_pending, parent_justification_id, hierarchy_depth,
+            created_at, updated_at},
+          file_path = $filePath
+        :order hierarchy_depth, name`,
+        { filePath }
+      );
+
+      const justifications = result.rows.map((row) => ({
+        ...this.rowToJustificationInfo(row),
+        parentJustificationId: row.parent_justification_id,
+        hierarchyDepth: row.hierarchy_depth,
+      }));
+
+      // Find file-level justification
+      const file = justifications.find((j) => j.entityType === "file") || null;
+
+      // Find top-level entities (classes, functions at file level)
+      const topLevel = justifications.filter(
+        (j) =>
+          j.entityType !== "file" &&
+          ((j as { hierarchyDepth?: number }).hierarchyDepth === 1 || !(j as { parentJustificationId?: string }).parentJustificationId)
+      );
+
+      // Group nested entities by parent
+      const nested: Record<string, JustificationInfo[]> = {};
+      for (const j of justifications) {
+        const jWithParent = j as { parentJustificationId?: string; hierarchyDepth?: number };
+        if (jWithParent.parentJustificationId && (jWithParent.hierarchyDepth || 0) > 1) {
+          const parentId = jWithParent.parentJustificationId;
+          if (parentId) {
+            if (!nested[parentId]) {
+              nested[parentId] = [];
+            }
+            nested[parentId].push(j);
+          }
+        }
+      }
+
+      return { file, topLevel, nested };
+    } catch {
+      return { file: null, topLevel: [], nested: {} };
+    }
+  }
+
+  /**
+   * Get children of a justification
+   */
+  async getJustificationChildren(entityId: string): Promise<JustificationInfo[]> {
+    try {
+      // First get the justification ID for this entity
+      const justResult = await this.store.query<{ id: string }>(
+        `?[id] := *justification{id, entity_id}, entity_id = $entityId`,
+        { entityId }
+      );
+
+      if (justResult.rows.length === 0) {
+        return [];
+      }
+
+      const justificationId = justResult.rows[0]!.id;
+
+      // Now find children
+      const result = await this.store.query<{
+        id: string;
+        entity_id: string;
+        entity_type: string;
+        name: string;
+        file_path: string;
+        purpose_summary: string;
+        business_value: string;
+        feature_context: string;
+        detailed_description: string | null;
+        tags: string;
+        inferred_from: string;
+        confidence_score: number;
+        confidence_level: string;
+        clarification_pending: boolean;
+        created_at: number;
+        updated_at: number;
+      }>(
+        `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, clarification_pending, created_at, updated_at] :=
+          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            feature_context, detailed_description, tags, inferred_from, confidence_score,
+            confidence_level, clarification_pending, parent_justification_id, created_at, updated_at},
+          parent_justification_id = $parentId
+        :order name`,
+        { parentId: justificationId }
+      );
+
+      return result.rows.map((row) => this.rowToJustificationInfo(row));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get ancestors (parent chain) of a justification
+   */
+  async getJustificationAncestors(entityId: string): Promise<JustificationInfo[]> {
+    try {
+      // First get the justification for this entity
+      const justResult = await this.store.query<{
+        id: string;
+        parent_justification_id: string | null;
+      }>(
+        `?[id, parent_justification_id] := *justification{id, entity_id, parent_justification_id}, entity_id = $entityId`,
+        { entityId }
+      );
+
+      if (justResult.rows.length === 0) {
+        return [];
+      }
+
+      const ancestors: JustificationInfo[] = [];
+      let currentParentId = justResult.rows[0]!.parent_justification_id;
+
+      // Traverse up the tree (max 10 levels to prevent infinite loops)
+      for (let depth = 0; depth < 10 && currentParentId; depth++) {
+        const result = await this.store.query<{
+          id: string;
+          entity_id: string;
+          entity_type: string;
+          name: string;
+          file_path: string;
+          purpose_summary: string;
+          business_value: string;
+          feature_context: string;
+          detailed_description: string | null;
+          tags: string;
+          inferred_from: string;
+          confidence_score: number;
+          confidence_level: string;
+          clarification_pending: boolean;
+          parent_justification_id: string | null;
+          created_at: number;
+          updated_at: number;
+        }>(
+          `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            feature_context, detailed_description, tags, inferred_from, confidence_score,
+            confidence_level, clarification_pending, parent_justification_id, created_at, updated_at] :=
+            *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+              feature_context, detailed_description, tags, inferred_from, confidence_score,
+              confidence_level, clarification_pending, parent_justification_id, created_at, updated_at},
+            id = $parentId`,
+          { parentId: currentParentId }
+        );
+
+        if (result.rows.length === 0) {
+          break;
+        }
+
+        const parent = result.rows[0]!;
+        ancestors.push(this.rowToJustificationInfo(parent));
+        currentParentId = parent.parent_justification_id;
+      }
+
+      return ancestors;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Convert database row (snake_case) to JustificationInfo
    */
   private rowToJustificationInfo(row: {
     id: string;
-    entityId: string;
-    entityType: string;
+    entity_id: string;
+    entity_type: string;
     name: string;
-    filePath: string;
-    purposeSummary: string;
-    businessValue: string;
-    featureContext: string;
-    detailedDescription: string | null;
+    file_path: string;
+    purpose_summary: string;
+    business_value: string;
+    feature_context: string;
+    detailed_description: string | null;
     tags: string;
-    inferredFrom: string;
-    confidenceScore: number;
-    confidenceLevel: string;
-    clarificationPending: boolean;
-    createdAt: number;
-    updatedAt: number;
+    inferred_from: string;
+    confidence_score: number;
+    confidence_level: string;
+    clarification_pending: boolean;
+    created_at: number;
+    updated_at: number;
   }): JustificationInfo {
     let parsedTags: string[] = [];
     try {
@@ -1728,21 +2133,21 @@ export class CozoGraphViewer implements IGraphViewer {
 
     return {
       id: row.id,
-      entityId: row.entityId,
-      entityType: row.entityType,
+      entityId: row.entity_id,
+      entityType: row.entity_type,
       name: row.name,
-      filePath: row.filePath,
-      purposeSummary: row.purposeSummary,
-      businessValue: row.businessValue,
-      featureContext: row.featureContext,
-      detailedDescription: row.detailedDescription ?? "",
+      filePath: row.file_path,
+      purposeSummary: row.purpose_summary,
+      businessValue: row.business_value,
+      featureContext: row.feature_context,
+      detailedDescription: row.detailed_description ?? "",
       tags: parsedTags,
-      inferredFrom: row.inferredFrom,
-      confidenceScore: row.confidenceScore,
-      confidenceLevel: row.confidenceLevel,
-      clarificationPending: row.clarificationPending,
-      createdAt: new Date(row.createdAt),
-      updatedAt: new Date(row.updatedAt),
+      inferredFrom: row.inferred_from,
+      confidenceScore: row.confidence_score,
+      confidenceLevel: row.confidence_level,
+      clarificationPending: row.clarification_pending,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
     };
   }
 }

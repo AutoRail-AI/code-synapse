@@ -58,12 +58,17 @@ export type {
 
 import type { ProjectConfig } from "../../types/index.js";
 import { createParser, type Parser } from "../parser/index.js";
-import { createGraphDatabase, type GraphDatabase } from "../graph/index.js";
+import { CozoGraphStore, type IGraphStore, type GraphDatabase } from "../graph/index.js";
 // Vector storage now handled by CozoDB HNSW indices in GraphDatabase
 import { createEmbeddingService, type EmbeddingService } from "../embeddings/index.js";
 import { ProjectDetector, type DetectedProject } from "./project-detector.js";
 import { FileScanner, type ScanResult } from "./scanner.js";
 import { FileHasher } from "./hasher.js";
+import { IndexerCoordinator } from "./coordinator.js";
+import type { IJustificationService } from "../justification/interfaces/IJustificationService.js";
+import { createLogger } from "../../utils/logger.js";
+
+const logger = createLogger("indexer");
 
 /**
  * Options for the indexer
@@ -73,6 +78,8 @@ export interface IndexerOptions {
   config: ProjectConfig;
   /** Data directory for databases */
   dataDir: string;
+  /** Optional existing graph store to use (avoids creating a new one) */
+  existingStore?: IGraphStore;
 }
 
 /**
@@ -133,23 +140,51 @@ export interface IndexingResult {
 export class Indexer {
   private options: IndexerOptions;
   private parser: Parser;
-  private graphDb: GraphDatabase;
+  private graphStore: IGraphStore;
+  private ownsGraphStore: boolean; // Whether we own the graph store and should close it
   // Vector storage now handled by CozoDB HNSW indices in GraphDatabase
   private embeddingService: EmbeddingService;
   private projectDetector: ProjectDetector;
   private scanner: FileScanner | null = null;
   private hasher: FileHasher;
   private detectedProject: DetectedProject | null = null;
+  private coordinator: IndexerCoordinator | null = null;
+  private justificationService: IJustificationService | null = null;
   private initialized = false;
 
   constructor(options: IndexerOptions) {
     this.options = options;
     this.parser = createParser(options.config);
-    this.graphDb = createGraphDatabase({ dbPath: `${options.dataDir}/graph` });
+    // Use existing store if provided, otherwise create a new CozoGraphStore with migrations enabled
+    if (options.existingStore) {
+      this.graphStore = options.existingStore;
+      this.ownsGraphStore = false;
+    } else {
+      this.graphStore = new CozoGraphStore({
+        path: `${options.dataDir}/cozodb`,
+        engine: "rocksdb",
+        runMigrations: true,
+      });
+      this.ownsGraphStore = true;
+    }
     // Vector storage now handled by CozoDB HNSW indices in GraphDatabase
     this.embeddingService = createEmbeddingService();
     this.projectDetector = new ProjectDetector(options.config.root);
     this.hasher = new FileHasher();
+  }
+
+  /**
+   * Sets the justification service for incremental justification.
+   */
+  setJustificationService(service: IJustificationService): void {
+    this.justificationService = service;
+  }
+
+  /**
+   * Gets the justification service if set.
+   */
+  getJustificationService(): IJustificationService | null {
+    return this.justificationService;
   }
 
   /**
@@ -168,9 +203,16 @@ export class Indexer {
     // Vector storage now handled by CozoDB HNSW indices in GraphDatabase
     await Promise.all([
       this.parser.initialize(),
-      this.graphDb.initialize(),
+      this.graphStore.initialize(),
       this.embeddingService.initialize(),
     ]);
+
+    // Create the coordinator for incremental indexing
+    this.coordinator = new IndexerCoordinator({
+      parser: this.parser as unknown as import("../interfaces/IParser.js").IParser,
+      store: this.graphStore,
+      project: this.detectedProject,
+    });
 
     this.initialized = true;
   }
@@ -183,8 +225,10 @@ export class Indexer {
       return;
     }
 
-    // Vector storage now handled by CozoDB, only close graph database
-    await this.graphDb.close();
+    // Only close the graph store if we own it (didn't receive it from outside)
+    if (this.ownsGraphStore) {
+      await this.graphStore.close();
+    }
 
     this.initialized = false;
   }
@@ -252,27 +296,111 @@ export class Indexer {
 
   /**
    * Indexes a single file (for incremental updates).
+   * Also triggers incremental justification if a justification service is set.
    */
-  async indexFile(_filePath: string): Promise<void> {
+  async indexFile(filePath: string): Promise<void> {
     this.ensureInitialized();
-    // TODO: Implement in V7 (Indexer & Watcher)
-    throw new Error("Not implemented - coming in V7");
+
+    if (!this.coordinator) {
+      throw new Error("Coordinator not initialized");
+    }
+
+    logger.info({ filePath }, "Indexing file incrementally");
+
+    // Index the file using the coordinator
+    const result = await this.coordinator.indexFile(filePath);
+
+    if (!result) {
+      logger.warn({ filePath }, "File not found or could not be indexed");
+      return;
+    }
+
+    if (!result.success) {
+      logger.error({ filePath, error: result.error }, "Failed to index file");
+      throw new Error(result.error || "Failed to index file");
+    }
+
+    logger.info(
+      {
+        filePath,
+        entitiesWritten: result.stats.entitiesWritten,
+        relationshipsWritten: result.stats.relationshipsWritten,
+      },
+      "File indexed successfully"
+    );
+
+    // Trigger incremental justification if service is available
+    if (this.justificationService && result.stats.entitiesWritten > 0) {
+      try {
+        logger.debug({ filePath }, "Triggering incremental justification");
+
+        // Run justification for entities in this file
+        const justifyResult = await this.justificationService.justifyFile(filePath);
+
+        logger.info(
+          {
+            filePath,
+            justified: justifyResult.justified,
+            failed: justifyResult.failed,
+          },
+          "Incremental justification completed"
+        );
+      } catch (justifyError) {
+        // Log but don't fail - justification is optional
+        logger.warn(
+          { filePath, error: justifyError },
+          "Incremental justification failed (non-fatal)"
+        );
+      }
+    }
+  }
+
+  /**
+   * Indexes multiple files (for batch incremental updates).
+   */
+  async indexFiles(filePaths: string[]): Promise<void> {
+    this.ensureInitialized();
+
+    logger.info({ fileCount: filePaths.length }, "Indexing files incrementally");
+
+    const results = await Promise.allSettled(
+      filePaths.map((path) => this.indexFile(path))
+    );
+
+    const failures = results.filter((r) => r.status === "rejected");
+    if (failures.length > 0) {
+      logger.warn(
+        { failedCount: failures.length, totalCount: filePaths.length },
+        "Some files failed to index"
+      );
+    }
   }
 
   /**
    * Removes a file from the index.
    */
-  async removeFile(_filePath: string): Promise<void> {
+  async removeFile(filePath: string): Promise<void> {
     this.ensureInitialized();
-    // TODO: Implement in V7 (Indexer & Watcher)
-    throw new Error("Not implemented - coming in V7");
+
+    if (!this.coordinator) {
+      throw new Error("Coordinator not initialized");
+    }
+
+    logger.info({ filePath }, "Removing file from index");
+
+    const deletedCount = await this.coordinator.removeFile(filePath);
+
+    logger.info({ filePath, deletedCount }, "File removed from index");
   }
 
   /**
    * Gets the underlying graph database.
+   * Returns as GraphDatabase type for compatibility with legacy code.
    */
   getGraphDatabase(): GraphDatabase {
-    return this.graphDb;
+    // CozoGraphStore implements IGraphStore and wraps a GraphDatabase
+    // Cast to unknown first to satisfy TypeScript
+    return this.graphStore as unknown as GraphDatabase;
   }
 
   /**

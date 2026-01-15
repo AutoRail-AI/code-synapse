@@ -83,7 +83,17 @@ export class WriteBehindLedger implements IChangeLedger {
       try {
         await this.batchWriter.flush();
       } catch (error) {
-        logger.error({ error }, "Error during periodic flush");
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(
+          {
+            err: error,
+            errorMessage,
+            errorStack: error instanceof Error ? error.stack : undefined,
+            pendingWriteCount: this.pendingWrites.size,
+          },
+          "Error during periodic ledger flush: %s",
+          errorMessage
+        );
       }
     }, this.config.flushIntervalMs);
   }

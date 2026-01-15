@@ -342,7 +342,7 @@ export class BusinessLogicInferrer {
     const contextWithTruncatedBody = { ...ctx, body: truncatedBody };
 
     // Check if LLM service is ready
-    if (!this.llmService.isReady()) {
+    if (!this.llmService.isReady) {
       logger.warn("LLM service not ready, using fallback");
       return {
         raw: "",

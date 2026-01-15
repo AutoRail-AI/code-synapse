@@ -213,26 +213,132 @@ const SOURCE_PATTERNS: Record<DetectedFramework, string[]> = {
 };
 
 /**
- * Default ignore patterns
+ * Default ignore patterns - comprehensive list of directories and files
+ * that should never be indexed (build outputs, dependencies, caches, etc.)
+ * @public - exported for reuse in justification filtering
  */
-const DEFAULT_IGNORE_PATTERNS = [
+export const DEFAULT_IGNORE_PATTERNS = [
+  // Version control
+  "**/.git/**",
+  "**/.svn/**",
+  "**/.hg/**",
+
+  // Package managers & dependencies
   "**/node_modules/**",
+  "**/bower_components/**",
+  "**/jspm_packages/**",
+  "**/vendor/**",
+  "**/.pnpm/**",
+  "**/.yarn/**",
+
+  // Build outputs
   "**/dist/**",
   "**/build/**",
+  "**/out/**",
+  "**/output/**",
+  "**/.output/**",
+  "**/target/**",
+  "**/bin/**",
+  "**/obj/**",
+
+  // Framework-specific build directories
   "**/.next/**",
   "**/.nuxt/**",
+  "**/.astro/**",
+  "**/.svelte-kit/**",
+  "**/.vercel/**",
+  "**/.netlify/**",
+  "**/.serverless/**",
+
+  // Cache directories
+  "**/.cache/**",
+  "**/cache/**",
+  "**/.parcel-cache/**",
+  "**/.turbo/**",
+  "**/.nx/**",
+  "**/.angular/**",
+  "**/.vite/**",
+  "**/.rollup.cache/**",
+  "**/.webpack/**",
+  "**/.esbuild/**",
+
+  // Test & coverage
   "**/coverage/**",
-  "**/.git/**",
-  "**/vendor/**",
-  "**/*.min.js",
-  "**/*.bundle.js",
-  "**/*.d.ts",
+  "**/.nyc_output/**",
   "**/__tests__/**",
   "**/__mocks__/**",
-  "**/*.test.{ts,tsx,js,jsx}",
-  "**/*.spec.{ts,tsx,js,jsx}",
+  "**/__snapshots__/**",
   "**/test/**",
   "**/tests/**",
+  "**/*.test.{ts,tsx,js,jsx}",
+  "**/*.spec.{ts,tsx,js,jsx}",
+  "**/cypress/**",
+  "**/.playwright/**",
+
+  // IDE & editor
+  "**/.idea/**",
+  "**/.vscode/**",
+  "**/.vs/**",
+  "**/*.swp",
+  "**/*.swo",
+  "**/*~",
+
+  // OS files
+  "**/.DS_Store",
+  "**/Thumbs.db",
+
+  // Temporary & generated files
+  "**/tmp/**",
+  "**/temp/**",
+  "**/.tmp/**",
+  "**/.temp/**",
+  "**/logs/**",
+  "**/*.log",
+
+  // Minified & bundled files
+  "**/*.min.js",
+  "**/*.min.css",
+  "**/*.bundle.js",
+  "**/*.chunk.js",
+
+  // Type declarations (usually generated)
+  "**/*.d.ts",
+
+  // Lock files (not code)
+  "**/package-lock.json",
+  "**/yarn.lock",
+  "**/pnpm-lock.yaml",
+  "**/bun.lockb",
+
+  // Python virtual environments
+  "**/.venv/**",
+  "**/venv/**",
+  "**/__pycache__/**",
+  "**/*.pyc",
+  "**/.pytest_cache/**",
+  "**/site-packages/**",
+
+  // Rust
+  "**/target/debug/**",
+  "**/target/release/**",
+
+  // Go
+  "**/vendor/**",
+
+  // .NET
+  "**/packages/**",
+
+  // Documentation generators
+  "**/docs/_build/**",
+  "**/_site/**",
+  "**/public/**",
+  "**/static/dist/**",
+
+  // Misc
+  "**/.code-synapse/**",
+  "**/CHANGELOG.md",
+  "**/LICENSE*",
+  "**/README.md",
 ];
 
 // =============================================================================
@@ -267,6 +373,11 @@ export class ProjectDetector {
     const packageManager = await this.detectPackageManager();
     const { isMonorepo, workspaces } = this.detectMonorepo(packageJson);
 
+    // Get ignore patterns including .gitignore
+    const baseIgnorePatterns = this.getIgnorePatterns(framework);
+    const gitignorePatterns = await this.parseGitignore();
+    const ignorePatterns = [...new Set([...baseIgnorePatterns, ...gitignorePatterns])];
+
     return {
       rootPath: this.rootPath,
       name: packageJson?.name ?? path.basename(this.rootPath),
@@ -277,7 +388,7 @@ export class ProjectDetector {
       hasTypeScript,
       tsconfigPath,
       sourcePatterns: this.getSourcePatterns(framework, projectType),
-      ignorePatterns: this.getIgnorePatterns(framework),
+      ignorePatterns,
       entryPoints: this.detectEntryPoints(packageJson),
       packageManager,
       isMonorepo,
@@ -475,7 +586,7 @@ export class ProjectDetector {
   }
 
   /**
-   * Gets ignore patterns
+   * Gets ignore patterns for a framework
    */
   private getIgnorePatterns(framework: DetectedFramework): string[] {
     const patterns = [...DEFAULT_IGNORE_PATTERNS];
@@ -491,6 +602,85 @@ export class ProjectDetector {
       case "astro":
         patterns.push("**/.astro/**");
         break;
+    }
+
+    return patterns;
+  }
+
+  /**
+   * Parses .gitignore file and converts patterns to glob patterns
+   */
+  private async parseGitignore(): Promise<string[]> {
+    const gitignorePath = path.join(this.rootPath, ".gitignore");
+
+    if (!(await fileExists(gitignorePath))) {
+      return [];
+    }
+
+    try {
+      const content = await fs.readFile(gitignorePath, "utf-8");
+      return this.convertGitignoreToGlob(content);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Converts gitignore content to glob patterns
+   */
+  private convertGitignoreToGlob(content: string): string[] {
+    const patterns: string[] = [];
+
+    const lines = content.split("\n");
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+
+      // Skip empty lines and comments
+      if (!line || line.startsWith("#")) {
+        continue;
+      }
+
+      // Skip negation patterns (we don't support include patterns)
+      if (line.startsWith("!")) {
+        continue;
+      }
+
+      // Convert gitignore pattern to glob pattern
+      let pattern = line;
+
+      // Remove trailing spaces (unless escaped)
+      pattern = pattern.replace(/(?<!\\)\s+$/, "");
+
+      // If pattern doesn't start with /, it matches anywhere
+      // If it starts with /, it's relative to root
+      if (pattern.startsWith("/")) {
+        // Remove leading / and make it relative to root
+        pattern = pattern.slice(1);
+      } else if (!pattern.startsWith("**/")) {
+        // Pattern can match anywhere in the directory tree
+        pattern = `**/${pattern}`;
+      }
+
+      // Handle directory patterns (ending with /)
+      if (pattern.endsWith("/")) {
+        // Match directory and all contents
+        pattern = `${pattern}**`;
+      } else {
+        // Check if this should match directories
+        // If pattern has no extension and no wildcard at end, also match as directory
+        const hasExtension = /\.[a-zA-Z0-9]+$/.test(pattern);
+        const endsWithWildcard = pattern.endsWith("*");
+
+        if (!hasExtension && !endsWithWildcard) {
+          // Add both file and directory versions
+          patterns.push(pattern);
+          patterns.push(`${pattern}/**`);
+          continue;
+        }
+      }
+
+      patterns.push(pattern);
     }
 
     return patterns;

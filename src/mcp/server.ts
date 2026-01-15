@@ -21,6 +21,20 @@ import type { ProjectConfig } from "../types/index.js";
 import { createIndexer, type Indexer } from "../core/index.js";
 import type { GraphDatabase } from "../core/graph/index.js";
 import { createLogger } from "../utils/logger.js";
+import { getConfigPath, readJson } from "../utils/index.js";
+import {
+  createInitializedLLMService,
+  type LLMService,
+} from "../core/llm/index.js";
+import {
+  createLLMJustificationService,
+  type IJustificationService,
+} from "../core/justification/index.js";
+import {
+  createChangeLedger,
+  createLedgerStorage,
+  type IChangeLedger,
+} from "../core/ledger/index.js";
 import {
   searchCode,
   getFunction,
@@ -30,7 +44,18 @@ import {
   getCallees,
   getDependencies,
   getProjectStats,
+  notifyFileChanged,
+  requestReindex,
+  enhancePrompt,
+  createGenerationContext,
+  type ToolContext,
 } from "./tools.js";
+import {
+  createMCPObserver,
+  type MCPObserverService,
+} from "./observer.js";
+import type { IAdaptiveIndexer } from "../core/adaptive-indexer/interfaces/IAdaptiveIndexer.js";
+import { createFileWatcher, type FileWatcher } from "../core/indexer/watcher.js";
 import {
   getFileResource,
   listFileResources,
@@ -46,10 +71,26 @@ export interface ServerOptions {
   port: number;
   config: ProjectConfig;
   dataDir: string;
+  /** Optional existing graph store to use (avoids creating a new one) */
+  existingStore?: import("../core/graph/index.js").IGraphStore;
 }
 
 let indexer: Indexer | null = null;
 let server: Server | null = null;
+let fileWatcher: FileWatcher | null = null;
+let observer: MCPObserverService | null = null;
+let llmService: LLMService | null = null;
+let justificationService: IJustificationService | null = null;
+let changeLedger: IChangeLedger | null = null;
+
+/**
+ * Extended config that includes LLM settings
+ */
+interface CodeSynapseConfig extends ProjectConfig {
+  llmModel?: string;
+  skipLlm?: boolean;
+  modelProvider?: "local" | "openai" | "anthropic" | "google";
+}
 
 /**
  * Tool definitions for MCP
@@ -183,13 +224,172 @@ export const TOOL_DEFINITIONS = [
       required: [],
     },
   },
+  {
+    name: "notify_file_changed",
+    description: "Notify the knowledge graph about a file change (created, modified, deleted, renamed). Use this after code generation to trigger incremental re-indexing.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        filePath: {
+          type: "string",
+          description: "Path to the changed file",
+        },
+        changeType: {
+          type: "string",
+          enum: ["created", "modified", "deleted", "renamed"],
+          description: "Type of change",
+        },
+        previousPath: {
+          type: "string",
+          description: "Previous path (for renamed files)",
+        },
+        changeDescription: {
+          type: "string",
+          description: "Optional description of what changed",
+        },
+        aiGenerated: {
+          type: "boolean",
+          description: "Whether this change was AI-generated (default: true)",
+        },
+      },
+      required: ["filePath", "changeType"],
+    },
+  },
+  {
+    name: "request_reindex",
+    description: "Request re-indexing of specific files or patterns. Use this to ensure the knowledge graph is up-to-date after bulk changes.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        paths: {
+          type: "array",
+          items: { type: "string" },
+          description: "File paths or glob patterns to re-index",
+        },
+        reason: {
+          type: "string",
+          description: "Reason for re-indexing request",
+        },
+        priority: {
+          type: "string",
+          enum: ["low", "normal", "high", "immediate"],
+          description: "Priority level (default: normal)",
+        },
+      },
+      required: ["paths"],
+    },
+  },
+  {
+    name: "enhance_prompt",
+    description: "Enhance a user prompt with relevant codebase context before code generation. Returns enriched prompt with architectural context, related code, and conventions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        prompt: {
+          type: "string",
+          description: "The user's original prompt",
+        },
+        targetFile: {
+          type: "string",
+          description: "Target file path if known",
+        },
+        taskType: {
+          type: "string",
+          enum: ["create", "modify", "refactor", "fix", "document", "test"],
+          description: "Type of task being performed",
+        },
+        includeContext: {
+          type: "boolean",
+          description: "Include related code context (default: true)",
+        },
+        maxContextTokens: {
+          type: "number",
+          description: "Maximum tokens for context (default: 2000)",
+        },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "create_generation_context",
+    description: "Create justification and context after code generation. Records the generation in the change ledger and triggers business justification for new/modified code.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        originalPrompt: {
+          type: "string",
+          description: "The original prompt used for generation",
+        },
+        affectedFiles: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              filePath: { type: "string" },
+              changeType: { type: "string", enum: ["created", "modified"] },
+              summary: { type: "string" },
+            },
+            required: ["filePath", "changeType"],
+          },
+          description: "List of files affected by the generation",
+        },
+        sessionId: {
+          type: "string",
+          description: "Session ID for tracking related generations",
+        },
+        generationNotes: {
+          type: "string",
+          description: "Additional notes about the generation",
+        },
+      },
+      required: ["originalPrompt", "affectedFiles"],
+    },
+  },
 ];
+
+/**
+ * Options for creating the MCP server with full service integration
+ */
+export interface McpServerOptions {
+  graphStore: GraphDatabase;
+  observer?: MCPObserverService;
+  adaptiveIndexer?: IAdaptiveIndexer;
+  ledger?: IChangeLedger;
+  justificationService?: IJustificationService;
+  indexer?: Indexer;
+}
 
 /**
  * Create and configure the MCP server
  * Exported for testing purposes.
  */
-export function createMcpServer(graphStore: GraphDatabase): Server {
+export function createMcpServer(
+  graphStoreOrOptions: GraphDatabase | McpServerOptions
+): Server {
+  // Handle both old signature (just graphStore) and new signature (options object)
+  const options: McpServerOptions =
+    "graphStore" in graphStoreOrOptions
+      ? graphStoreOrOptions
+      : { graphStore: graphStoreOrOptions };
+
+  const {
+    graphStore,
+    observer,
+    adaptiveIndexer,
+    ledger,
+    justificationService,
+    indexer: indexerRef,
+  } = options;
+
+  // Create tool context for dependency injection
+  const toolContext: ToolContext = {
+    sessionId: `mcp-${Date.now()}`,
+    observer,
+    adaptiveIndexer,
+    justificationService,
+    ledger,
+    indexer: indexerRef,
+  };
   const mcpServer = new Server(
     {
       name: "code-synapse",
@@ -317,6 +517,140 @@ export function createMcpServer(graphStore: GraphDatabase): Server {
 
         case "get_project_stats": {
           const result = await getProjectStats(graphStore);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "notify_file_changed": {
+          // Track this tool call with observer
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("notify_file_changed", argsObj, toolContext.sessionId);
+
+          const result = await notifyFileChanged(
+            graphStore,
+            {
+              filePath: args?.filePath as string,
+              changeType: args?.changeType as
+                | "created"
+                | "modified"
+                | "deleted"
+                | "renamed",
+              previousPath: args?.previousPath as string | undefined,
+              changeDescription: args?.changeDescription as string | undefined,
+              aiGenerated: args?.aiGenerated as boolean | undefined,
+            },
+            toolContext
+          );
+
+          observer?.onToolResult(
+            "notify_file_changed",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "request_reindex": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("request_reindex", argsObj, toolContext.sessionId);
+
+          const result = await requestReindex(
+            graphStore,
+            {
+              filePaths: args?.paths as string[],
+              reason: args?.reason as string | undefined,
+              priority: args?.priority as
+                | "low"
+                | "normal"
+                | "high"
+                | "immediate"
+                | undefined,
+            },
+            toolContext
+          );
+
+          observer?.onToolResult(
+            "request_reindex",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "enhance_prompt": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("enhance_prompt", argsObj, toolContext.sessionId);
+
+          const result = await enhancePrompt(
+            graphStore,
+            {
+              prompt: args?.prompt as string,
+              targetFile: args?.targetFile as string | undefined,
+              taskType: args?.taskType as
+                | "create"
+                | "modify"
+                | "refactor"
+                | "fix"
+                | "document"
+                | "test"
+                | undefined,
+              includeContext: args?.includeContext as boolean | undefined,
+              maxContextTokens: args?.maxContextTokens as number | undefined,
+            },
+            toolContext
+          );
+
+          observer?.onToolResult(
+            "enhance_prompt",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "create_generation_context": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("create_generation_context", argsObj, toolContext.sessionId);
+
+          const result = await createGenerationContext(
+            graphStore,
+            {
+              originalPrompt: args?.originalPrompt as string,
+              affectedFiles: args?.affectedFiles as Array<{
+                filePath: string;
+                changeType: "created" | "modified";
+                summary?: string;
+              }>,
+              sessionId: args?.sessionId as string | undefined,
+              generationNotes: args?.generationNotes as string | undefined,
+            },
+            toolContext
+          );
+
+          observer?.onToolResult(
+            "create_generation_context",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
@@ -471,14 +805,15 @@ export function createMcpServer(graphStore: GraphDatabase): Server {
  * Start the MCP server
  */
 export async function startServer(options: ServerOptions): Promise<void> {
-  const { config, dataDir } = options;
+  const { config, dataDir, existingStore } = options;
 
   logger.info({ dataDir }, "Starting MCP server");
 
-  // Initialize the indexer
+  // Initialize the indexer, optionally with an existing store to share connections
   indexer = createIndexer({
     config,
     dataDir,
+    existingStore,
   });
 
   await indexer.initialize();
@@ -486,8 +821,128 @@ export async function startServer(options: ServerOptions): Promise<void> {
   // Get the graph database from the indexer
   const graphStore = indexer.getGraphDatabase();
 
-  // Create MCP server
-  server = createMcpServer(graphStore);
+  // Initialize the MCP observer for tracking queries and changes
+  observer = createMCPObserver();
+  logger.debug("MCP observer initialized");
+
+  // Load extended config to get LLM settings
+  const configPath = getConfigPath(config.root);
+  const extendedConfig = readJson<CodeSynapseConfig>(configPath);
+  const skipLlm = extendedConfig?.skipLlm ?? false;
+  const modelProvider = extendedConfig?.modelProvider ?? "local";
+  const modelId = extendedConfig?.llmModel ?? "qwen2.5-coder-3b";
+
+  // Initialize LLM service if enabled and local provider
+  if (!skipLlm && modelProvider === "local") {
+    try {
+      logger.info({ modelId }, "Initializing LLM service");
+      llmService = await createInitializedLLMService({ modelId });
+      logger.info({ modelId }, "LLM service initialized");
+    } catch (llmError) {
+      logger.warn(
+        { error: llmError, modelId },
+        "Failed to initialize LLM service - justifications will use code analysis only"
+      );
+    }
+  } else if (skipLlm) {
+    logger.info("LLM service disabled by configuration");
+  } else {
+    logger.info(
+      { modelProvider },
+      "Non-local model provider - LLM service not available for MCP server"
+    );
+  }
+
+  // Initialize justification service
+  // This works with or without LLM - falls back to code analysis
+  justificationService = createLLMJustificationService(
+    graphStore as unknown as import("../core/interfaces/IGraphStore.js").IGraphStore,
+    llmService ?? undefined
+  );
+  await justificationService.initialize();
+  logger.info("Justification service initialized");
+
+  // Set justification service on indexer for incremental justification
+  indexer.setJustificationService(justificationService);
+  logger.debug("Justification service attached to indexer");
+
+  // Initialize change ledger
+  const ledgerStorage = createLedgerStorage(graphStore);
+  changeLedger = createChangeLedger(ledgerStorage, {
+    memoryCacheSize: 10000,
+    persistToDisk: true,
+    maxBatchSize: 100,
+    flushIntervalMs: 5000,
+    retentionDays: 30,
+    enableSubscriptions: true,
+  });
+  await changeLedger.initialize();
+  logger.info("Change ledger initialized");
+
+  // Create MCP server with full service integration
+  server = createMcpServer({
+    graphStore,
+    observer,
+    adaptiveIndexer: undefined, // TODO: Wire up adaptive indexer
+    ledger: changeLedger,
+    justificationService,
+    indexer,
+  });
+
+  // Start file watcher for automatic incremental indexing
+  const project = indexer.getProject();
+  if (project) {
+    fileWatcher = createFileWatcher({
+      project,
+      debounceMs: 500,
+      onBatch: async (batch) => {
+        logger.info(
+          {
+            filesToUpdate: batch.filesToUpdate.length,
+            filesToRemove: batch.filesToRemove.length,
+          },
+          "File changes detected"
+        );
+
+        // Log events for debugging
+        for (const event of batch.events) {
+          logger.debug(
+            { type: event.type, file: event.filePath },
+            "File change event"
+          );
+        }
+
+        // Index updated files
+        for (const filePath of batch.filesToUpdate) {
+          try {
+            await indexer?.indexFile(filePath);
+            logger.debug({ filePath }, "Indexed file");
+          } catch (fileError) {
+            logger.warn({ filePath, error: fileError }, "Failed to index file");
+          }
+        }
+
+        // Remove deleted files (when Indexer supports it)
+        for (const filePath of batch.filesToRemove) {
+          try {
+            await indexer?.removeFile(filePath);
+            logger.debug({ filePath }, "Removed file from index");
+          } catch (fileError) {
+            logger.warn({ filePath, error: fileError }, "Failed to remove file");
+          }
+        }
+      },
+      onError: (error) => {
+        logger.error({ error }, "File watcher error");
+      },
+      onReady: () => {
+        logger.info("File watcher ready and watching for changes");
+      },
+    });
+
+    await fileWatcher.start();
+    logger.info("File watcher started for incremental indexing");
+  }
 
   // Use stdio transport for MCP communication
   const transport = new StdioServerTransport();
@@ -501,6 +956,37 @@ export async function startServer(options: ServerOptions): Promise<void> {
  */
 export async function stopServer(): Promise<void> {
   logger.info("Stopping MCP server");
+
+  // Stop file watcher first
+  if (fileWatcher) {
+    await fileWatcher.stop();
+    fileWatcher = null;
+    logger.debug("File watcher stopped");
+  }
+
+  // Clean up observer
+  if (observer) {
+    observer = null;
+    logger.debug("MCP observer cleaned up");
+  }
+
+  // Shutdown change ledger (flushes pending entries)
+  if (changeLedger) {
+    await changeLedger.shutdown();
+    changeLedger = null;
+    logger.debug("Change ledger shut down");
+  }
+
+  // Close justification service
+  if (justificationService) {
+    await justificationService.close();
+    justificationService = null;
+    logger.debug("Justification service closed");
+  }
+
+  // Note: LLM service doesn't need explicit cleanup
+  // but clear the reference
+  llmService = null;
 
   if (server) {
     await server.close();

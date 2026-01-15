@@ -416,11 +416,23 @@ The codebase uses explicit interface contracts for testability and modularity:
 
 **Phase Details:**
 
-1. **Scanning**: ProjectDetector analyzes package.json/tsconfig.json, FileScanner uses fast-glob to find source files
+1. **Scanning**: ProjectDetector analyzes package.json/tsconfig.json, reads `.gitignore`, combines 90+ default ignore patterns with gitignore rules, FileScanner uses fast-glob to find source files
 2. **Parsing**: TypeScriptParser loads tree-sitter WASM, walks AST to extract functions, classes, interfaces
 3. **Extraction**: EntityPipeline creates unique IDs, extracts relationships (CONTAINS, CALLS, IMPORTS, etc.)
 4. **Justification**: Local LLM infers business purpose, feature context, and value for each entity
 5. **Writing**: GraphWriter batches entities and justifications into CozoDB transactions atomically
+
+**File Filtering:**
+
+The scanner uses three layers of filtering to exclude non-source files:
+
+| Layer | Source | Examples |
+|-------|--------|----------|
+| **Default (90+ patterns)** | Built-in | `node_modules/`, `dist/`, `build/`, `.cache/`, `coverage/` |
+| **Gitignore** | `.gitignore` file | Custom project exclusions, auto-converted to glob format |
+| **Framework-specific** | Detected framework | `.next/` (Next.js), `.nuxt/` (Nuxt), `.astro/` (Astro) |
+
+Patterns from `.gitignore` are converted: `node_modules` → `**/node_modules/**`, `/build` → `build/**`, `*.log` → `**/*.log`
 
 ### Query Flow (Hybrid Search)
 
@@ -674,6 +686,52 @@ code-synapse config --setup
 # Command-line configuration
 code-synapse config --provider openai --api-key sk-xxx
 ```
+
+### Dynamic Model Switching
+
+Models can be switched at any time without affecting indexed data:
+
+```bash
+# Change default provider
+code-synapse config --provider anthropic
+
+# One-off provider override (doesn't change config)
+code-synapse justify -p openai --model-id gpt-4o
+
+# Switch back to local for privacy
+code-synapse config --provider local --model balanced
+```
+
+**Hybrid Strategy Pattern:**
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Optimal Model Usage Strategy                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   Initial Indexing          Day-to-Day Operations                    │
+│   ─────────────────         ────────────────────                    │
+│                                                                      │
+│   ┌─────────────────┐       ┌─────────────────┐                     │
+│   │   Cloud Model   │       │   Local Model   │                     │
+│   │  (Claude 3.5)   │       │  (Qwen 3B)      │                     │
+│   │                 │       │                 │                     │
+│   │  • High quality │       │  • Privacy      │                     │
+│   │  • One-time cost│       │  • Zero cost    │                     │
+│   │  • Best accuracy│       │  • Offline      │                     │
+│   └────────┬────────┘       └────────┬────────┘                     │
+│            │                         │                              │
+│            └─────────┬───────────────┘                              │
+│                      │                                              │
+│            ┌─────────▼─────────┐                                    │
+│            │  Knowledge Graph  │                                    │
+│            │  (Justifications  │                                    │
+│            │   persisted)      │                                    │
+│            └───────────────────┘                                    │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+This pattern maximizes initial quality while maintaining privacy and cost efficiency for ongoing development.
 
 ### Inference Features
 

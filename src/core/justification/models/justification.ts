@@ -33,7 +33,8 @@ export type JustificationSource =
   | "propagated_down" // Inherited from parent context
   | "propagated_up" // Aggregated from children
   | "code_comment" // Extracted from JSDoc/docstring
-  | "file_name"; // Inferred from naming conventions
+  | "file_name" // Inferred from naming conventions
+  | "code_pattern"; // Inferred from trivial code patterns (getters/setters/etc)
 
 /**
  * Confidence levels for justification accuracy

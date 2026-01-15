@@ -188,7 +188,17 @@ export class FileWatcher {
     this.watcher.on("unlink", (path) => this.handleEvent("unlink", path));
 
     this.watcher.on("error", (error: unknown) => {
-      logger.error({ error }, "Watcher error");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(
+        {
+          err: error,
+          errorMessage,
+          errorStack: error instanceof Error ? (error as Error).stack : undefined,
+          rootPath: this.project.rootPath,
+        },
+        "File watcher error: %s",
+        errorMessage
+      );
       this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
     });
 
@@ -304,7 +314,17 @@ export class FileWatcher {
 
     this.debounceTimer = setTimeout(() => {
       this.processBatch().catch((error) => {
-        logger.error({ error }, "Error processing batch");
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(
+          {
+            err: error,
+            errorMessage,
+            errorStack: error instanceof Error ? error.stack : undefined,
+            bufferedEvents: this.eventBuffer.length,
+          },
+          "Error processing file watcher batch: %s",
+          errorMessage
+        );
         this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
       });
     }, delayMs);

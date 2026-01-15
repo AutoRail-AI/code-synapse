@@ -36,7 +36,8 @@
   ],
   "scripts": {
     "dev": "tsc --watch",
-    "build": "tsc",
+    "build": "tsc && pnpm build:ui",
+    "build:ui": "cd src/viewer/ui/app && pnpm build && cp -r ../public ../../../../dist/viewer/ui/",
     "start": "node dist/cli/index.js",
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",
@@ -45,6 +46,9 @@
     "test:ci": "vitest --exclude 'src/core/__tests__/*.integration.test.ts' --exclude 'src/mcp/__tests__/tools.test.ts' --exclude 'src/viewer/__tests__/viewer.integration.test.ts' --exclude 'src/core/graph-builder/__tests__/*.test.ts' --exclude 'src/core/indexer/__tests__/coordinator.test.ts' --exclude 'src/core/interfaces/__tests__/IGraphStore.contract.test.ts' --exclude 'src/core/interfaces/__tests__/integration.smoke.test.ts'"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@clack/prompts": "^0.11.0",
+    "@google/generative-ai": "^0.24.1",
     "@huggingface/transformers": "^3.5.1",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@tree-sitter-grammars/tree-sitter-toml": "^0.7.0",
@@ -54,7 +58,9 @@
     "commander": "^14.0.2",
     "cozo-node": "^0.7.6",
     "fast-glob": "^3.3.3",
+    "minimatch": "^10.1.1",
     "node-llama-cpp": "^3.14.5",
+    "openai": "^6.16.0",
     "ora": "^9.0.0",
     "pino": "^10.1.0",
     "tree-sitter-bash": "^0.25.1",
@@ -95,5 +101,38 @@
   "packageManager": "pnpm@10.28.0",
   "engines": {
     "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "cozo-node",
+      "onnxruntime-node",
+      "node-llama-cpp",
+      "esbuild",
+      "sharp",
+      "@tree-sitter-grammars/tree-sitter-toml",
+      "@tree-sitter-grammars/tree-sitter-yaml",
+      "tree-sitter-bash",
+      "tree-sitter-c",
+      "tree-sitter-c-sharp",
+      "tree-sitter-cpp",
+      "tree-sitter-dart",
+      "tree-sitter-elixir",
+      "tree-sitter-go",
+      "tree-sitter-haskell",
+      "tree-sitter-java",
+      "tree-sitter-javascript",
+      "tree-sitter-json",
+      "tree-sitter-kotlin",
+      "tree-sitter-lua",
+      "tree-sitter-php",
+      "tree-sitter-python",
+      "tree-sitter-ruby",
+      "tree-sitter-rust",
+      "tree-sitter-scala",
+      "tree-sitter-swift",
+      "tree-sitter-typescript",
+      "tree-sitter-cli",
+      "protobufjs"
+    ]
   }
 }

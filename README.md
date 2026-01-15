@@ -382,13 +382,12 @@ code-synapse --viewer-port 3201   # Use specific viewer port
 code-synapse --debug              # Enable debug logging
 code-synapse --skip-index         # Skip indexing step
 code-synapse --skip-justify       # Skip business justification
-code-synapse --skip-setup         # Skip interactive setup wizard
 code-synapse --justify-only       # Run only justification (skip indexing)
 code-synapse --skip-viewer        # Skip web viewer
 code-synapse -m balanced          # Set LLM model preset
 ```
 
-**Interactive Setup:** When running on a new project, Code-Synapse automatically launches an interactive wizard to configure your model provider (local or cloud) and API keys. Use `--skip-setup` to bypass this.
+**Defaults:** On first run, Code-Synapse uses recommended settings (local provider, Qwen 2.5 Coder 3B). To configure cloud providers, run `code-synapse config --setup`.
 
 **Options:**
 
@@ -399,7 +398,6 @@ code-synapse -m balanced          # Set LLM model preset
 | `-d, --debug` | Enable debug logging |
 | `--skip-index` | Skip the indexing step |
 | `--skip-justify` | Skip business justification (LLM inference) |
-| `--skip-setup` | Skip interactive setup wizard |
 | `--justify-only` | Run only justification (assumes already indexed) |
 | `-m, --model <preset>` | LLM model preset: `fastest`, `minimal`, `balanced`, `quality`, `maximum` |
 | `--skip-viewer` | Skip starting the Web Viewer |
@@ -454,7 +452,7 @@ code-synapse config --provider openai
 
 ### Justify Command Options
 
-The `justify` command analyzes code and infers business purpose using a local LLM:
+The `justify` command analyzes code and infers business purpose using LLM inference:
 
 ```bash
 code-synapse justify                  # Justify all code entities
@@ -464,14 +462,47 @@ code-synapse justify --file src/api.ts # Justify a specific file
 code-synapse justify --skip-llm       # Use code analysis only (no LLM)
 code-synapse justify -m quality       # Use higher quality model
 code-synapse justify --force          # Re-justify all entities
+code-synapse justify -p anthropic     # Override provider for this run
+code-synapse justify --model-id gpt-4o # Override model for this run
 ```
 
 **What it does:**
 - Analyzes code structure (names, paths, doc comments)
-- Uses local LLM to infer: purpose, business value, feature area
+- Uses LLM to infer: purpose, business value, feature area
 - Propagates context up/down the hierarchy (file → class → method)
 - Generates clarification questions for low-confidence entities
 - Stores justifications in the knowledge graph
+
+### 💡 Pro Tip: Hybrid Model Strategy
+
+Use a **powerful cloud model for initial indexing** to get high-quality justifications, then **switch to a local model** for ongoing operations to maintain privacy and reduce costs:
+
+```bash
+# Step 1: Initial justification with powerful cloud model
+export ANTHROPIC_API_KEY=sk-xxx
+code-synapse justify -p anthropic --model-id claude-3-5-sonnet
+
+# Step 2: Switch to local model for privacy
+code-synapse config --provider local --model balanced
+
+# Future runs use local model (fast, free, private)
+code-synapse justify --force  # Only re-justify changed files
+```
+
+**Why this works:**
+- **Initial indexing** benefits from the highest quality model (better accuracy)
+- **Incremental updates** only need to justify new/changed entities (faster)
+- **Local model** keeps subsequent code private (no API calls)
+- **Cost savings** - cloud API only used once during initial setup
+
+**Alternative: One-off cloud usage without changing config:**
+```bash
+# Temporarily use cloud provider for specific files
+code-synapse justify -p openai --file src/core/critical-logic.ts
+
+# Your config still uses local model for everything else
+code-synapse justify  # Uses local model from config
+```
 
 ---
 
@@ -567,6 +598,43 @@ Embeddings (ONNX) → Vector Index (HNSW)
 3. **EXTRACT** - Extract functions, classes, relationships
 4. **JUSTIFY** - Infer business purpose using local LLM
 5. **WRITE** - Persist to CozoDB graph database
+
+### Smart File Filtering
+
+Code-Synapse intelligently skips files that shouldn't be indexed, combining default patterns with your project's `.gitignore`:
+
+**How it works:**
+1. **Default Patterns** - Built-in list of 90+ patterns for common exclusions
+2. **Gitignore Support** - Automatically parses `.gitignore` and converts patterns to glob format
+3. **Framework Detection** - Adds framework-specific exclusions (Next.js, Nuxt, Astro, etc.)
+
+**Categories of excluded files:**
+
+| Category | Examples |
+|----------|----------|
+| **Dependencies** | `node_modules/`, `vendor/`, `bower_components/`, `.pnpm/`, `.yarn/` |
+| **Build Outputs** | `dist/`, `build/`, `out/`, `target/`, `bin/`, `obj/` |
+| **Framework Caches** | `.next/`, `.nuxt/`, `.astro/`, `.svelte-kit/`, `.vercel/` |
+| **Tool Caches** | `.cache/`, `.turbo/`, `.nx/`, `.parcel-cache/`, `.vite/` |
+| **Test/Coverage** | `coverage/`, `__tests__/`, `__mocks__/`, `*.test.ts`, `*.spec.js` |
+| **Version Control** | `.git/`, `.svn/`, `.hg/` |
+| **IDE/Editor** | `.idea/`, `.vscode/`, `.vs/`, `*.swp` |
+| **Virtual Environments** | `.venv/`, `venv/`, `__pycache__/`, `site-packages/` |
+| **Language-Specific** | Rust `target/`, Go `vendor/`, .NET `packages/` |
+| **Generated Files** | `*.min.js`, `*.bundle.js`, `*.d.ts`, lock files |
+| **Temporary** | `tmp/`, `temp/`, `logs/`, `*.log` |
+| **OS Files** | `.DS_Store`, `Thumbs.db` |
+
+**Gitignore Pattern Conversion:**
+```
+# .gitignore pattern        →  Glob pattern used
+node_modules                →  **/node_modules, **/node_modules/**
+/build                      →  build, build/**
+*.log                       →  **/*.log
+dist/                       →  **/dist/**
+```
+
+This ensures Code-Synapse only indexes your actual source code, not generated files, dependencies, or build artifacts.
 
 ---
 

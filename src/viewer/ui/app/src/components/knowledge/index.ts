@@ -1,0 +1,1 @@
+export { KnowledgeView } from './KnowledgeView';

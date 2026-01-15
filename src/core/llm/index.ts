@@ -44,6 +44,18 @@ export {
   type GraphRAGConfig,
 } from "./graph-rag-summarizer.js";
 
+// API-based LLM Service (Anthropic, OpenAI, Google)
+export {
+  APILLMService,
+  createAPILLMService,
+  createInitializedAPILLMService,
+  type APIProvider,
+  type APILLMServiceConfig,
+} from "./api-llm-service.js";
+
+// LLM Service Interface
+export type { ILLMService } from "./interfaces/ILLMService.js";
+
 // Model Registry and Selection
 export {
   MODEL_REGISTRY,
@@ -70,3 +82,24 @@ export {
   type ModelResolution,
   type ModelPreset,
 } from "./models.js";
+
+// Model Configurations (context windows, rate limits, pricing)
+export {
+  ALL_MODELS,
+  ANTHROPIC_MODELS,
+  OPENAI_MODELS,
+  GOOGLE_MODELS,
+  LOCAL_MODELS,
+  getModelConfig,
+  getContextWindow,
+  getRecommendedBatchSize,
+  calculateOptimalBatchSize,
+  getModelsByProvider,
+  getDefaultModelForProvider,
+  getRateLimits,
+  isLocalModel,
+  isApiModel,
+  type ModelConfig,
+  type ModelRateLimits,
+  type ModelPricing,
+} from "./model-configs.js";

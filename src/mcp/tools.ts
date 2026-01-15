@@ -739,3 +739,522 @@ export async function getProjectStats(store: GraphDatabase): Promise<{
     variables: variablesResult[0]?.["count(id)"] ?? 0,
   };
 }
+
+// =============================================================================
+// Change Notification Tools
+// =============================================================================
+
+export interface NotifyFileChangedInput {
+  /** File path that was changed */
+  filePath: string;
+  /** Type of change */
+  changeType: "created" | "modified" | "deleted" | "renamed";
+  /** Previous file path (for renames) */
+  previousPath?: string;
+  /** Brief description of what changed */
+  changeDescription?: string;
+  /** Whether this was AI-generated code */
+  aiGenerated?: boolean;
+}
+
+export interface NotifyFileChangedResult {
+  acknowledged: boolean;
+  reindexQueued: boolean;
+  message: string;
+}
+
+export interface RequestReindexInput {
+  /** File paths to reindex */
+  filePaths?: string[];
+  /** Entity IDs to reindex */
+  entityIds?: string[];
+  /** Priority level */
+  priority?: "low" | "normal" | "high" | "immediate";
+  /** Reason for reindex request */
+  reason?: string;
+}
+
+export interface RequestReindexResult {
+  requestId: string;
+  queued: number;
+  message: string;
+}
+
+// =============================================================================
+// Prompt Enhancement Tools
+// =============================================================================
+
+export interface EnhancePromptInput {
+  /** Original user prompt */
+  prompt: string;
+  /** Target file path (if known) */
+  targetFile?: string;
+  /** Type of task */
+  taskType?: "create" | "modify" | "refactor" | "fix" | "document" | "test";
+  /** Include related code context */
+  includeContext?: boolean;
+  /** Maximum context tokens to include */
+  maxContextTokens?: number;
+}
+
+export interface EnhancePromptResult {
+  /** Enhanced prompt with context */
+  enhancedPrompt: string;
+  /** Context that was added */
+  addedContext: {
+    relatedFiles: string[];
+    relatedEntities: Array<{ name: string; type: string; filePath: string }>;
+    projectPatterns: string[];
+    relevantJustifications: string[];
+  };
+  /** Suggestions for the AI */
+  suggestions: string[];
+}
+
+export interface CreateGenerationContextInput {
+  /** The prompt that was used */
+  originalPrompt: string;
+  /** Files that were generated/modified */
+  affectedFiles: Array<{
+    filePath: string;
+    changeType: "created" | "modified";
+    summary?: string;
+  }>;
+  /** Session ID for tracking */
+  sessionId?: string;
+  /** Additional context about the generation */
+  generationNotes?: string;
+}
+
+export interface CreateGenerationContextResult {
+  /** Unique context ID for tracking */
+  contextId: string;
+  /** Generated justification */
+  justification: {
+    summary: string;
+    businessValue: string;
+    impactedAreas: string[];
+    tags: string[];
+  };
+  /** Ledger entry ID */
+  ledgerEntryId?: string;
+  /** Files queued for reindexing */
+  reindexQueued: string[];
+}
+
+/**
+ * Notify that a file was changed (by AI agent or user)
+ */
+export async function notifyFileChanged(
+  _store: GraphDatabase,
+  input: NotifyFileChangedInput,
+  context: ToolContext
+): Promise<NotifyFileChangedResult> {
+  const { filePath, changeType, previousPath, changeDescription, aiGenerated } = input;
+  logger.info({ filePath, changeType, aiGenerated }, "File change notification received");
+
+  // Notify the observer
+  if (context.observer) {
+    if (changeType === "deleted") {
+      // For deletions, we just log it
+      context.observer.onCodeGenerated(filePath, "", context.sessionId, `Deleted: ${changeDescription || ""}`);
+    } else {
+      context.observer.onCodeGenerated(
+        filePath,
+        "", // Content will be read during reindex
+        context.sessionId,
+        changeDescription || `${changeType}: ${previousPath ? `renamed from ${previousPath}` : ""}`
+      );
+    }
+  }
+
+  // Queue for reindexing
+  let reindexQueued = false;
+  if (context.adaptiveIndexer && changeType !== "deleted") {
+    try {
+      await context.adaptiveIndexer.observeChange({
+        changeType,
+        filePath,
+        previousFilePath: previousPath,
+        sessionId: context.sessionId,
+        source: aiGenerated ? "ai-generated" : "user-edit",
+      });
+      reindexQueued = true;
+    } catch (err) {
+      logger.error({ err }, "Failed to queue reindex");
+    }
+  }
+
+  return {
+    acknowledged: true,
+    reindexQueued,
+    message: `File ${changeType} notification received for ${filePath}`,
+  };
+}
+
+/**
+ * Request reindexing of specific files or entities
+ */
+export async function requestReindex(
+  _store: GraphDatabase,
+  input: RequestReindexInput,
+  context: ToolContext
+): Promise<RequestReindexResult> {
+  const { filePaths = [], entityIds = [], priority = "normal", reason } = input;
+  logger.info({ filePaths, entityIds, priority }, "Reindex request received");
+
+  const requestId = `reindex_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  let queued = 0;
+
+  if (context.adaptiveIndexer) {
+    // Queue file-based reindex requests
+    for (const filePath of filePaths) {
+      try {
+        await context.adaptiveIndexer.observeChange({
+          changeType: "modified",
+          filePath,
+          sessionId: context.sessionId,
+          source: "user-edit",
+        });
+        queued++;
+      } catch (err) {
+        logger.error({ err, filePath }, "Failed to queue file reindex");
+      }
+    }
+
+    // Queue entity-based reindex requests
+    if (entityIds.length > 0) {
+      try {
+        await context.adaptiveIndexer.requestReindex(
+          entityIds,
+          reason ? "user-feedback" : "query-correlation",
+          priority === "immediate" ? "immediate" : priority === "high" ? "high" : "normal"
+        );
+        queued += entityIds.length;
+      } catch (err) {
+        logger.error({ err }, "Failed to queue entity reindex");
+      }
+    }
+  }
+
+  return {
+    requestId,
+    queued,
+    message: `Queued ${queued} items for reindexing`,
+  };
+}
+
+/**
+ * Enhance a user prompt with relevant codebase context
+ */
+export async function enhancePrompt(
+  store: GraphDatabase,
+  input: EnhancePromptInput,
+  context: ToolContext
+): Promise<EnhancePromptResult> {
+  const {
+    prompt,
+    targetFile,
+    taskType = "modify",
+    includeContext = true,
+    maxContextTokens = 2000,
+  } = input;
+  logger.info({ promptLength: prompt.length, targetFile, taskType }, "Enhancing prompt");
+
+  const relatedFiles: string[] = [];
+  const relatedEntities: Array<{ name: string; type: string; filePath: string }> = [];
+  const projectPatterns: string[] = [];
+  const relevantJustifications: string[] = [];
+  const suggestions: string[] = [];
+
+  // Extract keywords from prompt for search
+  const keywords = extractKeywords(prompt);
+
+  if (includeContext) {
+    // 1. Find related files based on target file dependencies
+    if (targetFile) {
+      try {
+        const deps = await getDependencies(store, { filePath: targetFile });
+        if (deps) {
+          relatedFiles.push(...deps.imports.map((i) => i.from).slice(0, 5));
+          relatedFiles.push(...deps.importedBy.map((i) => i.from).slice(0, 3));
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+
+    // 2. Search for related entities based on keywords
+    for (const keyword of keywords.slice(0, 3)) {
+      try {
+        const results = await searchCode(store, { query: keyword, limit: 5 });
+        for (const result of results) {
+          if (!relatedEntities.find((e) => e.name === result.name)) {
+            relatedEntities.push({
+              name: result.name,
+              type: result.type,
+              filePath: result.filePath || "",
+            });
+          }
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+
+    // 3. Get justifications for related entities if available
+    if (context.justificationService && relatedEntities.length > 0) {
+      for (const entity of relatedEntities.slice(0, 5)) {
+        try {
+          // Query justification from database
+          const justQuery = `
+            ?[purpose_summary] :=
+              *justification{entity_id, purpose_summary},
+              *function{id: entity_id, name: $name}
+            :limit 1
+          `;
+          const justResult = await store.query<{ purpose_summary: string }>(justQuery, {
+            name: entity.name,
+          });
+          if (justResult.length > 0 && justResult[0]?.purpose_summary) {
+            relevantJustifications.push(`${entity.name}: ${justResult[0].purpose_summary}`);
+          }
+        } catch {
+          // Ignore errors
+        }
+      }
+    }
+
+    // 4. Detect project patterns
+    try {
+      const stats = await getProjectStats(store);
+      if (stats.classes > stats.functions * 0.5) {
+        projectPatterns.push("Object-oriented style with heavy class usage");
+      }
+      if (stats.interfaces > 10) {
+        projectPatterns.push("Interface-driven design");
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  // Generate suggestions based on task type
+  switch (taskType) {
+    case "create":
+      suggestions.push("Consider following existing naming conventions in the codebase");
+      suggestions.push("Add appropriate exports if this will be used by other modules");
+      break;
+    case "modify":
+      suggestions.push("Ensure backward compatibility if this is a public API");
+      suggestions.push("Update related tests if behavior changes");
+      break;
+    case "refactor":
+      suggestions.push("Preserve existing behavior while improving structure");
+      suggestions.push("Consider impact on dependent code");
+      break;
+    case "fix":
+      suggestions.push("Add a test case that reproduces the bug");
+      suggestions.push("Check for similar patterns that might have the same issue");
+      break;
+    case "test":
+      suggestions.push("Cover edge cases and error conditions");
+      suggestions.push("Follow existing test patterns in the codebase");
+      break;
+    case "document":
+      suggestions.push("Include usage examples");
+      suggestions.push("Document parameters and return values");
+      break;
+  }
+
+  // Build enhanced prompt
+  let enhancedPrompt = prompt;
+
+  if (includeContext && (relatedEntities.length > 0 || relevantJustifications.length > 0)) {
+    const contextParts: string[] = [];
+
+    if (relatedFiles.length > 0) {
+      contextParts.push(`Related files: ${relatedFiles.slice(0, 5).join(", ")}`);
+    }
+
+    if (relatedEntities.length > 0) {
+      const entityList = relatedEntities
+        .slice(0, 5)
+        .map((e) => `${e.name} (${e.type})`)
+        .join(", ");
+      contextParts.push(`Related code: ${entityList}`);
+    }
+
+    if (relevantJustifications.length > 0) {
+      contextParts.push(`Context:\n${relevantJustifications.slice(0, 3).join("\n")}`);
+    }
+
+    if (projectPatterns.length > 0) {
+      contextParts.push(`Project style: ${projectPatterns.join("; ")}`);
+    }
+
+    // Estimate tokens and truncate if needed
+    const contextText = contextParts.join("\n\n");
+    const estimatedTokens = Math.ceil(contextText.length / 4);
+
+    if (estimatedTokens <= maxContextTokens) {
+      enhancedPrompt = `${prompt}\n\n---\nCodebase Context:\n${contextText}`;
+    } else {
+      // Truncate to fit
+      const truncatedContext = contextText.substring(0, maxContextTokens * 4);
+      enhancedPrompt = `${prompt}\n\n---\nCodebase Context:\n${truncatedContext}...`;
+    }
+  }
+
+  return {
+    enhancedPrompt,
+    addedContext: {
+      relatedFiles,
+      relatedEntities,
+      projectPatterns,
+      relevantJustifications,
+    },
+    suggestions,
+  };
+}
+
+/**
+ * Create generation context after code generation for ledger and justification
+ */
+export async function createGenerationContext(
+  store: GraphDatabase,
+  input: CreateGenerationContextInput,
+  context: ToolContext
+): Promise<CreateGenerationContextResult> {
+  const { originalPrompt, affectedFiles, sessionId, generationNotes } = input;
+  logger.info(
+    { fileCount: affectedFiles.length, sessionId },
+    "Creating generation context"
+  );
+
+  const contextId = `gen_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const reindexQueued: string[] = [];
+
+  // Generate justification summary
+  const fileSummaries = affectedFiles
+    .map((f) => `${f.changeType}: ${f.filePath}${f.summary ? ` - ${f.summary}` : ""}`)
+    .join("\n");
+
+  const justification = {
+    summary: `Code generation based on: "${originalPrompt.substring(0, 100)}${originalPrompt.length > 100 ? "..." : ""}"`,
+    businessValue: `Implements user request: ${originalPrompt.substring(0, 200)}`,
+    impactedAreas: affectedFiles.map((f) => f.filePath),
+    tags: ["ai-generated", ...extractKeywords(originalPrompt).slice(0, 5)],
+  };
+
+  // Log to ledger
+  let ledgerEntryId: string | undefined;
+  if (context.ledger) {
+    try {
+      const { createLedgerEntry } = await import("../core/ledger/models/ledger-events.js");
+      const entry = createLedgerEntry(
+        "index:file:modified",
+        "mcp-result-processor",
+        justification.summary,
+        {
+          impactedFiles: affectedFiles.map((f) => f.filePath),
+          metadata: {
+            originalPrompt,
+            generationNotes,
+            fileSummaries,
+            contextId,
+          },
+          sessionId: sessionId || context.sessionId,
+        }
+      );
+      await context.ledger.append(entry);
+      ledgerEntryId = entry.id;
+    } catch (err) {
+      logger.error({ err }, "Failed to log to ledger");
+    }
+  }
+
+  // Queue files for reindexing
+  if (context.adaptiveIndexer) {
+    for (const file of affectedFiles) {
+      try {
+        await context.adaptiveIndexer.observeChange({
+          changeType: file.changeType,
+          filePath: file.filePath,
+          sessionId: sessionId || context.sessionId,
+          source: "ai-generated",
+        });
+        reindexQueued.push(file.filePath);
+      } catch (err) {
+        logger.error({ err, filePath: file.filePath }, "Failed to queue for reindex");
+      }
+    }
+  }
+
+  // Notify observer
+  if (context.observer) {
+    for (const file of affectedFiles) {
+      context.observer.onCodeGenerated(
+        file.filePath,
+        file.summary || "",
+        sessionId || context.sessionId,
+        originalPrompt
+      );
+    }
+  }
+
+  return {
+    contextId,
+    justification,
+    ledgerEntryId,
+    reindexQueued,
+  };
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Extract keywords from a prompt for search
+ */
+function extractKeywords(text: string): string[] {
+  // Remove common words and extract meaningful terms
+  const stopWords = new Set([
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "can", "to", "of", "in", "for",
+    "on", "with", "at", "by", "from", "as", "into", "through", "during",
+    "before", "after", "above", "below", "between", "under", "again",
+    "further", "then", "once", "here", "there", "when", "where", "why",
+    "how", "all", "each", "few", "more", "most", "other", "some", "such",
+    "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very",
+    "just", "and", "but", "if", "or", "because", "until", "while", "this",
+    "that", "these", "those", "it", "its", "i", "me", "my", "we", "our",
+    "you", "your", "he", "him", "his", "she", "her", "they", "them", "their",
+    "what", "which", "who", "whom", "please", "want", "need", "create",
+    "make", "add", "update", "change", "modify", "fix", "implement", "write",
+  ]);
+
+  const words = text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 2 && !stopWords.has(word));
+
+  // Deduplicate and return top keywords
+  return [...new Set(words)].slice(0, 10);
+}
+
+// =============================================================================
+// Tool Context (for dependency injection)
+// =============================================================================
+
+export interface ToolContext {
+  sessionId: string;
+  observer?: import("./observer.js").MCPObserverService;
+  adaptiveIndexer?: import("../core/adaptive-indexer/interfaces/IAdaptiveIndexer.js").IAdaptiveIndexer;
+  justificationService?: import("../core/justification/interfaces/IJustificationService.js").IJustificationService;
+  ledger?: import("../core/ledger/interfaces/IChangeLedger.js").IChangeLedger;
+  indexer?: import("../core/indexer/index.js").Indexer;
+}

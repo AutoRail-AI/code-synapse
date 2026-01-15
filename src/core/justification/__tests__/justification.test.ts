@@ -366,10 +366,10 @@ describe("Justification Prompts", () => {
 
   describe("JUSTIFICATION_SYSTEM_PROMPT", () => {
     it("should define key concepts", () => {
-      expect(JUSTIFICATION_SYSTEM_PROMPT).toContain("PURPOSE");
-      expect(JUSTIFICATION_SYSTEM_PROMPT).toContain("BUSINESS VALUE");
-      expect(JUSTIFICATION_SYSTEM_PROMPT).toContain("FEATURE CONTEXT");
-      expect(JUSTIFICATION_SYSTEM_PROMPT).toContain("CONFIDENCE");
+      expect(JUSTIFICATION_SYSTEM_PROMPT).toContain("purposeSummary");
+      expect(JUSTIFICATION_SYSTEM_PROMPT).toContain("businessValue");
+      expect(JUSTIFICATION_SYSTEM_PROMPT).toContain("featureContext");
+      expect(JUSTIFICATION_SYSTEM_PROMPT).toContain("confidenceScore");
     });
 
     it("should specify JSON output format", () => {
@@ -409,6 +409,16 @@ describe("ClarificationEngine", () => {
     deleteByFilePath: vi.fn(),
     clearAll: vi.fn(),
     updateProjectContext: vi.fn(),
+    // New hierarchical and uncertainty methods
+    getChildren: vi.fn(),
+    getAncestors: vi.fn(),
+    getFileHierarchyJustifications: vi.fn(),
+    getByFeature: vi.fn(),
+    getByConfidenceRange: vi.fn(),
+    getUncertaintyHotspots: vi.fn(),
+    getLowestConfidenceEntities: vi.fn(),
+    getUncertainFeatures: vi.fn(),
+    getRecentlyUpdatedUncertain: vi.fn(),
   });
 
   let mockStorage: MockedJustificationStorage;

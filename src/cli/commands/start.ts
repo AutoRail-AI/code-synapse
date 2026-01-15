@@ -17,6 +17,8 @@ import { startServer, stopServer } from "../../mcp/server.js";
 export interface StartOptions {
   port?: number;
   debug?: boolean;
+  /** Optional existing graph store to use (avoids creating a new one) */
+  existingStore?: import("../../core/graph/index.js").IGraphStore;
 }
 
 const DEFAULT_PORT = 3100;
@@ -95,6 +97,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
       port,
       config,
       dataDir: getDataDir(),
+      existingStore: options.existingStore,
     });
 
     isServerRunning = true;

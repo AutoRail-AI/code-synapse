@@ -10,7 +10,7 @@
 
 import { createLogger } from "../../../utils/logger.js";
 import type { IGraphStore } from "../../interfaces/IGraphStore.js";
-import type { LLMService } from "../../llm/llm-service.js";
+import type { ILLMService } from "../../llm/interfaces/ILLMService.js";
 import type {
   IJustificationService,
   JustifyOptions,
@@ -52,7 +52,23 @@ import {
   generateJustificationPrompt,
   parseJustificationResponse,
   createDefaultResponse,
+  BATCH_JUSTIFICATION_SYSTEM_PROMPT,
+  generateBatchPrompt,
+  parseBatchResponse,
+  BATCH_JUSTIFICATION_JSON_SCHEMA,
+  type BatchEntityInput,
 } from "../prompts/justification-prompts.js";
+import {
+  filterTrivialEntities,
+  checkTrivialEntity,
+  type EntityInfo,
+} from "../utils/trivial-filter.js";
+import {
+  createTokenBatcher,
+  getTokenBatchConfig,
+} from "../utils/dynamic-batcher.js";
+import { DEFAULT_IGNORE_PATTERNS } from "../../indexer/project-detector.js";
+import { minimatch } from "minimatch";
 
 const logger = createLogger("justification-service");
 
@@ -88,7 +104,27 @@ const DEFAULT_OPTIONS: JustifyOptions = {
   skipLLM: false,
   propagateContext: true,
   batchSize: 10,
+  llmBatchSize: 10, // Number of entities to process in a single LLM call (fallback if dynamic fails)
+  skipTrivial: true, // Skip trivial entities like simple getters/setters
+  useDynamicBatching: true, // Use dynamic batching based on context window
+  filterIgnoredPaths: true, // Filter out gitignored and build artifact paths
 };
+
+/**
+ * Check if a file path should be ignored based on default patterns
+ */
+function shouldIgnorePath(filePath: string): boolean {
+  // Normalize path separators
+  const normalizedPath = filePath.replace(/\\/g, "/");
+
+  for (const pattern of DEFAULT_IGNORE_PATTERNS) {
+    if (minimatch(normalizedPath, pattern, { dot: true })) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 // =============================================================================
 // LLM Justification Service
@@ -103,13 +139,25 @@ export class LLMJustificationService implements IJustificationService {
   private clarificationEngine: ClarificationEngine;
   private ready: boolean = false;
 
+  // Performance optimization: Cache entity types to avoid repeated DB lookups
+  // LRU-style cache with max 10,000 entries
+  private entityTypeCache: Map<string, JustifiableEntityType> = new Map();
+  private static readonly ENTITY_TYPE_CACHE_MAX_SIZE = 10000;
+
   constructor(
     private graphStore: IGraphStore,
-    private llmService?: LLMService
+    private llmService?: ILLMService
   ) {
     this.storage = createJustificationStorage(graphStore);
     this.propagator = createContextPropagator(graphStore);
     this.clarificationEngine = createClarificationEngine(this.storage);
+  }
+
+  /**
+   * Clear the entity type cache (useful for testing or after major index updates)
+   */
+  clearEntityTypeCache(): void {
+    this.entityTypeCache.clear();
   }
 
   // ===========================================================================
@@ -117,23 +165,23 @@ export class LLMJustificationService implements IJustificationService {
   // ===========================================================================
 
   async initialize(): Promise<void> {
-    logger.info("Initializing justification service");
+    logger.debug("Initializing justification service");
 
     if (!this.graphStore.isReady) {
       throw new Error("Graph store not initialized");
     }
 
     // LLM service is optional - we can work without it using defaults
-    if (this.llmService && !this.llmService.isReady()) {
+    if (this.llmService && !this.llmService.isReady) {
       logger.warn("LLM service not ready - justifications will use fallback inference");
     }
 
     this.ready = true;
-    logger.info("Justification service initialized");
+    logger.debug("Justification service initialized");
   }
 
   async close(): Promise<void> {
-    logger.info("Closing justification service");
+    logger.debug("Closing justification service");
     this.ready = false;
   }
 
@@ -179,40 +227,255 @@ export class LLMJustificationService implements IJustificationService {
 
     result.stats.skipped = entityIds.length - toProcess.length;
 
-    logger.info({ total: entityIds.length, toProcess: toProcess.length }, "Starting justification");
+    logger.debug({ total: entityIds.length, toProcess: toProcess.length }, "Starting justification");
 
-    // Process in batches
-    for (let i = 0; i < toProcess.length; i += opts.batchSize!) {
-      const batch = toProcess.slice(i, i + opts.batchSize!);
+    // Step 1: Bulk fetch entity types (major optimization - single query instead of N*7 queries)
+    const entityTypeMap = await this.getEntityTypes(toProcess);
+    logger.debug({ resolved: entityTypeMap.size, total: toProcess.length }, "Entity types resolved");
 
-      for (const entityId of batch) {
+    // Step 1.1: Get LIGHTWEIGHT entity info for trivial filtering
+    // This uses bulk queries instead of building full context for each entity
+    const lightweightInfos = await this.getLightweightEntityInfos(toProcess, entityTypeMap);
+    logger.debug({ count: lightweightInfos.length }, "Lightweight entity info collected");
+
+    // Convert to EntityInfo format for trivial filtering
+    const entityInfos: EntityInfo[] = lightweightInfos;
+
+    // Step 1.5: Filter out gitignored and build artifact paths if enabled
+    let filteredEntityInfos = entityInfos;
+    let ignoredCount = 0;
+
+    if (opts.filterIgnoredPaths) {
+      filteredEntityInfos = entityInfos.filter((entity) => {
+        if (shouldIgnorePath(entity.filePath)) {
+          ignoredCount++;
+          return false;
+        }
+        return true;
+      });
+
+      if (ignoredCount > 0) {
+        logger.debug(
+          { ignored: ignoredCount, remaining: filteredEntityInfos.length },
+          "Filtered out ignored/generated paths"
+        );
+        result.stats.skipped += ignoredCount;
+      }
+    }
+
+    // Step 2: Filter trivial entities if enabled
+    let trivialEntities: Array<EntityInfo & { result: ReturnType<typeof checkTrivialEntity> }> = [];
+    let nonTrivialEntities: EntityInfo[] = filteredEntityInfos;
+
+    if (opts.skipTrivial) {
+      const filterResult = filterTrivialEntities(filteredEntityInfos);
+      trivialEntities = filterResult.trivial;
+      nonTrivialEntities = filterResult.nonTrivial;
+
+      logger.debug(
+        { trivial: trivialEntities.length, nonTrivial: nonTrivialEntities.length },
+        "Filtered trivial entities"
+      );
+
+      // Process trivial entities with default justifications (no LLM needed)
+      for (const entity of trivialEntities) {
         try {
-          // Report progress
+          const defaultJust = entity.result.defaultJustification;
+          if (!defaultJust) continue;
+
+          const entityType = entity.type as JustifiableEntityType;
+          const now = Date.now();
+
+          const justification = createEntityJustification({
+            id: `just-${entity.id}`,
+            entityId: entity.id,
+            entityType,
+            name: entity.name,
+            filePath: entity.filePath,
+            purposeSummary: defaultJust.purposeSummary,
+            businessValue: defaultJust.businessValue,
+            featureContext: defaultJust.featureContext,
+            tags: defaultJust.tags,
+            inferredFrom: "code_pattern",
+            confidenceScore: defaultJust.confidenceScore,
+            confidenceLevel: scoreToConfidenceLevel(defaultJust.confidenceScore),
+            reasoning: `Trivial entity: ${entity.result.reason}`,
+            evidenceSources: [entity.filePath],
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          await this.storage.storeJustification(justification);
+          result.justified.push(justification);
+          result.stats.succeeded++;
+
           if (opts.onProgress) {
             opts.onProgress({
               phase: "inferring",
-              current: i + batch.indexOf(entityId) + 1,
+              current: result.stats.succeeded,
               total: toProcess.length,
-              currentEntity: entityId,
+              currentEntity: entity.id,
+              message: `Trivial: ${entity.name}`,
             });
           }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          result.failed.push({ entityId: entity.id, error: errorMessage });
+          result.stats.failed++;
+        }
+      }
+    }
 
-          const justification = await this.justifyEntity(entityId, existing, opts);
+    // Step 3: Process non-trivial entities with LLM (batch or single)
+    const useBatchLLM = this.llmService?.isReady && !opts.skipLLM && opts.llmBatchSize! > 1;
 
-          if (justification.clarificationPending) {
-            result.needingClarification.push(justification);
-            result.stats.pendingClarification++;
-          } else {
-            result.justified.push(justification);
-            result.stats.succeeded++;
+    if (useBatchLLM) {
+      // Convert EntityInfo[] to BatchEntityInput[] for dynamic batching
+      const batchInputs: BatchEntityInput[] = nonTrivialEntities.map((entity) => ({
+        id: entity.id,
+        name: entity.name,
+        type: entity.type,
+        filePath: entity.filePath,
+        codeSnippet: entity.codeSnippet || "",
+        signature: entity.signature,
+        docComment: entity.docComment,
+        isExported: entity.isExported,
+      }));
+
+      // Use token-based batching (always enabled now)
+      // Get model ID for token budget calculation
+      const modelId = opts.modelId || "qwen2.5-coder-3b"; // Default model
+      const batcher = createTokenBatcher(modelId);
+      const batchingResult = batcher.createBatches(batchInputs);
+      const tokenBudget = batcher.getTokenBudget();
+
+      // Calculate which constraint is limiting batch size
+      const maxEntitiesByOutput = batcher.getMaxEntitiesByOutput();
+      const avgInputTokensPerEntity = batchingResult.totalEntities > 0
+        ? Math.round(batchingResult.totalInputTokens / batchingResult.totalEntities)
+        : 0;
+      const maxEntitiesByInput = avgInputTokensPerEntity > 0
+        ? Math.floor(tokenBudget.maxInputTokens / avgInputTokensPerEntity)
+        : 0;
+      const limitingConstraint = maxEntitiesByOutput < maxEntitiesByInput ? "output" : "input";
+
+      logger.info(
+        {
+          modelId,
+          totalEntities: batchingResult.totalEntities,
+          totalBatches: batchingResult.totalBatches,
+          averageBatchSize: batchingResult.averageBatchSize.toFixed(1),
+          maxEntitiesByOutput,
+          maxEntitiesByInput: maxEntitiesByInput || "N/A",
+          limitingConstraint,
+          totalInputTokens: batchingResult.totalInputTokens,
+          totalOutputTokens: batchingResult.totalOutputTokens,
+          maxInputTokens: tokenBudget.maxInputTokens,
+          maxOutputTokens: tokenBudget.maxOutputTokens,
+          oversizedEntities: batchingResult.oversizedEntities.length,
+        },
+        "Token-based batching configured (dual input+output constraint)"
+      );
+
+      // Convert batches back to EntityInfo[]
+      const batches = batchingResult.batches.map((batch) =>
+        batch.entities
+          .map((batchEntity) => nonTrivialEntities.find((e) => e.id === batchEntity.id))
+          .filter((e): e is EntityInfo => e !== undefined)
+      );
+
+      // Process each batch
+      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+        const batchEntities = batches[batchIdx];
+        const batchInfo = batchingResult.batches[batchIdx];
+        if (!batchEntities || batchEntities.length === 0) continue;
+
+        if (opts.onProgress) {
+          const tokenInfo = batchInfo
+            ? ` [${batchInfo.inputTokens} input tokens]`
+            : "";
+          opts.onProgress({
+            phase: "inferring",
+            current: result.stats.succeeded,
+            total: toProcess.length,
+            message: `Batch ${batchIdx + 1}/${batches.length} (${batchEntities.length} entities)${tokenInfo}`,
+          });
+        }
+
+        try {
+          const batchResults = await this.processBatch(batchEntities, existing, opts);
+
+          for (const justification of batchResults) {
+            if (justification.clarificationPending) {
+              result.needingClarification.push(justification);
+              result.stats.pendingClarification++;
+            } else {
+              result.justified.push(justification);
+              result.stats.succeeded++;
+            }
           }
         } catch (error) {
-          logger.error({ entityId, error }, "Failed to justify entity");
-          result.failed.push({
-            entityId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          result.stats.failed++;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.error({ err: error, errorMessage, batchSize: batchEntities.length }, "Batch inference failed, falling back to single");
+
+          // Fallback to single processing for this batch
+          for (const entity of batchEntities) {
+            try {
+              const justification = await this.justifyEntity(entity.id, existing, opts);
+              if (justification.clarificationPending) {
+                result.needingClarification.push(justification);
+                result.stats.pendingClarification++;
+              } else {
+                result.justified.push(justification);
+                result.stats.succeeded++;
+              }
+            } catch (singleError) {
+              const singleErrorMessage = singleError instanceof Error ? singleError.message : String(singleError);
+              result.failed.push({ entityId: entity.id, error: singleErrorMessage });
+              result.stats.failed++;
+            }
+          }
+        }
+      }
+    } else {
+      // Single entity processing (original behavior)
+      for (let i = 0; i < nonTrivialEntities.length; i += opts.batchSize!) {
+        const batch = nonTrivialEntities.slice(i, i + opts.batchSize!);
+
+        for (const entity of batch) {
+          try {
+            if (opts.onProgress) {
+              opts.onProgress({
+                phase: "inferring",
+                current: result.stats.succeeded + result.stats.failed + 1,
+                total: toProcess.length,
+                currentEntity: entity.id,
+              });
+            }
+
+            const justification = await this.justifyEntity(entity.id, existing, opts);
+
+            if (justification.clarificationPending) {
+              result.needingClarification.push(justification);
+              result.stats.pendingClarification++;
+            } else {
+              result.justified.push(justification);
+              result.stats.succeeded++;
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.error(
+              { entityId: entity.id, err: error, errorMessage },
+              "Failed to justify entity %s: %s",
+              entity.id,
+              errorMessage
+            );
+            result.failed.push({
+              entityId: entity.id,
+              error: errorMessage,
+            });
+            result.stats.failed++;
+          }
         }
       }
     }
@@ -239,17 +502,200 @@ export class LLMJustificationService implements IJustificationService {
     }
     result.stats.durationMs = Date.now() - startTime;
 
-    logger.info(
+    logger.debug(
       {
         succeeded: result.stats.succeeded,
         failed: result.stats.failed,
         pending: result.stats.pendingClarification,
+        trivialSkipped: trivialEntities.length,
+        ignoredPaths: ignoredCount,
+        batchedLLM: useBatchLLM,
+        dynamicBatching: opts.useDynamicBatching,
         durationMs: result.stats.durationMs,
       },
       "Justification complete"
     );
 
     return result;
+  }
+
+  /**
+   * Process a batch of entities with a single LLM call
+   */
+  private async processBatch(
+    entities: EntityInfo[],
+    existingJustifications: Map<string, EntityJustification>,
+    options: JustifyOptions
+  ): Promise<EntityJustification[]> {
+    if (!this.llmService?.isReady) {
+      throw new Error("LLM service not ready for batch processing");
+    }
+
+    // Build batch input
+    const batchInput: BatchEntityInput[] = entities.map((entity) => ({
+      id: entity.id,
+      name: entity.name,
+      type: entity.type,
+      filePath: entity.filePath,
+      codeSnippet: entity.codeSnippet || "",
+      signature: entity.signature,
+      docComment: entity.docComment,
+      isExported: entity.isExported,
+    }));
+
+    // Generate batch prompt
+    const prompt = generateBatchPrompt(batchInput);
+
+    // Get token configuration for the model
+    const modelId = options.modelId || "qwen2.5-coder-3b";
+    const tokenConfig = getTokenBatchConfig(modelId);
+
+    // Calculate output tokens based on entity count
+    // Use model's max output tokens as ceiling, entity count * tokens per entity as floor
+    const outputTokensPerEntity = tokenConfig.outputTokensPerEntity;
+    const estimatedResponseTokens = Math.min(
+      tokenConfig.maxOutputTokens,
+      Math.max(4096, entities.length * outputTokensPerEntity)
+    );
+
+    logger.debug(
+      {
+        batchSize: entities.length,
+        outputTokensPerEntity,
+        estimatedResponseTokens,
+        modelId,
+      },
+      "Processing batch with token-based limits"
+    );
+
+    const inferenceResult = await this.llmService.infer(
+      `${BATCH_JUSTIFICATION_SYSTEM_PROMPT}\n\n${prompt}`,
+      {
+        maxTokens: estimatedResponseTokens,
+        temperature: 0.3,
+        jsonSchema: BATCH_JUSTIFICATION_JSON_SCHEMA,
+      }
+    );
+
+    // Parse batch response
+    const batchResponses = parseBatchResponse(inferenceResult.text);
+
+    // Create justifications for each entity
+    const justifications: EntityJustification[] = [];
+    const now = Date.now();
+
+    for (const entity of entities) {
+      const response = batchResponses.get(entity.id);
+      const entityType = entity.type as JustifiableEntityType;
+
+      let justification: EntityJustification;
+
+      if (response) {
+        // Use batch response
+        // Auto-generate clarification questions if confidence < 0.5
+        const needsClarification = response.confidenceScore < 0.5;
+        const clarificationQuestions: ClarificationQuestion[] = [];
+
+        if (needsClarification) {
+          // Generate contextual clarification questions based on what's missing
+          if (!response.purposeSummary || response.purposeSummary.length < 10) {
+            clarificationQuestions.push(
+              createClarificationQuestion({
+                id: `q-${entity.id}-purpose`,
+                question: `What is the primary purpose of "${entity.name}"?`,
+                entityId: entity.id,
+                category: "purpose",
+                priority: 0,
+                context: `File: ${entity.filePath}`,
+              })
+            );
+          }
+          if (!response.businessValue || response.businessValue.length < 10) {
+            clarificationQuestions.push(
+              createClarificationQuestion({
+                id: `q-${entity.id}-business`,
+                question: `Why does "${entity.name}" exist? What problem does it solve?`,
+                entityId: entity.id,
+                category: "business_value",
+                priority: 1,
+                context: `Current understanding: ${response.purposeSummary || "Unknown"}`,
+              })
+            );
+          }
+          if (!response.featureContext || response.featureContext === "General") {
+            clarificationQuestions.push(
+              createClarificationQuestion({
+                id: `q-${entity.id}-feature`,
+                question: `Which feature or domain does "${entity.name}" belong to?`,
+                entityId: entity.id,
+                category: "feature_context",
+                priority: 2,
+              })
+            );
+          }
+        }
+
+        justification = createEntityJustification({
+          id: `just-${entity.id}`,
+          entityId: entity.id,
+          entityType,
+          name: entity.name,
+          filePath: entity.filePath,
+          purposeSummary: response.purposeSummary,
+          businessValue: response.businessValue,
+          featureContext: response.featureContext,
+          tags: response.tags,
+          inferredFrom: "llm_inferred",
+          confidenceScore: response.confidenceScore,
+          confidenceLevel: scoreToConfidenceLevel(response.confidenceScore),
+          reasoning: "Batch LLM inference",
+          evidenceSources: [entity.filePath],
+          clarificationPending: needsClarification,
+          pendingQuestions: clarificationQuestions,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else {
+        // Fallback to code analysis
+        logger.warn({ entityId: entity.id }, "Entity not found in batch response, using code analysis");
+        const context = await this.propagator.buildContext(entity.id, entityType, existingJustifications);
+        const fallbackResponse = this.inferFromCodeAnalysis(context);
+
+        justification = createEntityJustification({
+          id: `just-${entity.id}`,
+          entityId: entity.id,
+          entityType,
+          name: entity.name,
+          filePath: entity.filePath,
+          purposeSummary: fallbackResponse.purposeSummary,
+          businessValue: fallbackResponse.businessValue,
+          featureContext: fallbackResponse.featureContext,
+          tags: fallbackResponse.tags,
+          inferredFrom: "file_name",
+          confidenceScore: fallbackResponse.confidenceScore,
+          confidenceLevel: scoreToConfidenceLevel(fallbackResponse.confidenceScore),
+          reasoning: fallbackResponse.reasoning,
+          evidenceSources: [entity.filePath],
+          clarificationPending: fallbackResponse.needsClarification,
+          pendingQuestions: fallbackResponse.clarificationQuestions.map((q, i) =>
+            createClarificationQuestion({
+              id: `q-${entity.id}-${i}`,
+              question: q,
+              entityId: entity.id,
+              category: "purpose",
+              priority: i,
+            })
+          ),
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      await this.storage.storeJustification(justification);
+      justifications.push(justification);
+    }
+
+    return justifications;
   }
 
   async justifyFile(filePath: string, options?: JustifyOptions): Promise<JustificationResult> {
@@ -261,39 +707,44 @@ export class LLMJustificationService implements IJustificationService {
   }
 
   async justifyProject(options?: JustifyOptions): Promise<JustificationResult> {
-    // Get all files
-    const result = await this.graphStore.query<{ id: string }>(
-      `?[id] := *File{id}`
-    );
-
+    // Optimized: Single bulk query to get all entity IDs at once
+    // Instead of N+1 queries (1 per file + entities per file)
     const allEntityIds: string[] = [];
 
-    // Get entities from each file
-    for (const { id: fileId } of result.rows) {
-      // Get functions
-      const functions = await this.graphStore.query<{ id: string }>(
-        `?[id] := *Function{id, fileId}, fileId = $fileId`,
-        { fileId }
-      );
-      allEntityIds.push(...functions.rows.map((r) => r.id));
+    // Get all functions in one query
+    const functions = await this.graphStore.query<{ id: string }>(
+      `?[id] := *function{id}`
+    );
+    allEntityIds.push(...functions.rows.map((r) => r.id));
 
-      // Get classes
-      const classes = await this.graphStore.query<{ id: string }>(
-        `?[id] := *Class{id, fileId}, fileId = $fileId`,
-        { fileId }
-      );
-      allEntityIds.push(...classes.rows.map((r) => r.id));
+    // Get all classes in one query
+    const classes = await this.graphStore.query<{ id: string }>(
+      `?[id] := *class{id}`
+    );
+    allEntityIds.push(...classes.rows.map((r) => r.id));
 
-      // Get interfaces
-      const interfaces = await this.graphStore.query<{ id: string }>(
-        `?[id] := *Interface{id, fileId}, fileId = $fileId`,
-        { fileId }
-      );
-      allEntityIds.push(...interfaces.rows.map((r) => r.id));
+    // Get all interfaces in one query
+    const interfaces = await this.graphStore.query<{ id: string }>(
+      `?[id] := *interface{id}`
+    );
+    allEntityIds.push(...interfaces.rows.map((r) => r.id));
 
-      // Add file itself
-      allEntityIds.push(fileId);
-    }
+    // Get all files in one query
+    const files = await this.graphStore.query<{ id: string }>(
+      `?[id] := *file{id}`
+    );
+    allEntityIds.push(...files.rows.map((r) => r.id));
+
+    logger.debug(
+      {
+        total: allEntityIds.length,
+        functions: functions.rows.length,
+        classes: classes.rows.length,
+        interfaces: interfaces.rows.length,
+        files: files.rows.length,
+      },
+      "Collected all entities for project justification"
+    );
 
     return this.justifyEntities(allEntityIds, options);
   }
@@ -336,9 +787,9 @@ export class LLMJustificationService implements IJustificationService {
     // Get LLM response
     let llmResponse: LLMJustificationResponse;
 
-    if (this.llmService?.isReady() && !options.skipLLM) {
+    if (this.llmService?.isReady && !options.skipLLM) {
       try {
-        const inferenceResult = await this.llmService.complete(
+        const inferenceResult = await this.llmService.infer(
           `${JUSTIFICATION_SYSTEM_PROMPT}\n\n${prompt}`,
           {
             maxTokens: 1024,
@@ -350,7 +801,17 @@ export class LLMJustificationService implements IJustificationService {
         const parsed = parseJustificationResponse(inferenceResult.text);
         llmResponse = parsed || createDefaultResponse(context.entity);
       } catch (error) {
-        logger.warn({ entityId, error }, "LLM inference failed, using defaults");
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.warn(
+          {
+            entityId,
+            err: error,
+            errorMessage,
+          },
+          "LLM inference failed for %s, using defaults: %s",
+          entityId,
+          errorMessage
+        );
         llmResponse = createDefaultResponse(context.entity);
       }
     } else {
@@ -371,7 +832,7 @@ export class LLMJustificationService implements IJustificationService {
       featureContext: llmResponse.featureContext,
       detailedDescription: llmResponse.detailedDescription,
       tags: llmResponse.tags,
-      inferredFrom: this.llmService?.isReady() ? "llm_inferred" : "file_name",
+      inferredFrom: this.llmService?.isReady ? "llm_inferred" : "file_name",
       confidenceScore: llmResponse.confidenceScore,
       confidenceLevel: scoreToConfidenceLevel(llmResponse.confidenceScore),
       reasoning: llmResponse.reasoning,
@@ -518,31 +979,299 @@ export class LLMJustificationService implements IJustificationService {
   }
 
   /**
-   * Get entity type from ID
+   * Get entity type from ID (with caching)
    */
   private async getEntityType(entityId: string): Promise<JustifiableEntityType | null> {
-    // Check each entity table
-    const tables: Array<{ table: string; type: JustifiableEntityType }> = [
-      { table: "Function", type: "function" },
-      { table: "Class", type: "class" },
-      { table: "Interface", type: "interface" },
-      { table: "TypeAlias", type: "type_alias" },
-      { table: "Variable", type: "variable" },
-      { table: "File", type: "file" },
-      { table: "Module", type: "module" },
-    ];
+    // Check cache first
+    const cached = this.entityTypeCache.get(entityId);
+    if (cached) {
+      return cached;
+    }
 
-    for (const { table, type } of tables) {
-      const result = await this.graphStore.query<{ id: string }>(
-        `?[id] := *${table}{id}, id = $entityId`,
-        { entityId }
-      );
-      if (result.rows.length > 0) {
-        return type;
-      }
+    // Single query to check all entity types at once
+    const result = await this.graphStore.query<{ id: string; entity_type: string }>(
+      `?[id, entity_type] :=
+        id = $entityId,
+        (
+          (*function{id}, entity_type = "function") or
+          (*class{id}, entity_type = "class") or
+          (*interface{id}, entity_type = "interface") or
+          (*type_alias{id}, entity_type = "type_alias") or
+          (*variable{id}, entity_type = "variable") or
+          (*file{id}, entity_type = "file") or
+          (*module{id}, entity_type = "module")
+        )`,
+      { entityId }
+    );
+
+    if (result.rows.length > 0 && result.rows[0]) {
+      const entityType = result.rows[0].entity_type as JustifiableEntityType;
+      this.cacheEntityType(entityId, entityType);
+      return entityType;
     }
 
     return null;
+  }
+
+  /**
+   * Bulk get entity types for multiple IDs (much more efficient for batch operations)
+   * Returns a Map of entityId -> entityType
+   */
+  private async getEntityTypes(entityIds: string[]): Promise<Map<string, JustifiableEntityType>> {
+    const result = new Map<string, JustifiableEntityType>();
+    const uncachedIds: string[] = [];
+
+    // Check cache first
+    for (const id of entityIds) {
+      const cached = this.entityTypeCache.get(id);
+      if (cached) {
+        result.set(id, cached);
+      } else {
+        uncachedIds.push(id);
+      }
+    }
+
+    // If all were cached, return early
+    if (uncachedIds.length === 0) {
+      return result;
+    }
+
+    // Batch query for uncached IDs - process in chunks to avoid query size limits
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < uncachedIds.length; i += BATCH_SIZE) {
+      const batch = uncachedIds.slice(i, i + BATCH_SIZE);
+
+      // Build a query that checks all entity types for all IDs in one go
+      const queryResult = await this.graphStore.query<{ id: string; entity_type: string }>(
+        `?[id, entity_type] :=
+          id in $entityIds,
+          (
+            (*function{id}, entity_type = "function") or
+            (*class{id}, entity_type = "class") or
+            (*interface{id}, entity_type = "interface") or
+            (*type_alias{id}, entity_type = "type_alias") or
+            (*variable{id}, entity_type = "variable") or
+            (*file{id}, entity_type = "file") or
+            (*module{id}, entity_type = "module")
+          )`,
+        { entityIds: batch }
+      );
+
+      // Process results and cache them
+      for (const row of queryResult.rows) {
+        const entityType = row.entity_type as JustifiableEntityType;
+        result.set(row.id, entityType);
+        this.cacheEntityType(row.id, entityType);
+      }
+    }
+
+    logger.debug(
+      { total: entityIds.length, cached: entityIds.length - uncachedIds.length, fetched: uncachedIds.length },
+      "Bulk entity type lookup complete"
+    );
+
+    return result;
+  }
+
+  /**
+   * Add entity type to cache with LRU eviction
+   */
+  private cacheEntityType(entityId: string, entityType: JustifiableEntityType): void {
+    // Simple LRU: if cache is full, delete oldest entries (first 10%)
+    if (this.entityTypeCache.size >= LLMJustificationService.ENTITY_TYPE_CACHE_MAX_SIZE) {
+      const entriesToDelete = Math.floor(LLMJustificationService.ENTITY_TYPE_CACHE_MAX_SIZE * 0.1);
+      const iterator = this.entityTypeCache.keys();
+      for (let i = 0; i < entriesToDelete; i++) {
+        const key = iterator.next().value;
+        if (key) this.entityTypeCache.delete(key);
+      }
+    }
+    this.entityTypeCache.set(entityId, entityType);
+  }
+
+  /**
+   * Get lightweight entity info for trivial filtering using bulk queries.
+   * This is MUCH faster than building full context for each entity.
+   * Only fetches the fields needed for trivial filtering: name, filePath, lineCount, signature, etc.
+   */
+  private async getLightweightEntityInfos(
+    entityIds: string[],
+    entityTypeMap: Map<string, JustifiableEntityType>
+  ): Promise<EntityInfo[]> {
+    const results: EntityInfo[] = [];
+
+    // Group entity IDs by type for efficient bulk queries
+    const functionIds: string[] = [];
+    const classIds: string[] = [];
+    const interfaceIds: string[] = [];
+    const fileIds: string[] = [];
+
+    for (const id of entityIds) {
+      const type = entityTypeMap.get(id);
+      switch (type) {
+        case "function":
+        case "method":
+          functionIds.push(id);
+          break;
+        case "class":
+          classIds.push(id);
+          break;
+        case "interface":
+          interfaceIds.push(id);
+          break;
+        case "file":
+          fileIds.push(id);
+          break;
+      }
+    }
+
+    // Bulk fetch functions (includes methods)
+    if (functionIds.length > 0) {
+      const fnResult = await this.graphStore.query<{
+        id: string;
+        name: string;
+        file_id: string;
+        start_line: number;
+        end_line: number;
+        signature: string;
+        is_exported: boolean;
+        doc_comment: string | null;
+      }>(
+        `?[id, name, file_id, start_line, end_line, signature, is_exported, doc_comment] :=
+          *function{id, name, file_id, start_line, end_line, signature, is_exported, doc_comment},
+          id in $entityIds`,
+        { entityIds: functionIds }
+      );
+
+      // Get file paths for these functions in bulk
+      const fileIdSet = new Set(fnResult.rows.map((r) => r.file_id));
+      const filePathMap = await this.getFilePathsBulk([...fileIdSet]);
+
+      for (const fn of fnResult.rows) {
+        results.push({
+          id: fn.id,
+          name: fn.name,
+          type: entityTypeMap.get(fn.id) === "method" ? "method" : "function",
+          filePath: filePathMap.get(fn.file_id) || "",
+          codeSnippet: fn.signature,
+          lineCount: fn.end_line - fn.start_line + 1,
+          isExported: fn.is_exported,
+          signature: fn.signature,
+          docComment: fn.doc_comment || undefined,
+        });
+      }
+    }
+
+    // Bulk fetch classes
+    if (classIds.length > 0) {
+      const classResult = await this.graphStore.query<{
+        id: string;
+        name: string;
+        file_id: string;
+        start_line: number;
+        end_line: number;
+        is_exported: boolean;
+        doc_comment: string | null;
+      }>(
+        `?[id, name, file_id, start_line, end_line, is_exported, doc_comment] :=
+          *class{id, name, file_id, start_line, end_line, is_exported, doc_comment},
+          id in $entityIds`,
+        { entityIds: classIds }
+      );
+
+      const fileIdSet = new Set(classResult.rows.map((r) => r.file_id));
+      const filePathMap = await this.getFilePathsBulk([...fileIdSet]);
+
+      for (const cls of classResult.rows) {
+        results.push({
+          id: cls.id,
+          name: cls.name,
+          type: "class",
+          filePath: filePathMap.get(cls.file_id) || "",
+          codeSnippet: `class ${cls.name}`,
+          lineCount: cls.end_line - cls.start_line + 1,
+          isExported: cls.is_exported,
+          docComment: cls.doc_comment || undefined,
+        });
+      }
+    }
+
+    // Bulk fetch interfaces
+    if (interfaceIds.length > 0) {
+      const ifaceResult = await this.graphStore.query<{
+        id: string;
+        name: string;
+        file_id: string;
+        start_line: number;
+        end_line: number;
+        is_exported: boolean;
+        doc_comment: string | null;
+      }>(
+        `?[id, name, file_id, start_line, end_line, is_exported, doc_comment] :=
+          *interface{id, name, file_id, start_line, end_line, is_exported, doc_comment},
+          id in $entityIds`,
+        { entityIds: interfaceIds }
+      );
+
+      const fileIdSet = new Set(ifaceResult.rows.map((r) => r.file_id));
+      const filePathMap = await this.getFilePathsBulk([...fileIdSet]);
+
+      for (const iface of ifaceResult.rows) {
+        results.push({
+          id: iface.id,
+          name: iface.name,
+          type: "interface",
+          filePath: filePathMap.get(iface.file_id) || "",
+          codeSnippet: `interface ${iface.name}`,
+          lineCount: iface.end_line - iface.start_line + 1,
+          isExported: iface.is_exported,
+          docComment: iface.doc_comment || undefined,
+        });
+      }
+    }
+
+    // Bulk fetch files
+    if (fileIds.length > 0) {
+      const fileResult = await this.graphStore.query<{
+        id: string;
+        relative_path: string;
+      }>(
+        `?[id, relative_path] := *file{id, relative_path}, id in $entityIds`,
+        { entityIds: fileIds }
+      );
+
+      for (const file of fileResult.rows) {
+        results.push({
+          id: file.id,
+          name: file.relative_path.split("/").pop() || file.relative_path,
+          type: "file",
+          filePath: file.relative_path,
+          codeSnippet: "",
+          lineCount: 1,
+          isExported: true,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Get file paths for multiple file IDs in bulk
+   */
+  private async getFilePathsBulk(fileIds: string[]): Promise<Map<string, string>> {
+    if (fileIds.length === 0) return new Map();
+
+    const result = await this.graphStore.query<{ id: string; relative_path: string }>(
+      `?[id, relative_path] := *file{id, relative_path}, id in $fileIds`,
+      { fileIds }
+    );
+
+    const map = new Map<string, string>();
+    for (const row of result.rows) {
+      map.set(row.id, row.relative_path);
+    }
+    return map;
   }
 
   // ===========================================================================
@@ -622,6 +1351,7 @@ export class LLMJustificationService implements IJustificationService {
 
   /**
    * Propagate context for all justified entities
+   * Optimized: Uses Map-based lookups instead of O(N) array.find() operations
    */
   private async propagateAllContext(
     justifications: EntityJustification[]
@@ -638,36 +1368,50 @@ export class LLMJustificationService implements IJustificationService {
     for (const [filePath, fileJustifications] of byFile) {
       const hierarchy = await this.propagator.buildFileHierarchy(filePath);
 
-      // Top-down propagation
+      // Build a Map for O(1) lookups instead of O(N) find() operations
+      const justificationMap = new Map<string, EntityJustification>();
+      for (const j of fileJustifications) {
+        justificationMap.set(j.entityId, j);
+      }
+
+      // Top-down propagation (O(N) with Map vs O(N²) with find)
       const topDown = this.propagator.getTopDownOrder(hierarchy);
       for (const node of topDown) {
-        const parentJ = fileJustifications.find(
-          (j) => j.entityId === node.parentId
-        );
-        const childJ = fileJustifications.find(
-          (j) => j.entityId === node.entityId
-        );
+        if (!node.parentId) continue;
+
+        const parentJ = justificationMap.get(node.parentId);
+        const childJ = justificationMap.get(node.entityId);
 
         if (parentJ && childJ) {
           const propagated = this.propagator.propagateDown(parentJ, childJ);
           await this.storage.storeJustification(propagated);
+          // Update the map with the propagated version
+          justificationMap.set(propagated.entityId, propagated);
         }
       }
 
-      // Bottom-up aggregation
+      // Bottom-up aggregation (O(N) with Map vs O(N²) with filter)
       const bottomUp = this.propagator.getBottomUpOrder(hierarchy);
       for (const node of bottomUp) {
-        if (node.childIds.length > 0) {
-          const parentJ = fileJustifications.find(
-            (j) => j.entityId === node.entityId
-          );
-          if (parentJ) {
-            const childJs = fileJustifications.filter((j) =>
-              node.childIds.includes(j.entityId)
-            );
-            const aggregated = this.propagator.aggregateUp(parentJ, childJs);
-            await this.storage.storeJustification(aggregated);
+        if (node.childIds.length === 0) continue;
+
+        const parentJ = justificationMap.get(node.entityId);
+        if (!parentJ) continue;
+
+        // Use Set for O(1) membership checking instead of includes()
+        const childIdSet = new Set(node.childIds);
+        const childJs: EntityJustification[] = [];
+        for (const [entityId, j] of justificationMap) {
+          if (childIdSet.has(entityId)) {
+            childJs.push(j);
           }
+        }
+
+        if (childJs.length > 0) {
+          const aggregated = this.propagator.aggregateUp(parentJ, childJs);
+          await this.storage.storeJustification(aggregated);
+          // Update the map with the aggregated version
+          justificationMap.set(aggregated.entityId, aggregated);
         }
       }
     }
@@ -842,7 +1586,7 @@ export class LLMJustificationService implements IJustificationService {
 
     // Get all files
     const files = await this.graphStore.query<{ id: string; relativePath: string }>(
-      `?[id, relativePath] := *File{id, relativePath}`
+      `?[id, relative_path] := *file{id, relative_path}`
     );
 
     for (const file of files.rows) {
@@ -851,11 +1595,11 @@ export class LLMJustificationService implements IJustificationService {
       // Count entities in file
       type CountRow = Record<string, number>;
       const functionsResult = await this.graphStore.query<CountRow>(
-        `?[count(id)] := *Function{id, fileId}, fileId = $fileId`,
+        `?[count(id)] := *function{id, file_id}, file_id = $fileId`,
         { fileId: file.id }
       );
       const classesResult = await this.graphStore.query<CountRow>(
-        `?[count(id)] := *Class{id, fileId}, fileId = $fileId`,
+        `?[count(id)] := *class{id, file_id}, file_id = $fileId`,
         { fileId: file.id }
       );
 
@@ -896,7 +1640,7 @@ export class LLMJustificationService implements IJustificationService {
     const allResult = await this.graphStore.query<{
       featureContext: string;
     }>(
-      `?[featureContext] := *Justification{featureContext}, featureContext != "General", featureContext != ""`
+      `?[feature_context] := *justification{feature_context}, feature_context != "General", feature_context != ""`
     );
 
     // Group by feature
@@ -962,7 +1706,7 @@ export class LLMJustificationService implements IJustificationService {
  */
 export function createLLMJustificationService(
   graphStore: IGraphStore,
-  llmService?: LLMService
+  llmService?: ILLMService
 ): LLMJustificationService {
   return new LLMJustificationService(graphStore, llmService);
 }
@@ -972,7 +1716,7 @@ export function createLLMJustificationService(
  */
 export async function createInitializedJustificationService(
   graphStore: IGraphStore,
-  llmService?: LLMService
+  llmService?: ILLMService
 ): Promise<LLMJustificationService> {
   const service = new LLMJustificationService(graphStore, llmService);
   await service.initialize();

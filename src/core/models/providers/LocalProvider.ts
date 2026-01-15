@@ -187,7 +187,18 @@ export class LocalModelProvider implements IModelProvider {
       const results = await embeddingService.embedBatch(texts);
       return results.map((r) => r.vector);
     } catch (error) {
-      logger.error({ error }, "Failed to generate embeddings");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(
+        {
+          err: error,
+          errorMessage,
+          errorStack: error instanceof Error ? error.stack : undefined,
+          textCount: texts.length,
+        },
+        "Failed to generate embeddings for %d texts: %s",
+        texts.length,
+        errorMessage
+      );
       throw error;
     }
   }
