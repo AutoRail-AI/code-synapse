@@ -20,6 +20,7 @@ Code-Synapse transforms your codebase into a structured Knowledge Graph optimize
 - [Documentation](#-documentation)
 - [CLI Commands](#-cli-commands)
 - [MCP Tools](#-mcp-tools-available)
+- [Vibe Coding](#-vibe-coding)
 - [Architecture](#-architecture)
 - [Roadmap](#-roadmap)
 - [Contributing](#-contributing)
@@ -520,6 +521,96 @@ When connected, Code-Synapse provides these tools to your AI agent:
 | `get_callees` | Find all functions called by a function |
 | `get_imports` | Get import chain for a file |
 | `get_project_stats` | Get project statistics |
+| `vibe_start` | Start a vibe coding session with enriched context |
+| `vibe_change` | Record file changes during coding session |
+| `vibe_complete` | Complete a vibe coding session |
+| `vibe_status` | Get status of a vibe coding session |
+
+---
+
+## 🎨 Vibe Coding
+
+**Context-Aware AI Coding with Full Business Understanding**
+
+Vibe Coding is a workflow that enriches every AI prompt with deep codebase context, including business justifications, relationships, and conventions. Every file change is automatically tracked in the ledger for full observability.
+
+### The Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         VIBE CODING WORKFLOW                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   1. START SESSION (vibe_start)                                          │
+│      Intent: "Add email validation to signup"                            │
+│                          ↓                                               │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                    ENRICHED CONTEXT                              │   │
+│   │  - Related functions (validateEmail, signupHandler)              │   │
+│   │  - Business justifications (why each function exists)            │   │
+│   │  - Call relationships (who calls what)                           │   │
+│   │  - Patterns (Repository, Service Layer detected)                 │   │
+│   │  - Conventions (camelCase, .js imports, error handling)          │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                          ↓                                               │
+│   2. AI GENERATES CODE WITH FULL CONTEXT                                 │
+│                          ↓                                               │
+│   3. RECORD CHANGES (vibe_change)                                        │
+│      File modification → Re-index → Re-justify                           │
+│                          ↓                                               │
+│   4. COMPLETE SESSION (vibe_complete)                                    │
+│      Session summary → Ledger entry → Statistics                         │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Example Usage
+
+**User prompt to AI:**
+```
+Add a password strength validator to the signup form
+```
+
+**AI calls `vibe_start`:**
+```json
+{
+  "intent": "Add password strength validator to signup form",
+  "targetFiles": ["src/auth/signup.ts", "src/auth/validators.ts"]
+}
+```
+
+**AI receives enriched context including:**
+- Existing validation functions and their patterns
+- How the signup form currently handles validation
+- Business justification for current validators
+- Codebase conventions (naming, error handling, etc.)
+
+**AI generates code following established patterns, then records changes:**
+```json
+{
+  "sessionId": "vibe_xxx",
+  "filePath": "src/auth/validators.ts",
+  "changeType": "modified",
+  "description": "Added validatePasswordStrength function"
+}
+```
+
+### Benefits
+
+| For AI Agents | For Developers | For Teams |
+|---------------|----------------|-----------|
+| Better code generation with full context | Full traceability of AI changes | Shared business understanding |
+| Automatic pattern following | Consistent code quality | Complete audit trail |
+| Business-aware code | Easy rollback (session-based) | Faster onboarding |
+| Relationship understanding | Knowledge retention | Auto-maintained docs |
+
+### Best Practices
+
+1. **Start sessions for non-trivial tasks** - Use `vibe_start` when adding features or refactoring
+2. **Be specific with intent** - Clear intents lead to better context matching
+3. **Include target files** - Helps find the most relevant context
+4. **Record all changes** - Call `vibe_change` after every file modification
+5. **Complete sessions** - Always call `vibe_complete` for proper ledger entries
 
 ---
 

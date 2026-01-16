@@ -167,6 +167,7 @@ src/
 │
 └── utils/                  # Shared utilities
     ├── logger.ts           # Pino structured logging
+    ├── lock-manager.ts     # RocksDB stale lock detection & cleanup
     └── fs.ts               # File system helpers
 ```
 
@@ -184,6 +185,7 @@ src/
 | **Embeddings** | Vector generation | @huggingface/transformers |
 | **LLM** | Local model inference | node-llama-cpp |
 | **Justification** | Business purpose inference | LLM prompts, context propagation |
+| **Lock Manager** | Stale lock detection, multi-instance support | lsof, process signals |
 
 ---
 
@@ -1498,6 +1500,157 @@ curl "http://localhost:3101/api/nl-search/patterns"
 3. View index statistics, browse files, functions, and classes
 4. Use the NL Search bar to query your codebase
 
+### UI Sections
+
+The Web Viewer is organized into 6 main sections, accessible via the navigation bar:
+
+#### Section 1: Explorer
+
+**Purpose**: Navigate the codebase through files, entities, and relationships with embedded code viewing.
+
+```
+┌──────────────┬──────────────────────────┬───────────────────────┐
+│  FILE TREE   │     CODE VIEWER          │   ENTITY DETAILS      │
+│              │                          │                       │
+│  📁 src/     │  1 │ import { hash }...  │   validateUser        │
+│    📁 auth/  │  2 │                     │   ────────────────    │
+│      📄 login│  3 │ export class Auth.. │   [F] Function        │
+│              │  7 │   validateUser(..)  │   CALLS (5)           │
+│  ENTITIES    │  8 │     // ← SELECTED   │   → hashPassword      │
+│  [F] 12 func │                          │   CALLED BY (3)       │
+│  [C] 3 class │  [Jump to Definition]   │   ← loginHandler      │
+└──────────────┴──────────────────────────┴───────────────────────┘
+```
+
+**Features**:
+- Collapsible directory structure with file type icons
+- Monaco Editor for code viewing with syntax highlighting
+- Entity markers showing function/class definitions
+- Quick actions: Jump to Definition, Find References, Show Call Graph
+
+#### Section 2: Knowledge
+
+**Purpose**: Explore business meaning, intent, justifications, and classifications.
+
+```
+┌──────────────┬──────────────────────────┬───────────────────────┐
+│  FACETS      │   ENTITY LIST            │  JUSTIFICATION DETAIL │
+│              │                          │                       │
+│  FEATURES    │   ┌─ src/auth/           │  validateUser         │
+│  ● Auth (45) │   │    [F] validateUser ◀│  PURPOSE              │
+│  ○ Billing   │   │    [F] hashPassword  │  Validates user       │
+│              │   │                      │  credentials against  │
+│  CONFIDENCE  │   │  📁 jwt.ts           │  the auth database.   │
+│  ● High (78%)│   │    [F] signToken     │                       │
+│  ○ Medium    │   │                      │  CONFIDENCE: 94% ████ │
+│              │                          │                       │
+│  NEEDS       │   [← Prev] Page 1/5 [→]  │  [Answer Questions →] │
+│  ⚠ 12 items  │                          │                       │
+└──────────────┴──────────────────────────┴───────────────────────┘
+```
+
+**Features**:
+- Faceted filters by feature area, confidence level, classification
+- Multiple view modes: Tree, Flat, Feature Map, Uncertainty
+- Full justification details with purpose, business value, tags
+- Batch clarification workflow for answering questions
+
+#### Section 3: Graph
+
+**Purpose**: Visualize relationships as interactive graphs.
+
+**Graph Types**:
+| Type | Nodes | Edges | Use Case |
+|------|-------|-------|----------|
+| **Call Graph** | Functions | Calls | Understanding execution flow |
+| **Import Graph** | Files | Imports | Module dependencies |
+| **Inheritance** | Classes/Interfaces | Extends/Implements | Type hierarchy |
+| **Knowledge** | Entities | Semantic relationships | Feature clustering |
+
+**Interactions**:
+- Click node → Select and show details
+- Double-click → Focus and expand
+- Drag → Reposition nodes
+- Scroll → Zoom in/out
+- Right-click → Context menu
+
+#### Section 4: Search
+
+**Purpose**: Find entities using multiple search modes.
+
+**Search Modes**:
+
+| Mode | Examples | Description |
+|------|----------|-------------|
+| **Natural** | "authentication functions", "most complex" | Plain English queries |
+| **Structural** | `calls:hashPassword`, `extends:BaseController` | Code structure patterns |
+| **Semantic** | `feature:authentication`, `tag:security` | Business meaning |
+| **Diagnostic** | `confidence:<0.5`, `orphan:true` | Code health queries |
+
+**Structural Query Patterns**:
+```
+calls:hashPassword          # functions calling hashPassword
+calledBy:loginHandler       # functions called by loginHandler
+imports:@stripe/stripe-js   # files importing Stripe
+extends:BaseController      # classes extending BaseController
+complexity:>10              # high complexity functions
+```
+
+**Diagnostic Query Patterns**:
+```
+confidence:<0.5             # low confidence entities
+clarification:pending       # needs clarification
+orphan:true                 # no callers/callees
+unjustified:true            # missing justification
+stale:>7d                   # not re-indexed in 7 days
+```
+
+#### Section 5: Operations
+
+**Purpose**: Execute MCP server operations and monitor status.
+
+**Operation Panels**:
+
+| Panel | Description | Actions |
+|-------|-------------|---------|
+| **Indexing** | Build/rebuild knowledge graph | Run, Force full, Preview |
+| **Justification** | Generate business purposes | Run, Re-run specific |
+| **Reconciliation** | Fill ledger gaps from Git | Detect gaps, Run, Preview |
+| **Adaptive** | MCP-driven re-indexing | Pause, View stats |
+| **Compaction** | Compact ledger entries | Run, View sessions |
+
+**MCP Inspector**:
+- View recent MCP requests and responses
+- Replay requests for testing
+- Manual request execution with JSON parameters
+
+#### Section 6: Observability
+
+**Purpose**: Inspect system internals for debugging and monitoring.
+
+**Tabs**:
+
+| Tab | Description | Features |
+|-----|-------------|----------|
+| **Ledger** | Change event timeline | Filter by time, type, source |
+| **Memory** | Learned coding rules | View, edit, disable rules |
+| **Compaction** | Session summaries | Expand details, view raw entries |
+| **Reconciliation** | Git sync status | Detect gaps, view commits |
+| **Health** | System health dashboard | Component status, metrics |
+
+**Ledger Timeline**:
+```
+● 4:23pm  file:modified
+  src/auth/login.ts
+  Changed: validateUser (signature modified)
+  [View Diff] [View Entity]
+
+● 4:21pm  justification:completed
+  Batch 12/12 completed
+  287 entities justified
+  [View Details]
+```
+
 ---
 
 ## Database Schema
@@ -1674,10 +1827,34 @@ code-synapse init
 ```
 
 **2. "Database lock error"**
+
+Code-Synapse includes automatic stale lock detection. If you see a lock error:
+
 ```bash
-# Another instance is running. Stop it first.
+# Most likely scenario: lock is stale (from crash/OOM kill)
+# Code-Synapse will automatically detect and clean up stale locks
+# Just run the command again:
+code-synapse
+
+# If you see "Database is locked by another running process":
+# A live Code-Synapse instance is actually running on this project
+# Check for running processes:
+ps aux | grep code-synapse
+
+# Stop the running instance:
 pkill -f "code-synapse start"
 ```
+
+**How stale lock detection works:**
+- On startup, Code-Synapse checks if a lock file exists
+- If it exists, it finds the process ID that owns the lock (via `lsof`)
+- If the process is dead or a zombie, the lock is automatically removed
+- If the process is alive, you get an error (another instance is running)
+
+**Multi-instance support:**
+- You CAN run Code-Synapse on multiple different projects simultaneously
+- You CANNOT run multiple instances on the same project
+- Each project has its own `.code-synapse/data/` directory with its own lock
 
 **3. "Out of memory during LLM inference"**
 ```bash

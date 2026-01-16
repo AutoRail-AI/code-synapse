@@ -16,6 +16,9 @@ import {
   detectLanguage,
   getRelativePath,
 } from "../../utils/fs.js";
+import { createLogger } from "../../utils/logger.js";
+
+const logger = createLogger("scanner");
 
 // =============================================================================
 // Types
@@ -281,8 +284,12 @@ export class FileScanner {
         fileName,
         directory,
       };
-    } catch {
-      // File might have been deleted or inaccessible
+    } catch (error) {
+      // Log the error - don't silently skip files
+      logger.warn(
+        { error, absolutePath },
+        "Failed to process file during scanning - file may have been deleted or is inaccessible"
+      );
       return null;
     }
   }

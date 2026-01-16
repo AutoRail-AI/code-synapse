@@ -37,7 +37,7 @@
   "scripts": {
     "dev": "tsc --watch",
     "build": "tsc && pnpm build:ui",
-    "build:ui": "cd src/viewer/ui/app && pnpm build && cp -r ../public ../../../../dist/viewer/ui/",
+    "build:ui": "cd src/viewer/ui/app && pnpm build",
     "start": "node dist/cli/index.js",
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",

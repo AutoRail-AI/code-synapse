@@ -11,7 +11,10 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLogger } from "../../utils/logger.js";
 import type { IGraphViewer } from "../interfaces/IGraphViewer.js";
+
+const logger = createLogger("viewer-server");
 import type { CozoGraphViewer } from "../impl/CozoGraphViewer.js";
 import type { IClassificationStorage } from "../../core/classification/interfaces/IClassificationEngine.js";
 import type { IChangeLedger, LedgerQuery } from "../../core/ledger/interfaces/IChangeLedger.js";
@@ -711,8 +714,14 @@ export class ViewerServer {
     const enhanced = await Promise.all(
       functions.map(async (fn) => {
         const [justification, classification] = await Promise.all([
-          this.viewer.getJustification(fn.id).catch(() => null),
-          this.classificationStorage?.get(fn.id).catch(() => null),
+          this.viewer.getJustification(fn.id).catch((err) => {
+            logger.debug({ error: err, functionId: fn.id }, "Failed to get justification for function");
+            return null;
+          }),
+          this.classificationStorage?.get(fn.id).catch((err) => {
+            logger.debug({ error: err, functionId: fn.id }, "Failed to get classification for function");
+            return null;
+          }),
         ]);
 
         return {
@@ -807,8 +816,14 @@ export class ViewerServer {
     const enhanced = await Promise.all(
       classes.map(async (cls) => {
         const [justification, classification] = await Promise.all([
-          this.viewer.getJustification(cls.id).catch(() => null),
-          this.classificationStorage?.get(cls.id).catch(() => null),
+          this.viewer.getJustification(cls.id).catch((err) => {
+            logger.debug({ error: err, classId: cls.id }, "Failed to get justification for class");
+            return null;
+          }),
+          this.classificationStorage?.get(cls.id).catch((err) => {
+            logger.debug({ error: err, classId: cls.id }, "Failed to get classification for class");
+            return null;
+          }),
         ]);
 
         return {
@@ -873,8 +888,14 @@ export class ViewerServer {
     const enhanced = await Promise.all(
       interfaces.map(async (iface) => {
         const [justification, classification] = await Promise.all([
-          this.viewer.getJustification(iface.id).catch(() => null),
-          this.classificationStorage?.get(iface.id).catch(() => null),
+          this.viewer.getJustification(iface.id).catch((err) => {
+            logger.debug({ error: err, interfaceId: iface.id }, "Failed to get justification for interface");
+            return null;
+          }),
+          this.classificationStorage?.get(iface.id).catch((err) => {
+            logger.debug({ error: err, interfaceId: iface.id }, "Failed to get classification for interface");
+            return null;
+          }),
         ]);
 
         return {

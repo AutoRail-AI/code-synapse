@@ -299,13 +299,19 @@ export interface JustifyOptions {
     domain?: string;
     features?: string[];
   };
+
+  // Internal options for hierarchical processing (set by justifyProject)
+  /** @internal Current hierarchy level being processed */
+  _hierarchyLevel?: number;
+  /** @internal Whether current level is a cycle (SCC) */
+  _isInCycle?: boolean;
 }
 
 /**
  * Progress information during justification
  */
 export interface JustificationProgress {
-  phase: "building_context" | "inferring" | "propagating" | "storing";
+  phase: "initializing" | "building_context" | "inferring" | "propagating" | "storing";
   current: number;
   total: number;
   currentEntity?: string;

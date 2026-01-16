@@ -383,13 +383,18 @@ describe.skipIf(SKIP_NATIVE_TESTS)("E2E Self-Test", () => {
     it("should return healthy status", async () => {
       const health = await fetchJSON<{
         status: string;
-        issues: string[];
+        components: {
+          database: { status: string };
+          indexer: { status: string; message: string };
+          embeddings: { status: string; message: string };
+          relationships: { status: string; message: string };
+        };
       }>(`http://127.0.0.1:${viewerPort}/api/health`);
 
       expect(health).toBeDefined();
       expect(health.status).toBeDefined();
-      expect(health.issues).toBeDefined();
-      expect(Array.isArray(health.issues)).toBe(true);
+      expect(health.components).toBeDefined();
+      expect(health.components.database).toBeDefined();
     });
   });
 
@@ -751,23 +756,18 @@ describe.skipIf(SKIP_NATIVE_TESTS)("E2E Self-Test", () => {
     it("should have no database errors in health check", async () => {
       const health = await fetchJSON<{
         status: string;
-        isHealthy: boolean;
-        issues: Array<{
-          type: string;
-          code: string;
-          message: string;
-          suggestion?: string;
-        }>;
+        components: {
+          database: { status: string };
+          indexer: { status: string; message: string };
+          embeddings: { status: string; message: string };
+          relationships: { status: string; message: string };
+        };
       }>(`http://127.0.0.1:${viewerPort}/api/health`);
 
-      // Should have no critical database issues
-      const dbIssues = health.issues.filter(
-        (i) =>
-          i.message.toLowerCase().includes("database") ||
-          i.message.toLowerCase().includes("relation") ||
-          i.type === "error"
-      );
-      expect(dbIssues.length).toBe(0);
+      // Database component should be healthy
+      expect(health.components.database.status).toBe("healthy");
+      // Overall status should not be error
+      expect(health.status).not.toBe("error");
     });
   });
 

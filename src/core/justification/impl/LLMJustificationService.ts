@@ -67,6 +67,12 @@ import {
   createTokenBatcher,
   getTokenBatchConfig,
 } from "../utils/dynamic-batcher.js";
+import {
+  buildProcessingOrder,
+  type ProcessingOrder,
+  type ProcessingLevel,
+  type DependencyGraph,
+} from "../hierarchy/dependency-graph.js";
 import { DEFAULT_IGNORE_PATTERNS } from "../../indexer/project-detector.js";
 import { minimatch } from "minimatch";
 
@@ -216,7 +222,20 @@ export class LLMJustificationService implements IJustificationService {
     };
 
     // Get existing justifications
-    const existing = await this.storage.getByEntityIds(entityIds);
+    // When processing hierarchically (_hierarchyLevel is set), fetch ALL existing justifications
+    // so that context building can include justifications from previous levels (dependencies)
+    let existing: Map<string, EntityJustification>;
+    if (opts._hierarchyLevel !== undefined && opts._hierarchyLevel > 0) {
+      // Hierarchical mode: fetch all justifications for richer context
+      existing = await this.storage.getAllJustifications();
+      logger.debug(
+        { level: opts._hierarchyLevel, totalExisting: existing.size },
+        "Fetched all existing justifications for hierarchical context"
+      );
+    } else {
+      // Normal mode or Level 0: only fetch for current entities
+      existing = await this.storage.getByEntityIds(entityIds);
+    }
 
     // Filter entities that need justification
     const toProcess = entityIds.filter((id) => {
@@ -707,46 +726,147 @@ export class LLMJustificationService implements IJustificationService {
   }
 
   async justifyProject(options?: JustifyOptions): Promise<JustificationResult> {
-    // Optimized: Single bulk query to get all entity IDs at once
-    // Instead of N+1 queries (1 per file + entities per file)
-    const allEntityIds: string[] = [];
+    const opts = { ...DEFAULT_OPTIONS, ...options };
+    const startTime = Date.now();
 
-    // Get all functions in one query
-    const functions = await this.graphStore.query<{ id: string }>(
-      `?[id] := *function{id}`
-    );
-    allEntityIds.push(...functions.rows.map((r) => r.id));
+    // Build dependency graph and compute hierarchical processing order
+    logger.info("Building dependency graph for hierarchical justification");
 
-    // Get all classes in one query
-    const classes = await this.graphStore.query<{ id: string }>(
-      `?[id] := *class{id}`
-    );
-    allEntityIds.push(...classes.rows.map((r) => r.id));
+    if (opts.onProgress) {
+      opts.onProgress({
+        phase: "initializing",
+        current: 0,
+        total: 0,
+        message: "Building dependency graph...",
+      });
+    }
 
-    // Get all interfaces in one query
-    const interfaces = await this.graphStore.query<{ id: string }>(
-      `?[id] := *interface{id}`
-    );
-    allEntityIds.push(...interfaces.rows.map((r) => r.id));
+    const { graph, order } = await buildProcessingOrder(this.graphStore);
 
-    // Get all files in one query
-    const files = await this.graphStore.query<{ id: string }>(
-      `?[id] := *file{id}`
-    );
-    allEntityIds.push(...files.rows.map((r) => r.id));
-
-    logger.debug(
+    logger.info(
       {
-        total: allEntityIds.length,
-        functions: functions.rows.length,
-        classes: classes.rows.length,
-        interfaces: interfaces.rows.length,
-        files: files.rows.length,
+        totalEntities: order.totalEntities,
+        totalLevels: order.levels.length,
+        cycleCount: order.cycleCount,
+        entitiesInCycles: order.entitiesInCycles,
       },
-      "Collected all entities for project justification"
+      "Dependency graph built, processing hierarchically"
     );
 
-    return this.justifyEntities(allEntityIds, options);
+    // Initialize combined result
+    const result: JustificationResult = {
+      justified: [],
+      failed: [],
+      needingClarification: [],
+      stats: {
+        total: order.totalEntities,
+        succeeded: 0,
+        failed: 0,
+        skipped: 0,
+        pendingClarification: 0,
+        averageConfidence: 0,
+        durationMs: 0,
+      },
+    };
+
+    // Process each level in order (leaves first, then dependents)
+    for (let levelIdx = 0; levelIdx < order.levels.length; levelIdx++) {
+      const level = order.levels[levelIdx]!;
+      const levelType = level.isCycle ? "cycle" : "standard";
+
+      logger.info(
+        {
+          level: level.level,
+          entityCount: level.entityIds.length,
+          isCycle: level.isCycle,
+          cycleSize: level.cycleSize,
+          progress: `${levelIdx + 1}/${order.levels.length}`,
+        },
+        `Processing level ${level.level} (${levelType})`
+      );
+
+      if (opts.onProgress) {
+        const cycleInfo = level.isCycle ? ` [cycle of ${level.cycleSize}]` : "";
+        opts.onProgress({
+          phase: "inferring",
+          current: result.stats.succeeded + result.stats.failed,
+          total: order.totalEntities,
+          message: `Level ${level.level}/${order.levels.length - 1}: ${level.entityIds.length} entities${cycleInfo}`,
+        });
+      }
+
+      // Process this level's entities
+      // Note: justifyEntities will fetch existing justifications which now includes
+      // all justifications from previous levels - enabling context propagation
+      const levelResult = await this.justifyEntities(level.entityIds, {
+        ...opts,
+        // Don't propagate context within level processing - we do it at the end
+        propagateContext: false,
+        // Pass level info for enhanced context building
+        _hierarchyLevel: level.level,
+        _isInCycle: level.isCycle,
+      });
+
+      // Merge level results into combined result
+      result.justified.push(...levelResult.justified);
+      result.failed.push(...levelResult.failed);
+      result.needingClarification.push(...levelResult.needingClarification);
+      result.stats.succeeded += levelResult.stats.succeeded;
+      result.stats.failed += levelResult.stats.failed;
+      result.stats.skipped += levelResult.stats.skipped;
+      result.stats.pendingClarification += levelResult.stats.pendingClarification;
+
+      logger.debug(
+        {
+          level: level.level,
+          levelSucceeded: levelResult.stats.succeeded,
+          totalSucceeded: result.stats.succeeded,
+          totalFailed: result.stats.failed,
+        },
+        `Completed level ${level.level}`
+      );
+    }
+
+    // Context propagation across all levels (after all justifications are done)
+    if (opts.propagateContext && result.justified.length > 0) {
+      if (opts.onProgress) {
+        opts.onProgress({
+          phase: "propagating",
+          current: 0,
+          total: result.justified.length,
+          message: "Propagating context through hierarchy",
+        });
+      }
+
+      await this.propagateAllContext(result.justified);
+    }
+
+    // Calculate final stats
+    const allJustified = [...result.justified, ...result.needingClarification];
+    if (allJustified.length > 0) {
+      const totalConfidence = allJustified.reduce(
+        (sum, j) => sum + j.confidenceScore,
+        0
+      );
+      result.stats.averageConfidence = totalConfidence / allJustified.length;
+    }
+
+    result.stats.durationMs = Date.now() - startTime;
+
+    logger.info(
+      {
+        succeeded: result.stats.succeeded,
+        failed: result.stats.failed,
+        pending: result.stats.pendingClarification,
+        skipped: result.stats.skipped,
+        levels: order.levels.length,
+        cycles: order.cycleCount,
+        durationMs: result.stats.durationMs,
+      },
+      "Hierarchical justification complete"
+    );
+
+    return result;
   }
 
   async rejustifyUncertain(): Promise<JustificationResult> {
@@ -861,107 +981,61 @@ export class LLMJustificationService implements IJustificationService {
 
   /**
    * Infer justification from code analysis only (no LLM)
+   * Creates MEANINGFUL descriptions based on code patterns, not generic placeholders
    */
   private inferFromCodeAnalysis(context: JustificationContext): LLMJustificationResponse {
     const entity = context.entity;
     const name = entity.name;
+    const code = entity.codeSnippet || "";
 
-    // Infer from naming patterns
-    let purposeSummary = `${entity.type} named ${name}`;
-    let businessValue = "Provides functionality";
-    let featureContext = "General";
-    const tags: string[] = [];
-    let confidenceScore = 0.3;
-
-    // Extract feature from path
+    // Extract meaningful context from file path
     const pathParts = entity.filePath.split("/");
-    for (const part of pathParts) {
-      if (["auth", "authentication"].includes(part.toLowerCase())) {
-        featureContext = "Authentication";
-        tags.push("security");
-        break;
-      }
-      if (["api", "routes", "endpoints"].includes(part.toLowerCase())) {
-        featureContext = "API";
-        tags.push("api");
-        break;
-      }
-      if (["cli", "commands"].includes(part.toLowerCase())) {
-        featureContext = "CLI";
-        tags.push("cli");
-        break;
-      }
-      if (["core"].includes(part.toLowerCase())) {
-        featureContext = "Core";
-        break;
-      }
+    let featureContext = this.inferFeatureFromPath(pathParts);
+    const tags: string[] = [];
+    let confidenceScore = 0.4;
+
+    // Analyze entity type and generate appropriate description
+    let purposeSummary: string;
+    let businessValue: string;
+
+    if (entity.type === "interface") {
+      const result = this.analyzeInterface(name, code, featureContext);
+      purposeSummary = result.purposeSummary;
+      businessValue = result.businessValue;
+      tags.push(...result.tags);
+      confidenceScore = result.confidence;
+    } else if (entity.type === "class") {
+      const result = this.analyzeClass(name, code, featureContext);
+      purposeSummary = result.purposeSummary;
+      businessValue = result.businessValue;
+      tags.push(...result.tags);
+      confidenceScore = result.confidence;
+    } else {
+      const result = this.analyzeFunction(name, code, featureContext);
+      purposeSummary = result.purposeSummary;
+      businessValue = result.businessValue;
+      tags.push(...result.tags);
+      confidenceScore = result.confidence;
     }
 
-    // Naming pattern inference
-    if (/Handler$/.test(name)) {
-      purposeSummary = `Handles ${name.replace(/Handler$/, "")} operations`;
-      tags.push("handler");
-      confidenceScore = 0.5;
-    } else if (/Service$/.test(name)) {
-      purposeSummary = `Provides ${name.replace(/Service$/, "")} services`;
-      businessValue = "Core service component";
-      tags.push("service");
-      confidenceScore = 0.5;
-    } else if (/Controller$/.test(name)) {
-      purposeSummary = `Controls ${name.replace(/Controller$/, "")} flow`;
-      tags.push("controller");
-      confidenceScore = 0.5;
-    } else if (/Factory$/.test(name)) {
-      purposeSummary = `Creates ${name.replace(/Factory$/, "")} instances`;
-      tags.push("factory");
-      confidenceScore = 0.5;
-    } else if (/^create/.test(name)) {
-      purposeSummary = `Creates and initializes ${name.replace(/^create/, "")}`;
-      tags.push("factory");
-      confidenceScore = 0.4;
-    } else if (/^get/.test(name)) {
-      purposeSummary = `Retrieves ${name.replace(/^get/, "")}`;
-      tags.push("getter");
-      confidenceScore = 0.4;
-    } else if (/^set/.test(name)) {
-      purposeSummary = `Updates ${name.replace(/^set/, "")}`;
-      tags.push("setter");
-      confidenceScore = 0.4;
-    } else if (/^validate/.test(name)) {
-      purposeSummary = `Validates ${name.replace(/^validate/, "")}`;
-      tags.push("validation");
-      confidenceScore = 0.5;
-    } else if (/^parse/.test(name)) {
-      purposeSummary = `Parses ${name.replace(/^parse/, "")}`;
-      tags.push("parsing");
-      confidenceScore = 0.5;
-    } else if (/^render/.test(name)) {
-      purposeSummary = `Renders ${name.replace(/^render/, "")}`;
-      tags.push("ui");
-      featureContext = "UI";
-      confidenceScore = 0.5;
-    } else if (/^handle/.test(name)) {
-      purposeSummary = `Handles ${name.replace(/^handle/, "")}`;
-      tags.push("handler");
-      confidenceScore = 0.4;
-    }
-
-    // Use doc comment if available
+    // Enhance with doc comment if available
     if (entity.docComment) {
-      const firstLine = (entity.docComment.split("\n")[0] || "").replace(/^\*?\s*/, "");
-      if (firstLine.length > 10) {
+      const cleanDoc = entity.docComment
+        .replace(/^\/\*\*?\s*|\s*\*\/$/g, "")
+        .replace(/^\s*\*\s*/gm, "")
+        .trim();
+      const firstLine = cleanDoc.split("\n")[0] || "";
+      if (firstLine.length > 15 && !firstLine.startsWith("@")) {
         purposeSummary = firstLine;
-        confidenceScore = Math.min(0.7, confidenceScore + 0.2);
+        confidenceScore = Math.min(0.75, confidenceScore + 0.15);
       }
     }
 
-    // Use parent context if available
-    if (context.parentContext?.justification) {
-      businessValue = `Part of ${context.parentContext.justification.featureContext}`;
-      if (!featureContext || featureContext === "General") {
-        featureContext = context.parentContext.justification.featureContext;
-      }
-      confidenceScore = Math.min(0.8, confidenceScore + 0.1);
+    // Update feature context if still generic
+    if (featureContext === "General" && context.parentContext?.justification) {
+      featureContext = context.parentContext.justification.featureContext;
+      businessValue = `Supports ${context.parentContext.justification.purposeSummary}`;
+      confidenceScore = Math.min(0.7, confidenceScore + 0.1);
     }
 
     return {
@@ -969,13 +1043,355 @@ export class LLMJustificationService implements IJustificationService {
       businessValue,
       featureContext,
       detailedDescription: "",
-      tags,
+      tags: [...new Set(tags)].slice(0, 5),
       confidenceScore,
-      reasoning: "Inferred from code structure and naming patterns",
+      reasoning: "Inferred from naming conventions, code structure, and file location",
       needsClarification: confidenceScore < 0.5,
-      clarificationQuestions:
-        confidenceScore < 0.5 ? [`What is the purpose of ${name}?`] : [],
+      clarificationQuestions: confidenceScore < 0.5
+        ? [`What business problem does ${name} solve?`, `How is ${name} used in the system?`]
+        : [],
     };
+  }
+
+  /**
+   * Analyze interface to generate meaningful description
+   */
+  private analyzeInterface(name: string, code: string, feature: string): {
+    purposeSummary: string;
+    businessValue: string;
+    tags: string[];
+    confidence: number;
+  } {
+    const tags: string[] = ["contract", "type-safety"];
+
+    // Analyze interface purpose from name patterns
+    if (/^I[A-Z]/.test(name)) {
+      const baseName = name.slice(1);
+      return {
+        purposeSummary: `Defines the contract for ${this.camelToReadable(baseName)} implementations, enabling dependency injection and testability`,
+        businessValue: `Allows swapping ${this.camelToReadable(baseName)} implementations without changing dependent code`,
+        tags: [...tags, "dependency-injection", "abstraction"],
+        confidence: 0.65,
+      };
+    }
+
+    if (/Options$|Config$|Settings$|Params$/.test(name)) {
+      const baseName = name.replace(/(Options|Config|Settings|Params)$/, "");
+      return {
+        purposeSummary: `Defines configuration parameters for ${this.camelToReadable(baseName)} behavior and customization`,
+        businessValue: `Enables flexible configuration of ${this.camelToReadable(baseName)} without code changes`,
+        tags: [...tags, "configuration"],
+        confidence: 0.6,
+      };
+    }
+
+    if (/Props$/.test(name)) {
+      const baseName = name.replace(/Props$/, "");
+      return {
+        purposeSummary: `Defines the expected input properties for ${this.camelToReadable(baseName)} component`,
+        businessValue: `Ensures type-safe data passing to ${this.camelToReadable(baseName)} component`,
+        tags: [...tags, "component-props", "ui"],
+        confidence: 0.6,
+      };
+    }
+
+    if (/Result$|Response$|Output$/.test(name)) {
+      const baseName = name.replace(/(Result|Response|Output)$/, "");
+      return {
+        purposeSummary: `Defines the structure of ${this.camelToReadable(baseName)} operation output for consistent data handling`,
+        businessValue: `Enables type-safe consumption of ${this.camelToReadable(baseName)} results across the codebase`,
+        tags: [...tags, "data-structure", "output"],
+        confidence: 0.6,
+      };
+    }
+
+    if (/Request$|Input$/.test(name)) {
+      const baseName = name.replace(/(Request|Input)$/, "");
+      return {
+        purposeSummary: `Defines the required input structure for ${this.camelToReadable(baseName)} operations`,
+        businessValue: `Ensures valid input data for ${this.camelToReadable(baseName)} processing`,
+        tags: [...tags, "data-structure", "input", "validation"],
+        confidence: 0.6,
+      };
+    }
+
+    // Analyze code content for clues
+    if (code.includes("(): Promise<") || code.includes("async")) {
+      return {
+        purposeSummary: `Defines async operations contract for ${this.camelToReadable(name)} capability`,
+        businessValue: `Establishes consistent async API for ${feature} operations`,
+        tags: [...tags, "async-operations"],
+        confidence: 0.5,
+      };
+    }
+
+    // Generic but still meaningful
+    return {
+      purposeSummary: `Defines the data structure and contract for ${this.camelToReadable(name)} in ${feature}`,
+      businessValue: `Provides type safety and documentation for ${this.camelToReadable(name)} usage`,
+      tags,
+      confidence: 0.45,
+    };
+  }
+
+  /**
+   * Analyze class to generate meaningful description
+   */
+  private analyzeClass(name: string, code: string, feature: string): {
+    purposeSummary: string;
+    businessValue: string;
+    tags: string[];
+    confidence: number;
+  } {
+    const tags: string[] = [];
+
+    if (/Service$/.test(name)) {
+      const baseName = name.replace(/Service$/, "");
+      return {
+        purposeSummary: `Provides ${this.camelToReadable(baseName)} business logic and operations as a centralized service`,
+        businessValue: `Encapsulates ${this.camelToReadable(baseName)} complexity and exposes clean API for consumers`,
+        tags: ["service", "business-logic", this.camelToKebab(baseName)],
+        confidence: 0.65,
+      };
+    }
+
+    if (/Controller$/.test(name)) {
+      const baseName = name.replace(/Controller$/, "");
+      return {
+        purposeSummary: `Coordinates ${this.camelToReadable(baseName)} request handling and response formatting`,
+        businessValue: `Manages ${this.camelToReadable(baseName)} API endpoint logic and request lifecycle`,
+        tags: ["controller", "api", "request-handling"],
+        confidence: 0.65,
+      };
+    }
+
+    if (/Repository$|Storage$|Store$/.test(name)) {
+      const baseName = name.replace(/(Repository|Storage|Store)$/, "");
+      return {
+        purposeSummary: `Manages persistence and retrieval of ${this.camelToReadable(baseName)} data`,
+        businessValue: `Abstracts data storage details for ${this.camelToReadable(baseName)}, enabling storage backend changes`,
+        tags: ["data-access", "persistence", "storage"],
+        confidence: 0.65,
+      };
+    }
+
+    if (/Factory$/.test(name)) {
+      const baseName = name.replace(/Factory$/, "");
+      return {
+        purposeSummary: `Creates and configures ${this.camelToReadable(baseName)} instances with proper initialization`,
+        businessValue: `Centralizes ${this.camelToReadable(baseName)} creation logic and ensures consistent configuration`,
+        tags: ["factory", "creational-pattern", "initialization"],
+        confidence: 0.6,
+      };
+    }
+
+    if (/Builder$/.test(name)) {
+      const baseName = name.replace(/Builder$/, "");
+      return {
+        purposeSummary: `Constructs ${this.camelToReadable(baseName)} objects step-by-step with fluent API`,
+        businessValue: `Simplifies complex ${this.camelToReadable(baseName)} construction with readable builder pattern`,
+        tags: ["builder", "creational-pattern", "fluent-api"],
+        confidence: 0.6,
+      };
+    }
+
+    if (/Error$|Exception$/.test(name)) {
+      const baseName = name.replace(/(Error|Exception)$/, "");
+      return {
+        purposeSummary: `Represents ${this.camelToReadable(baseName)} error conditions with contextual information`,
+        businessValue: `Enables specific error handling for ${this.camelToReadable(baseName)} failures`,
+        tags: ["error-handling", "exception"],
+        confidence: 0.6,
+      };
+    }
+
+    // Generic but meaningful
+    return {
+      purposeSummary: `Implements ${this.camelToReadable(name)} logic and state management for ${feature}`,
+      businessValue: `Encapsulates ${this.camelToReadable(name)} behavior and provides reusable functionality`,
+      tags: ["implementation", this.camelToKebab(name)],
+      confidence: 0.45,
+    };
+  }
+
+  /**
+   * Analyze function to generate meaningful description
+   */
+  private analyzeFunction(name: string, code: string, feature: string): {
+    purposeSummary: string;
+    businessValue: string;
+    tags: string[];
+    confidence: number;
+  } {
+    const tags: string[] = [];
+
+    // Factory functions
+    if (/^create[A-Z]/.test(name)) {
+      const what = name.replace(/^create/, "");
+      return {
+        purposeSummary: `Creates and initializes a configured ${this.camelToReadable(what)} instance`,
+        businessValue: `Provides consistent ${this.camelToReadable(what)} initialization across the codebase`,
+        tags: ["factory", "initialization", this.camelToKebab(what)],
+        confidence: 0.6,
+      };
+    }
+
+    // Getters
+    if (/^get[A-Z]/.test(name)) {
+      const what = name.replace(/^get/, "");
+      return {
+        purposeSummary: `Retrieves ${this.camelToReadable(what)} data from the appropriate source`,
+        businessValue: `Provides access to ${this.camelToReadable(what)} for dependent operations`,
+        tags: ["data-access", "getter", this.camelToKebab(what)],
+        confidence: 0.55,
+      };
+    }
+
+    // Setters/Updates
+    if (/^(set|update)[A-Z]/.test(name)) {
+      const what = name.replace(/^(set|update)/, "");
+      return {
+        purposeSummary: `Updates ${this.camelToReadable(what)} with new values and handles side effects`,
+        businessValue: `Enables modification of ${this.camelToReadable(what)} state`,
+        tags: ["mutation", "setter", this.camelToKebab(what)],
+        confidence: 0.55,
+      };
+    }
+
+    // Validation
+    if (/^(validate|check|verify|is|has|can)[A-Z]/.test(name)) {
+      const what = name.replace(/^(validate|check|verify|is|has|can)/, "");
+      return {
+        purposeSummary: `Validates ${this.camelToReadable(what)} to ensure data integrity and business rules`,
+        businessValue: `Prevents invalid ${this.camelToReadable(what)} from causing downstream errors`,
+        tags: ["validation", "data-integrity", this.camelToKebab(what)],
+        confidence: 0.6,
+      };
+    }
+
+    // Parsing/Transformation
+    if (/^(parse|transform|convert|format|normalize)[A-Z]/.test(name)) {
+      const what = name.replace(/^(parse|transform|convert|format|normalize)/, "");
+      return {
+        purposeSummary: `Transforms ${this.camelToReadable(what)} into the required format for processing`,
+        businessValue: `Enables interoperability by converting ${this.camelToReadable(what)} between formats`,
+        tags: ["transformation", "data-processing", this.camelToKebab(what)],
+        confidence: 0.6,
+      };
+    }
+
+    // Handlers
+    if (/^handle[A-Z]|Handler$/.test(name)) {
+      const what = name.replace(/^handle|Handler$/, "");
+      return {
+        purposeSummary: `Handles ${this.camelToReadable(what)} events and coordinates appropriate responses`,
+        businessValue: `Manages ${this.camelToReadable(what)} event lifecycle and error handling`,
+        tags: ["event-handling", "handler", this.camelToKebab(what)],
+        confidence: 0.6,
+      };
+    }
+
+    // Processing
+    if (/^(process|execute|run|perform)[A-Z]/.test(name)) {
+      const what = name.replace(/^(process|execute|run|perform)/, "");
+      return {
+        purposeSummary: `Executes ${this.camelToReadable(what)} operation and returns results`,
+        businessValue: `Performs core ${this.camelToReadable(what)} processing logic`,
+        tags: ["processing", "execution", this.camelToKebab(what)],
+        confidence: 0.55,
+      };
+    }
+
+    // Loading/Fetching
+    if (/^(load|fetch|read|retrieve)[A-Z]/.test(name)) {
+      const what = name.replace(/^(load|fetch|read|retrieve)/, "");
+      return {
+        purposeSummary: `Loads ${this.camelToReadable(what)} from storage or external source`,
+        businessValue: `Provides ${this.camelToReadable(what)} data for application operations`,
+        tags: ["data-loading", "io", this.camelToKebab(what)],
+        confidence: 0.55,
+      };
+    }
+
+    // Saving/Writing
+    if (/^(save|write|store|persist)[A-Z]/.test(name)) {
+      const what = name.replace(/^(save|write|store|persist)/, "");
+      return {
+        purposeSummary: `Persists ${this.camelToReadable(what)} to storage for later retrieval`,
+        businessValue: `Ensures ${this.camelToReadable(what)} data durability and recovery`,
+        tags: ["persistence", "data-storage", this.camelToKebab(what)],
+        confidence: 0.55,
+      };
+    }
+
+    // Generic fallback - still meaningful
+    return {
+      purposeSummary: `Performs ${this.camelToReadable(name)} operation within ${feature}`,
+      businessValue: `Provides ${this.camelToReadable(name)} capability for system functionality`,
+      tags: [this.camelToKebab(name), feature.toLowerCase().replace(/\s+/g, "-")],
+      confidence: 0.4,
+    };
+  }
+
+  /**
+   * Infer feature context from file path
+   */
+  private inferFeatureFromPath(pathParts: string[]): string {
+    const featureMap: Record<string, string> = {
+      auth: "Authentication",
+      authentication: "Authentication",
+      api: "API Layer",
+      routes: "API Routing",
+      endpoints: "API Endpoints",
+      cli: "CLI Commands",
+      commands: "CLI Commands",
+      core: "Core Engine",
+      parser: "Code Parsing",
+      graph: "Knowledge Graph",
+      indexer: "Code Indexer",
+      mcp: "MCP Protocol",
+      viewer: "Web Viewer",
+      justification: "Business Justification",
+      classification: "Code Classification",
+      ledger: "Change Ledger",
+      embeddings: "Vector Embeddings",
+      llm: "LLM Integration",
+      utils: "Utilities",
+      types: "Type Definitions",
+      models: "Data Models",
+      interfaces: "Interface Contracts",
+      storage: "Data Storage",
+      cache: "Caching",
+      optimization: "Performance Optimization",
+    };
+
+    for (const part of pathParts) {
+      const lower = part.toLowerCase();
+      if (featureMap[lower]) {
+        return featureMap[lower];
+      }
+    }
+    return "General";
+  }
+
+  /**
+   * Convert camelCase to readable string
+   */
+  private camelToReadable(str: string): string {
+    return str
+      .replace(/([A-Z])/g, " $1")
+      .replace(/^./, (s) => s.toUpperCase())
+      .trim();
+  }
+
+  /**
+   * Convert camelCase to kebab-case
+   */
+  private camelToKebab(str: string): string {
+    return str
+      .replace(/([A-Z])/g, "-$1")
+      .toLowerCase()
+      .replace(/^-/, "");
   }
 
   /**

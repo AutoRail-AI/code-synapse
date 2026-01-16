@@ -14,6 +14,10 @@ import * as path from "node:path";
 import type { AsyncDisposable } from "../../utils/disposable.js";
 import type { Result } from "../../types/result.js";
 import { ok, err } from "../../types/result.js";
+import { ensureDatabaseAccessible } from "../../utils/lock-manager.js";
+import { createLogger } from "../../utils/logger.js";
+
+const logger = createLogger("graph-database");
 
 // =============================================================================
 // Types
@@ -118,6 +122,7 @@ export class GraphDatabase implements AsyncDisposable {
   /**
    * Initializes the database connection.
    * Creates the database directory if it doesn't exist.
+   * Automatically cleans up stale lock files from crashed processes.
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
@@ -132,12 +137,26 @@ export class GraphDatabase implements AsyncDisposable {
       }
     }
 
+    // Check for stale locks (RocksDB only)
+    if (this.config.engine === "rocksdb") {
+      const isAccessible = ensureDatabaseAccessible(this.config.dbPath);
+      if (!isAccessible) {
+        throw new Error(
+          `Database is locked by another running process. ` +
+          `If you believe this is incorrect, check for zombie processes or manually remove: ` +
+          `${path.join(this.config.dbPath, "data", "LOCK")}`
+        );
+      }
+      logger.debug({ dbPath: this.config.dbPath }, "Database lock check passed");
+    }
+
     // Create CozoDB instance
     // CozoDb(engine, path, options)
     // engine: 'mem' | 'sqlite' | 'rocksdb'
     this.database = new CozoDb(this.config.engine, this.config.dbPath);
 
     this.initialized = true;
+    logger.info({ dbPath: this.config.dbPath, engine: this.config.engine }, "Database initialized");
   }
 
   /**
@@ -147,6 +166,8 @@ export class GraphDatabase implements AsyncDisposable {
     if (!this.initialized) {
       return;
     }
+
+    logger.debug({ dbPath: this.config.dbPath }, "Closing database connection");
 
     // Clear any active transactions
     this.activeTransactions.clear();
@@ -158,6 +179,7 @@ export class GraphDatabase implements AsyncDisposable {
     }
 
     this.initialized = false;
+    logger.info({ dbPath: this.config.dbPath }, "Database closed - lock released");
   }
 
   /**

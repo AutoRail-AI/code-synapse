@@ -160,82 +160,29 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
     }
   }
 
-  // Short functions (<=10 lines) - likely simple utilities
-  if (lineCount && lineCount <= 10) {
+  // Only very short functions (<=3 lines) are truly trivial
+  // Most real functions need LLM analysis for business context
+  if (lineCount && lineCount <= 3) {
     return {
       isTrivial: true,
-      reason: "short_function",
+      reason: "very_short_function",
       defaultJustification: {
-        purposeSummary: `Utility function: ${name}`,
-        businessValue: "Provides utility functionality",
+        purposeSummary: `Simple helper: ${name}`,
+        businessValue: "Provides simple utility functionality",
         featureContext: "Utilities",
         tags: ["utility", "helper"],
-        confidenceScore: 0.8,
+        confidenceScore: 0.7,
       },
     };
   }
 
-  // Common trivial function names
+  // Only truly trivial function patterns - these rarely have business logic
+  // IMPORTANT: Most functions with meaningful names should go through LLM
+  // to understand their business context properly
   const trivialNamePatterns = [
-    /^log[A-Z]/, // logging functions
-    /^debug[A-Z]/, // debug functions
-    /^print[A-Z]/, // print functions
-    /^throw[A-Z]/, // throw helpers
-    /^assert[A-Z]/, // assertions
-    /^noop$|^identity$/, // utility functions
-    /^create[A-Z]/, // factory functions
-    /^make[A-Z]/, // factory functions
-    /^build[A-Z]/, // builder functions
-    /^format[A-Z]/, // formatting functions
-    /^parse[A-Z]/, // parsing functions
-    /^serialize[A-Z]/, // serialization
-    /^deserialize[A-Z]/, // deserialization
-    /^convert[A-Z]/, // conversion functions
-    /^transform[A-Z]/, // transformation functions
-    /^wrap[A-Z]/, // wrapper functions
-    /^unwrap[A-Z]/, // unwrapper functions
-    /^extract[A-Z]/, // extraction functions
-    /^filter[A-Z]/, // filter functions
-    /^map[A-Z]/, // map functions
-    /^reduce[A-Z]/, // reduce functions
-    /^find[A-Z]/, // find functions
-    /^sort[A-Z]/, // sort functions
-    /^merge[A-Z]/, // merge functions
-    /^split[A-Z]/, // split functions
-    /^join[A-Z]/, // join functions
-    /^append[A-Z]/, // append functions
-    /^prepend[A-Z]/, // prepend functions
-    /^remove[A-Z]/, // remove functions
-    /^add[A-Z]/, // add functions
-    /^update[A-Z]/, // update functions
-    /^delete[A-Z]/, // delete functions
-    /^clear[A-Z]/, // clear functions
-    /^reset[A-Z]/, // reset functions
-    /^init[A-Z]/, // init functions
-    /^setup[A-Z]/, // setup functions
-    /^cleanup[A-Z]/, // cleanup functions
-    /^dispose[A-Z]/, // dispose functions
-    /^close[A-Z]/, // close functions
-    /^open[A-Z]/, // open functions
-    /^start[A-Z]/, // start functions
-    /^stop[A-Z]/, // stop functions
-    /^enable[A-Z]/, // enable functions
-    /^disable[A-Z]/, // disable functions
-    /^check[A-Z]/, // check functions
-    /^test[A-Z]/, // test functions
-    /^try[A-Z]/, // try functions
-    /^ensure[A-Z]/, // ensure functions
-    /^require[A-Z]/, // require functions
-    /^normalize[A-Z]/, // normalize functions
-    /^sanitize[A-Z]/, // sanitize functions
-    /^escape[A-Z]/, // escape functions
-    /^unescape[A-Z]/, // unescape functions
-    /^encode[A-Z]/, // encode functions
-    /^decode[A-Z]/, // decode functions
-    /^hash[A-Z]/, // hash functions
-    /^compare[A-Z]/, // compare functions
-    /^equals[A-Z]/, // equals functions
-    /^matches[A-Z]/, // matches functions
+    /^noop$/, // no-op function
+    /^identity$/, // identity function
+    /^_.*/, // private/internal helpers starting with underscore
   ];
 
   for (const pattern of trivialNamePatterns) {
@@ -244,11 +191,11 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
         isTrivial: true,
         reason: "trivial_utility",
         defaultJustification: {
-          purposeSummary: `Utility function: ${name}`,
-          businessValue: "Provides common utility functionality",
+          purposeSummary: `Internal utility: ${name}`,
+          businessValue: "Provides internal utility functionality",
           featureContext: "Utilities",
-          tags: ["utility", "helper"],
-          confidenceScore: 0.85,
+          tags: ["utility", "internal"],
+          confidenceScore: 0.7,
         },
       };
     }
@@ -259,21 +206,23 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
 
 /**
  * Check if a class is trivial
+ * Only truly simple classes (empty or minimal) should skip LLM
  */
 function checkTrivialClass(entity: EntityInfo): TrivialCheckResult {
   const { name, lineCount } = entity;
 
-  // Small to medium classes (<=50 lines) - most classes are relatively simple
-  if (!lineCount || lineCount <= 50) {
+  // Only very small classes (<=5 lines) are trivial - likely just type containers
+  // Most classes have business meaning and should go through LLM
+  if (lineCount && lineCount <= 5) {
     return {
       isTrivial: true,
-      reason: "simple_class",
+      reason: "minimal_class",
       defaultJustification: {
-        purposeSummary: `Class definition for ${name}`,
-        businessValue: "Provides type structure and behavior",
+        purposeSummary: `Simple class: ${name}`,
+        businessValue: "Provides basic type structure",
         featureContext: "Type definitions",
         tags: ["class", "type"],
-        confidenceScore: 0.85,
+        confidenceScore: 0.7,
       },
     };
   }
@@ -320,22 +269,23 @@ function checkTrivialClass(entity: EntityInfo): TrivialCheckResult {
 
 /**
  * Check if an interface is trivial
+ * Interfaces often define important contracts - only skip truly minimal ones
  */
 function checkTrivialInterface(entity: EntityInfo): TrivialCheckResult {
   const { name, lineCount } = entity;
 
-  // Most interfaces are trivial type definitions - be aggressive
-  // Small to medium interfaces (<=30 lines)
-  if (!lineCount || lineCount <= 30) {
+  // Only very small interfaces (<=5 lines) are trivial
+  // Larger interfaces define important contracts that need LLM analysis
+  if (lineCount && lineCount <= 5) {
     return {
       isTrivial: true,
-      reason: "simple_interface",
+      reason: "minimal_interface",
       defaultJustification: {
-        purposeSummary: `Type interface defining ${name} structure`,
-        businessValue: "Provides type safety and documentation",
+        purposeSummary: `Simple interface: ${name}`,
+        businessValue: "Provides basic type contract",
         featureContext: "Type definitions",
         tags: ["interface", "type"],
-        confidenceScore: 0.9,
+        confidenceScore: 0.7,
       },
     };
   }

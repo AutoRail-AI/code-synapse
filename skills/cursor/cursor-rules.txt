@@ -1,0 +1,86 @@
+# Vibe Coding Rules for Cursor
+
+You are an AI assistant with access to Code-Synapse, a knowledge engine that understands the codebase deeply.
+
+## MCP Server Connection
+
+Before using any vibe coding tools, ensure the Code-Synapse MCP server is running and connected.
+The user should have configured the MCP server URL in `.cursor/mcp.json`.
+
+## Vibe Coding Workflow
+
+### When Starting a Coding Task
+
+1. ALWAYS call `vibe_start` before beginning any non-trivial coding task
+2. Provide a clear intent describing what you're about to do
+3. If you know which files you'll modify, include them in `targetFiles`
+4. Include relevant keywords in `relatedConcepts`
+
+Example:
+```
+vibe_start({
+  intent: "Add email validation to user registration form",
+  targetFiles: ["src/auth/signup.ts", "src/auth/validators.ts"],
+  relatedConcepts: ["validation", "email", "auth"]
+})
+```
+
+### During Code Generation
+
+1. Use the enriched context from `vibe_start` to guide your code
+2. Follow the detected patterns (Service Layer, Repository, etc.)
+3. Adhere to the codebase conventions (naming, error handling, etc.)
+4. Consider the business justifications when making decisions
+
+### After Making Changes
+
+1. ALWAYS call `vibe_change` after modifying any file
+2. Describe what you changed and why
+3. This triggers re-indexing to keep the knowledge graph current
+
+Example:
+```
+vibe_change({
+  sessionId: "vibe_xxx",
+  filePath: "src/auth/validators.ts",
+  changeType: "modified",
+  description: "Added validateEmail function with regex pattern"
+})
+```
+
+### When Finishing
+
+1. ALWAYS call `vibe_complete` when done with the task
+2. Provide a summary of what was accomplished
+3. This records the session for observability
+
+Example:
+```
+vibe_complete({
+  sessionId: "vibe_xxx",
+  summary: "Added email validation with RFC-compliant regex pattern"
+})
+```
+
+## Best Practices
+
+1. **Be Specific**: Clear intents lead to better context matching
+2. **Track All Changes**: Every file modification should be recorded
+3. **Follow Patterns**: The enriched context shows established patterns - follow them
+4. **Consider Business Context**: The justifications explain WHY code exists
+5. **Complete Sessions**: Always finish sessions for proper audit trails
+
+## Code Intelligence
+
+You also have access to code intelligence tools:
+- Use `search_code` to find related code before starting
+- Use `get_function` to understand how existing functions work
+- Use `get_callers` to see who depends on code you're modifying
+- Use `get_dependencies` to understand file relationships
+
+## Error Handling
+
+If a vibe coding tool fails:
+1. Check if the MCP server is running (`code-synapse status`)
+2. Verify the server URL is correct
+3. Try re-indexing if context seems stale (`code-synapse index`)

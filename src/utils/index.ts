@@ -27,6 +27,9 @@ export * from "./pool.js";
 // Re-export event bus
 export * from "./events.js";
 
+// Re-export lock manager
+export * from "./lock-manager.js";
+
 // =============================================================================
 // Configuration Paths
 // =============================================================================

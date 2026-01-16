@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "code-synapse": {
+      "url": "http://localhost:3100/mcp",
+      "_comment": "Replace with your Code-Synapse MCP server URL. Run 'code-synapse start' to start the server."
+    }
+  }
+}

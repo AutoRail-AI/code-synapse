@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schemas/mcp-config.schema.json",
+  "mcpServers": {
+    "code-synapse": {
+      "command": "code-synapse",
+      "args": ["start"],
+      "cwd": "${PROJECT_ROOT}",
+      "_comment": "Replace ${PROJECT_ROOT} with your project path, or use HTTP transport below"
+    }
+  },
+  "_alternative_http_transport": {
+    "mcpServers": {
+      "code-synapse": {
+        "url": "http://localhost:3100/mcp",
+        "_comment": "Use this if you want HTTP transport. Replace URL with your server's address."
+      }
+    }
+  }
+}

@@ -9,6 +9,9 @@
 
 import type { IGraphStore } from "../interfaces/IGraphStore.js";
 import type { ExtractionResult, CozoBatch } from "../extraction/types.js";
+import { createLogger } from "../../utils/logger.js";
+
+const logger = createLogger("graph-writer");
 
 // =============================================================================
 // Types
@@ -172,21 +175,32 @@ export class GraphWriter {
     let deletedCount = 0;
 
     // Helper to safely query - returns empty array if relation doesn't exist
+    // IMPORTANT: Logs errors for observability instead of silently swallowing
     const safeQuery = async <T>(script: string, params?: Record<string, unknown>): Promise<T[]> => {
       try {
         const result = await this.store.query<T>(script, params);
         return result.rows;
-      } catch {
+      } catch (error) {
+        // Log the error for debugging - don't silently swallow
+        logger.warn(
+          { error, fileId, script: script.substring(0, 100) },
+          "Graph query failed during file entity deletion (may be expected if relation doesn't exist)"
+        );
         return [];
       }
     };
 
     // Helper to safely execute - ignores errors if relation doesn't exist
+    // IMPORTANT: Logs errors for observability instead of silently swallowing
     const safeExecute = async (script: string, params?: Record<string, unknown>): Promise<void> => {
       try {
         await this.store.execute(script, params);
-      } catch {
-        // Ignore - relation might not exist
+      } catch (error) {
+        // Log the error - relation might not exist but we should know about failures
+        logger.warn(
+          { error, fileId, script: script.substring(0, 100) },
+          "Graph execute failed during file entity deletion (may be expected if relation doesn't exist)"
+        );
       }
     };
 

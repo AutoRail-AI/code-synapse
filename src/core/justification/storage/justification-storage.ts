@@ -17,6 +17,9 @@ import type {
   JustificationStats,
   ConfidenceLevel,
 } from "../models/justification.js";
+import { createLogger } from "../../../utils/logger.js";
+
+const logger = createLogger("justification-storage");
 
 // =============================================================================
 // Types
@@ -213,9 +216,12 @@ export class JustificationStorage {
         childId: childJustificationId,
         relationshipType,
       });
-    } catch (_error) {
-      // Log but don't fail - hierarchy edges are supplementary
-      // The core justification is already stored
+    } catch (error) {
+      // Log the error - hierarchy edges are supplementary but we should know about failures
+      logger.warn(
+        { error, parentJustificationId, childJustificationId, relationshipType },
+        "Failed to create justification hierarchy edge (non-fatal)"
+      );
     }
   }
 
@@ -228,18 +234,29 @@ export class JustificationStorage {
   ): Promise<void> {
     // Try each entity type - CozoDB will only succeed for the correct type
     const entityTypes = ["file", "function", "class", "interface", "type_alias", "variable", "module"];
+    let succeeded = false;
 
-    for (const _entityType of entityTypes) {
+    for (const entityType of entityTypes) {
       try {
         const query = `
           ?[from_id, to_id] <- [[$entityId, $justificationId]]
           :put has_justification { from_id, to_id }
         `;
         await this.graphStore.execute(query, { entityId, justificationId });
+        succeeded = true;
+        logger.debug({ entityId, justificationId, entityType }, "Created justification relationship");
         return; // Success - entity exists in this table
       } catch {
         // Entity not in this table, try next
       }
+    }
+
+    // Log if we couldn't create the relationship for any entity type
+    if (!succeeded) {
+      logger.warn(
+        { entityId, justificationId },
+        "Failed to create justification relationship - entity not found in any table"
+      );
     }
   }
 
@@ -393,6 +410,34 @@ export class JustificationStorage {
       }
     }
 
+    return result;
+  }
+
+  /**
+   * Get ALL justifications from the database
+   * Used for hierarchical processing where we need all existing justifications for context
+   */
+  async getAllJustifications(): Promise<Map<string, EntityJustification>> {
+    const result = new Map<string, EntityJustification>();
+
+    const queryResult = await this.graphStore.query<JustificationRow>(
+      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        feature_context, detailed_description, tags, inferred_from, confidence_score,
+        confidence_level, reasoning, evidence_sources, parent_justification_id,
+        hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
+        confirmed_by_user_id, created_at, updated_at, version] :=
+        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, reasoning, evidence_sources, parent_justification_id,
+          hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
+          confirmed_by_user_id, created_at, updated_at, version}`
+    );
+
+    for (const row of queryResult.rows) {
+      result.set(row.entity_id, this.fromRow(row));
+    }
+
+    logger.debug({ count: result.size }, "Fetched all justifications");
     return result;
   }
 

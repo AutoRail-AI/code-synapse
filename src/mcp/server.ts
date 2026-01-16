@@ -64,6 +64,13 @@ import {
   getGraphResource,
   getResourceDefinitions,
 } from "./resources.js";
+import {
+  vibeStart,
+  vibeChange,
+  vibeComplete,
+  vibeStatus,
+  VIBE_TOOL_DEFINITIONS,
+} from "./vibe-coding.js";
 
 const logger = createLogger("mcp-server");
 
@@ -345,6 +352,8 @@ export const TOOL_DEFINITIONS = [
       required: ["originalPrompt", "affectedFiles"],
     },
   },
+  // Vibe coding tools
+  ...VIBE_TOOL_DEFINITIONS,
 ];
 
 /**
@@ -656,6 +665,113 @@ export function createMcpServer(
           };
         }
 
+        // Vibe coding tools
+        case "vibe_start": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("vibe_start", argsObj, toolContext.sessionId);
+
+          const result = await vibeStart(
+            graphStore as unknown as import("../core/interfaces/IGraphStore.js").IGraphStore,
+            toolContext.justificationService ?? null,
+            toolContext.ledger ?? null,
+            {
+              intent: args?.intent as string,
+              targetFiles: args?.targetFiles as string[] | undefined,
+              relatedConcepts: args?.relatedConcepts as string[] | undefined,
+              maxContextItems: args?.maxContextItems as number | undefined,
+            }
+          );
+
+          observer?.onToolResult(
+            "vibe_start",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "vibe_change": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("vibe_change", argsObj, toolContext.sessionId);
+
+          const result = await vibeChange(
+            graphStore as unknown as import("../core/interfaces/IGraphStore.js").IGraphStore,
+            toolContext.justificationService ?? null,
+            toolContext.ledger ?? null,
+            toolContext.indexer ?? null,
+            {
+              sessionId: args?.sessionId as string | undefined,
+              filePath: args?.filePath as string,
+              changeType: args?.changeType as "created" | "modified" | "deleted" | "renamed",
+              description: args?.description as string,
+              previousPath: args?.previousPath as string | undefined,
+            }
+          );
+
+          observer?.onToolResult(
+            "vibe_change",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "vibe_complete": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("vibe_complete", argsObj, toolContext.sessionId);
+
+          const result = await vibeComplete(
+            toolContext.ledger ?? null,
+            {
+              sessionId: args?.sessionId as string,
+              summary: args?.summary as string | undefined,
+            }
+          );
+
+          observer?.onToolResult(
+            "vibe_complete",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "vibe_status": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("vibe_status", argsObj, toolContext.sessionId);
+
+          const result = await vibeStatus({
+            sessionId: args?.sessionId as string,
+          });
+
+          observer?.onToolResult(
+            "vibe_status",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
         default:
           throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
       }
@@ -866,25 +982,33 @@ export async function startServer(options: ServerOptions): Promise<void> {
   indexer.setJustificationService(justificationService);
   logger.debug("Justification service attached to indexer");
 
-  // Initialize change ledger
-  const ledgerStorage = createLedgerStorage(graphStore);
-  changeLedger = createChangeLedger(ledgerStorage, {
-    memoryCacheSize: 10000,
-    persistToDisk: true,
-    maxBatchSize: 100,
-    flushIntervalMs: 5000,
-    retentionDays: 30,
-    enableSubscriptions: true,
-  });
-  await changeLedger.initialize();
-  logger.info("Change ledger initialized");
+  // Initialize change ledger (non-fatal - system works without it)
+  try {
+    const ledgerStorage = createLedgerStorage(graphStore);
+    changeLedger = createChangeLedger(ledgerStorage, {
+      memoryCacheSize: 10000,
+      persistToDisk: true,
+      maxBatchSize: 100,
+      flushIntervalMs: 5000,
+      retentionDays: 30,
+      enableSubscriptions: true,
+    });
+    await changeLedger.initialize();
+    logger.info("Change ledger initialized");
+  } catch (ledgerError) {
+    logger.warn(
+      { error: ledgerError },
+      "Failed to initialize change ledger - system will operate without history tracking"
+    );
+    changeLedger = null;
+  }
 
   // Create MCP server with full service integration
   server = createMcpServer({
     graphStore,
     observer,
     adaptiveIndexer: undefined, // TODO: Wire up adaptive indexer
-    ledger: changeLedger,
+    ledger: changeLedger ?? undefined,
     justificationService,
     indexer,
   });

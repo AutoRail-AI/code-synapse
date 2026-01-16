@@ -35,11 +35,13 @@ export function KnowledgeView() {
   } = useKnowledgeStore();
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'functions' | 'classes' | 'interfaces'>('all');
 
   // Load all entities on mount
   useEffect(() => {
     setLoading(true);
+    setError(null);
     Promise.all([
       getFunctions({ limit: 500 }),
       getClasses({ limit: 500 }),
@@ -51,6 +53,7 @@ export function KnowledgeView() {
       })
       .catch((err) => {
         console.error('Failed to load entities:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load knowledge data. Is the API server running?');
         setLoading(false);
       });
   }, [setEntities]);
@@ -128,6 +131,28 @@ export function KnowledgeView() {
     return (
       <div className="flex items-center justify-center h-full text-slate-400">
         Loading entities...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4 p-8">
+        <div className="text-red-400 text-lg font-medium">Failed to load knowledge</div>
+        <div className="text-slate-500 text-center max-w-md">{error}</div>
+        <div className="text-sm text-slate-600 mt-4">
+          Make sure:
+          <ul className="list-disc list-inside mt-2 text-left">
+            <li>The API server is running (<code className="text-cyan-400">code-synapse viewer</code>)</li>
+            <li>You have indexed your project (<code className="text-cyan-400">code-synapse index</code>)</li>
+          </ul>
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          className="btn btn-primary mt-4"
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -273,7 +298,16 @@ export function KnowledgeView() {
           </tbody>
         </table>
 
-        {filteredEntities.length === 0 && (
+        {filteredEntities.length === 0 && entities.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-2">
+            <Code className="w-12 h-12 text-slate-600" />
+            <div className="text-lg font-medium">No knowledge extracted yet</div>
+            <div className="text-sm text-slate-600 text-center max-w-md">
+              Run <code className="text-cyan-400 bg-slate-800 px-1 rounded">code-synapse index</code> to extract knowledge from your codebase.
+            </div>
+          </div>
+        )}
+        {filteredEntities.length === 0 && entities.length > 0 && (
           <div className="flex items-center justify-center h-32 text-slate-500">
             No entities found matching your filters
           </div>

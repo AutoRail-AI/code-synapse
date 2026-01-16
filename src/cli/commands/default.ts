@@ -25,7 +25,19 @@ import { initCommand } from "./init.js";
 import { startCommand } from "./start.js";
 import { createGraphStore, type IGraphStore } from "../../core/graph/index.js";
 import { createGraphViewer, startViewerServer } from "../../viewer/index.js";
+import type { ViewerServerOptions } from "../../viewer/ui/server.js";
 import { createIParser } from "../../core/parser/index.js";
+import {
+  createClassificationStorage,
+  createClassificationEngine,
+  type IClassificationEngine,
+} from "../../core/classification/index.js";
+import {
+  createChangeLedger,
+  createLedgerStorage,
+  createLedgerEntry,
+  type IChangeLedger,
+} from "../../core/ledger/index.js";
 import {
   createIndexerCoordinator,
   detectProject,
@@ -353,6 +365,141 @@ async function runJustification(
 }
 
 /**
+ * Run classification with shared database connection
+ */
+async function runClassification(
+  store: IGraphStore,
+  llmService: ILLMService | null,
+  spinner: ReturnType<typeof ora>
+): Promise<IClassificationEngine | null> {
+  try {
+    spinner.text = "Initializing classification engine...";
+
+    // Create classification storage and engine
+    const classificationStorage = createClassificationStorage(
+      store as unknown as import("../../core/graph/database.js").GraphDatabase
+    );
+    const classificationEngine = await createClassificationEngine(
+      classificationStorage,
+      llmService ?? null
+    );
+
+    // Get all entity IDs that need classification
+    spinner.text = "Fetching entities for classification...";
+
+    const functions = await store.query<{ id: string; name: string; file_id: string }>(
+      `?[id, name, file_id] := *function{id, name, file_id}`
+    );
+    const classes = await store.query<{ id: string; name: string; file_id: string }>(
+      `?[id, name, file_id] := *class{id, name, file_id}`
+    );
+    const interfaces = await store.query<{ id: string; name: string; file_id: string }>(
+      `?[id, name, file_id] := *interface{id, name, file_id}`
+    );
+
+    // Get file paths for context
+    const fileIds = new Set([
+      ...functions.rows.map(r => r.file_id),
+      ...classes.rows.map(r => r.file_id),
+      ...interfaces.rows.map(r => r.file_id),
+    ]);
+    const filePathMap = new Map<string, string>();
+    if (fileIds.size > 0) {
+      const files = await store.query<{ id: string; relative_path: string }>(
+        `?[id, relative_path] := *file{id, relative_path}, id in $fileIds`,
+        { fileIds: Array.from(fileIds) }
+      );
+      for (const f of files.rows) {
+        filePathMap.set(f.id, f.relative_path);
+      }
+    }
+
+    // Build classification requests with all required fields
+    const allEntities = [
+      ...functions.rows.map(r => ({
+        entityId: r.id,
+        entityType: "function" as const,
+        entityName: r.name,
+        filePath: filePathMap.get(r.file_id) || "",
+        imports: [] as string[],
+        exports: [] as string[],
+        calls: [] as string[],
+        calledBy: [] as string[],
+        fileImports: [] as string[],
+        packageDependencies: [] as string[],
+      })),
+      ...classes.rows.map(r => ({
+        entityId: r.id,
+        entityType: "class" as const,
+        entityName: r.name,
+        filePath: filePathMap.get(r.file_id) || "",
+        imports: [] as string[],
+        exports: [] as string[],
+        calls: [] as string[],
+        calledBy: [] as string[],
+        fileImports: [] as string[],
+        packageDependencies: [] as string[],
+      })),
+      ...interfaces.rows.map(r => ({
+        entityId: r.id,
+        entityType: "interface" as const,
+        entityName: r.name,
+        filePath: filePathMap.get(r.file_id) || "",
+        imports: [] as string[],
+        exports: [] as string[],
+        calls: [] as string[],
+        calledBy: [] as string[],
+        fileImports: [] as string[],
+        packageDependencies: [] as string[],
+      })),
+    ];
+
+    if (allEntities.length === 0) {
+      spinner.info(chalk.dim("No entities to classify"));
+      return classificationEngine;
+    }
+
+    // Run classification in batches
+    spinner.text = `Classifying ${allEntities.length} entities...`;
+
+    let classified = 0;
+    const batchSize = 50;
+
+    for (let i = 0; i < allEntities.length; i += batchSize) {
+      const batch = allEntities.slice(i, i + batchSize);
+      await classificationEngine.classifyBatch({
+        entities: batch,
+        options: {
+          parallel: true,
+          maxConcurrency: 5,
+          skipExisting: true,
+        },
+      });
+      classified += batch.length;
+      spinner.text = `Classifying entities: ${classified}/${allEntities.length}`;
+    }
+
+    spinner.succeed(chalk.green(`Classification complete! ${classified} entities classified`));
+
+    // Show classification stats
+    const stats = await classificationEngine.getStats();
+    console.log();
+    console.log(chalk.white.bold("Classification Results"));
+    console.log(`  Domain entities:         ${stats.domainCount}`);
+    console.log(`  Infrastructure entities: ${stats.infrastructureCount}`);
+    console.log(`  Unknown:                 ${stats.unknownCount}`);
+    console.log();
+    console.log(chalk.dim("─".repeat(50)));
+
+    return classificationEngine;
+  } catch (error) {
+    spinner.warn(chalk.yellow("Classification had issues, continuing..."));
+    logger.error({ err: error }, "Classification failed");
+    return null;
+  }
+}
+
+/**
  * Default command - handles init, index, and start in one go
  * Starts both the MCP server and the Web Viewer
  * Uses a shared database connection to avoid RocksDB lock conflicts.
@@ -362,6 +509,8 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
   let viewerServer: Awaited<ReturnType<typeof startViewerServer>> | null = null;
   let graphStore: IGraphStore | null = null;
   let viewer: ReturnType<typeof createGraphViewer> | null = null;
+  let classificationEngine: IClassificationEngine | null = null;
+  let changeLedger: IChangeLedger | null = null;
 
   // Step 1: Check if initialized, if not run interactive setup (before any logging)
   const configPath = getConfigPath();
@@ -418,6 +567,31 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
     await graphStore.initialize();
     spinner.succeed(chalk.green("Database opened"));
 
+    // Create change ledger for observability
+    spinner.start("Initializing change ledger...");
+    const ledgerStorage = createLedgerStorage(
+      graphStore as unknown as import("../../core/graph/database.js").GraphDatabase
+    );
+    changeLedger = createChangeLedger(ledgerStorage, {
+      memoryCacheSize: 10000,
+      persistToDisk: true,
+      flushIntervalMs: 1000,
+      maxBatchSize: 100,
+      retentionDays: 90,
+      enableSubscriptions: true,
+    });
+    await changeLedger.initialize();
+    spinner.succeed(chalk.green("Change ledger initialized"));
+
+    // Log system startup
+    await changeLedger.append(
+      createLedgerEntry(
+        "system:startup",
+        "user-interface",
+        "Code-Synapse started - default command"
+      )
+    );
+
     // Step 3: Run indexing (unless skipped or justify-only)
     if (!options.skipIndex && !options.justifyOnly) {
       console.log();
@@ -427,6 +601,17 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
 
       spinner.start("Indexing project...");
       await runIndexing(graphStore, config, spinner);
+
+      // Log indexing completion
+      if (changeLedger) {
+        await changeLedger.append(
+          createLedgerEntry(
+            "index:scan:completed",
+            "filesystem",
+            "Indexing completed successfully"
+          )
+        );
+      }
     } else if (options.justifyOnly) {
       spinner.info(chalk.dim("Skipping indexing (--justify-only flag)"));
     } else {
@@ -434,6 +619,7 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
     }
 
     // Step 4: Run business justification (unless skipped)
+    let llmServiceForClassification: ILLMService | null = null;
     if (!options.skipJustify) {
       console.log();
       console.log(chalk.cyan.bold("Business Justification Layer"));
@@ -445,8 +631,41 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       if (!justifySuccess) {
         spinner.warn(chalk.yellow("Business justification had issues, continuing..."));
       }
+
+      // Log justification completion
+      if (changeLedger) {
+        await changeLedger.append(
+          createLedgerEntry(
+            "justify:completed",
+            "justification-engine",
+            "Business justification completed"
+          )
+        );
+      }
     } else {
       spinner.info(chalk.dim("Skipping justification (--skip-justify flag)"));
+    }
+
+    // Step 4.5: Run classification (Domain/Infrastructure)
+    if (!options.skipJustify) {
+      console.log();
+      console.log(chalk.cyan.bold("Business Classification Layer"));
+      console.log(chalk.dim("─".repeat(50)));
+      console.log();
+
+      spinner.start("Running classification...");
+      classificationEngine = await runClassification(graphStore, llmServiceForClassification, spinner);
+
+      // Log classification completion
+      if (changeLedger) {
+        await changeLedger.append(
+          createLedgerEntry(
+            "classify:completed",
+            "classification-engine",
+            "Business classification completed"
+          )
+        );
+      }
     }
 
     // Step 5: Find available ports (one for MCP, one for Viewer)
@@ -525,8 +744,17 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       // Get stats for display
       const stats = await viewer.getOverviewStats();
 
-      // Start viewer server
-      viewerServer = await startViewerServer(viewer, viewerPort, "127.0.0.1");
+      // Create classification storage for viewer
+      const classificationStorage = createClassificationStorage(
+        graphStore as unknown as import("../../core/graph/database.js").GraphDatabase
+      );
+
+      // Start viewer server with classification and ledger
+      const viewerOptions: ViewerServerOptions = {
+        classificationStorage,
+        changeLedger: changeLedger ?? undefined,
+      };
+      viewerServer = await startViewerServer(viewer, viewerPort, "127.0.0.1", viewerOptions);
 
       spinner.succeed(chalk.green(`Web Viewer started on port ${viewerPort}`));
 
@@ -550,6 +778,14 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
 
     // Step 7: Setup cleanup handler
     const cleanup = async () => {
+      // Close change ledger FIRST (stops flush timer before DB close)
+      if (changeLedger) {
+        try {
+          await changeLedger.shutdown();
+        } catch {
+          // Ignore shutdown errors
+        }
+      }
       if (viewerServer) {
         logger.info("Stopping Viewer server...");
         await viewerServer.stop();
@@ -582,7 +818,15 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
     logger.error({ err: error }, "Default command failed");
     throw error;
   } finally {
-    // Always cleanup the shared database connection
+    // Always cleanup - ledger MUST be closed before database
+    if (changeLedger) {
+      try {
+        await changeLedger.shutdown();
+      } catch {
+        // Ignore shutdown errors
+      }
+    }
+    // Close database connection after ledger
     if (graphStore) {
       try {
         await graphStore.close();

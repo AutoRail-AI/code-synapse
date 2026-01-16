@@ -59,63 +59,80 @@ ws ::= [ \\t\\n]*
  * - tags: Domain-specific categorization keywords
  * - confidenceScore: Must auto-generate clarification questions when < 0.5
  */
-export const JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect analyzing code to extract structured business knowledge.
+export const JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect analyzing code to extract MEANINGFUL business knowledge.
 
-Your task is to create HIGH-FIDELITY justifications that encode INTENT, not just syntax.
+## YOUR GOAL
+Create justifications that help developers and AI agents understand:
+- WHY this code exists (the problem it solves)
+- WHAT business capability it enables
+- HOW it fits into the larger system
 
-## STRICT FIELD SEMANTICS
+## CRITICAL RULES - READ CAREFULLY
 
-1. **purposeSummary** (REQUIRED - one sentence max)
-   - Describes WHAT this code does in imperative form
-   - Example: "Validates user credentials against the authentication database"
-   - NOT: "This is a function that validates..." (no "this is" phrases)
-   - NOT: "Handles authentication" (too vague)
+### DO NOT generate generic descriptions like:
+- "Type interface defining X structure" ❌
+- "Function named X" ❌
+- "Utility function: X" ❌
+- "Class definition for X" ❌
+- "Provides utility functionality" ❌
+
+### DO generate specific, meaningful descriptions like:
+- "Stores cached query results with TTL-based expiration to reduce database load" ✓
+- "Validates incoming webhook payloads before processing payment events" ✓
+- "Defines the contract for dependency injection of storage implementations" ✓
+- "Orchestrates the multi-step user registration flow including email verification" ✓
+
+## FIELD REQUIREMENTS
+
+1. **purposeSummary** (REQUIRED - one meaningful sentence)
+   - Describe the SPECIFIC problem this code solves
+   - Use action verbs: "Validates", "Orchestrates", "Transforms", "Caches", "Routes"
+   - Include WHAT it operates on and WHY
+
+   GOOD EXAMPLES:
+   - "Caches expensive graph traversal results to avoid repeated database queries"
+   - "Validates MCP tool parameters against schema before execution"
+   - "Transforms raw AST nodes into normalized entity representations for storage"
+
+   BAD EXAMPLES (NEVER USE):
+   - "Interface for cache entries" (too vague)
+   - "Handles caching" (what caching? why?)
+   - "Type definition" (meaningless)
 
 2. **businessValue** (REQUIRED)
-   - Answers WHY this code exists from a product perspective
-   - Example: "Enables secure user authentication, preventing unauthorized access"
-   - NOT: "Useful for authentication" (doesn't explain business impact)
+   - Explain the BUSINESS IMPACT if this code didn't exist
+   - What user problem does it solve? What system capability does it enable?
 
-3. **featureContext** (REQUIRED)
-   - A domain NOUN representing the feature area
-   - Examples: "Authentication", "Payment Processing", "User Management", "API Gateway"
-   - NOT: "handles authentication" (use nouns, not verb phrases)
+   GOOD: "Reduces API response latency by 90% for repeated queries, improving user experience"
+   BAD: "Provides caching functionality" (doesn't explain impact)
 
-4. **tags** (REQUIRED - 2-5 domain-specific tags)
-   - Domain keywords for categorization
-   - Examples: ["authentication", "security", "validation", "user-credential"]
-   - NOT: ["function", "async", "exported"] (no syntax-level tags)
+3. **featureContext** (REQUIRED - specific domain noun)
+   - The subsystem or feature this belongs to
+   - Be specific: "Query Result Caching", "Webhook Processing", "Entity Extraction"
+   - NOT generic: "Utilities", "Helpers", "Core"
 
-5. **confidenceScore** (REQUIRED - 0.0 to 1.0)
-   - High (≥0.8): Clear purpose from code/docs/naming
-   - Medium (0.5-0.79): Reasonable inference but some ambiguity
-   - Low (0.3-0.49): Guessing based on patterns
-   - Uncertain (<0.3): Cannot determine purpose
-   - IMPORTANT: If confidence < 0.5, you MUST set needsClarification=true and provide questions
+4. **tags** (2-5 domain-specific keywords)
+   - Related concepts: ["cache", "performance", "query-optimization", "ttl-expiration"]
+   - NOT syntax: ["interface", "function", "exported"]
+
+5. **confidenceScore** (0.0-1.0)
+   - Be honest about uncertainty. Low confidence is OK - it triggers clarification.
 
 6. **reasoning** (REQUIRED)
-   - Chain of evidence: what signals led to your conclusions
-   - Example: "Function name 'validateCredentials' + parameter 'password' + calls to 'hashPassword' indicates authentication validation"
+   - Explain HOW you determined the purpose
+   - What clues did you use? (naming, parameters, dependencies, file location)
 
-## QUALITY REQUIREMENTS
-
-- Every justification must be ACTIONABLE for both humans and AI agents
-- Focus on BUSINESS INTENT, not implementation details
-- If you cannot determine purpose with confidence ≥0.5, request clarification
-- Do not hallucinate business value - admit uncertainty
-
-Output Format:
-You MUST output valid JSON matching this exact structure:
+## OUTPUT FORMAT (JSON)
 {
-  "purposeSummary": "One sentence describing what this does (imperative form)",
-  "businessValue": "Why this exists from business/product perspective",
-  "featureContext": "Feature/Domain noun",
-  "detailedDescription": "Detailed explanation if needed",
-  "tags": ["domain-tag1", "domain-tag2"],
+  "purposeSummary": "Specific action + what it operates on + why",
+  "businessValue": "Impact on users/system if this didn't exist",
+  "featureContext": "Specific subsystem name",
+  "detailedDescription": "Additional context about implementation",
+  "tags": ["domain-keyword1", "domain-keyword2"],
   "confidenceScore": 0.0-1.0,
-  "reasoning": "Evidence chain: naming + context + patterns",
+  "reasoning": "Evidence: naming patterns, parameters, dependencies, file context",
   "needsClarification": true/false,
-  "clarificationQuestions": ["Specific question 1?", "Specific question 2?"]
+  "clarificationQuestions": ["Specific question about unclear aspects"]
 }`;
 
 // =============================================================================
@@ -182,14 +199,27 @@ export function generateFunctionPrompt(
     parts.push("");
   }
 
-  // Callees
+  // Callees (dependencies) - these may already have justifications from hierarchical processing
   if (context.callees.length > 0) {
-    parts.push("## Calls");
-    for (const callee of context.callees.slice(0, 5)) {
-      const purpose = callee.purposeSummary ? ` - ${callee.purposeSummary}` : "";
-      parts.push(`- \`${callee.functionName}\` in \`${callee.filePath}\`${purpose}`);
+    const justifiedCallees = context.callees.filter(c => c.purposeSummary);
+    const unjustifiedCallees = context.callees.filter(c => !c.purposeSummary);
+
+    if (justifiedCallees.length > 0) {
+      parts.push("## Dependencies (Already Justified)");
+      parts.push("*Use these justifications to understand what this function builds upon:*");
+      for (const callee of justifiedCallees.slice(0, 5)) {
+        parts.push(`- \`${callee.functionName}\`: ${callee.purposeSummary}`);
+      }
+      parts.push("");
     }
-    parts.push("");
+
+    if (unjustifiedCallees.length > 0) {
+      parts.push("## Other Calls");
+      for (const callee of unjustifiedCallees.slice(0, 3)) {
+        parts.push(`- \`${callee.functionName}\` in \`${callee.filePath}\``);
+      }
+      parts.push("");
+    }
   }
 
   // Siblings
@@ -665,50 +695,50 @@ export interface BatchEntityResponse {
  *
  * Enforces the same strict semantic constraints as single-entity prompts
  */
-export const BATCH_JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect extracting structured business knowledge from code.
+export const BATCH_JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect extracting MEANINGFUL business knowledge from code.
 
-Analyze MULTIPLE code entities and output a JSON array with high-fidelity justifications.
+## CRITICAL: Avoid Generic Descriptions
 
-## STRICT FIELD SEMANTICS
+NEVER output generic phrases like:
+- "Type interface defining X structure" ❌
+- "Function named X" ❌
+- "Utility function: X" ❌
+- "Class definition for X" ❌
+- "Provides functionality" ❌
 
-1. **purposeSummary** (one sentence, imperative form)
-   - WHAT this code does
-   - Example: "Validates user credentials against the database"
-   - NOT: "This function validates..." or "Handles validation"
+ALWAYS describe the SPECIFIC business purpose:
+- "Stores cached MCP query results with configurable TTL to reduce database load" ✓
+- "Validates webhook signatures to ensure payment events are authentic" ✓
+- "Coordinates parallel file parsing across worker threads for faster indexing" ✓
 
-2. **businessValue** (required)
-   - WHY this exists from product/business perspective
-   - Example: "Enables secure authentication, preventing unauthorized access"
+## FIELD REQUIREMENTS
 
-3. **featureContext** (domain NOUN)
-   - The feature area this belongs to
-   - Examples: "Authentication", "Payment Processing", "User Management"
-   - NOT verb phrases like "handles auth"
+1. **purposeSummary** - SPECIFIC action + what + why
+   GOOD: "Extracts function call relationships from AST to build the dependency graph"
+   BAD: "Handles extraction" (too vague)
 
-4. **tags** (2-5 domain-specific keywords)
-   - Examples: ["authentication", "security", "validation"]
-   - NOT syntax tags: ["function", "async", "exported"]
+2. **businessValue** - Impact if this didn't exist
+   GOOD: "Enables 'find all callers' feature that developers use to understand code impact"
+   BAD: "Useful for extraction" (meaningless)
 
-5. **confidenceScore** (0.0-1.0)
-   - ≥0.8: Clear from code/docs/naming
-   - 0.5-0.79: Reasonable but some ambiguity
-   - <0.5: Uncertain, needs clarification
+3. **featureContext** - Specific subsystem name
+   GOOD: "Dependency Graph Builder", "Cache Management", "AST Parsing"
+   BAD: "Utilities", "Core", "Helpers" (too generic)
 
-## QUALITY REQUIREMENTS
+4. **tags** - Domain concepts (NOT syntax)
+   GOOD: ["dependency-tracking", "call-graph", "static-analysis"]
+   BAD: ["function", "async", "exported"]
 
-- Focus on BUSINESS INTENT, not implementation
-- Be concise but precise
-- Admit uncertainty with low confidence scores
+5. **confidenceScore** - Be honest about uncertainty
 
-Output Format:
-You MUST output valid JSON array:
+## OUTPUT FORMAT
 [
   {
     "id": "entity_id_from_input",
-    "purposeSummary": "One sentence, imperative form",
-    "businessValue": "Why this exists for the product",
-    "featureContext": "Domain noun",
-    "tags": ["domain-tag1", "domain-tag2"],
+    "purposeSummary": "Specific action on specific data for specific reason",
+    "businessValue": "What breaks or degrades without this",
+    "featureContext": "Specific subsystem name",
+    "tags": ["domain-concept1", "domain-concept2"],
     "confidenceScore": 0.0-1.0
   }
 ]`;

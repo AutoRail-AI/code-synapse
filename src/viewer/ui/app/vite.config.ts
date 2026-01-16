@@ -19,7 +19,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../public',
+    outDir: '../../../../dist/viewer/ui/public',
     emptyOutDir: true,
   },
 });

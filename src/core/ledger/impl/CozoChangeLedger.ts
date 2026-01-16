@@ -24,31 +24,31 @@ import { createLogger } from "../../telemetry/logger.js";
 
 const logger = createLogger("change-ledger");
 
-// Row type for ledger queries
+// Row type for ledger queries (matches snake_case schema)
 interface LedgerRow {
   id: string;
-  timestamp: string;
+  timestamp: number; // Unix timestamp in ms (DB stores as Int)
   sequence: number;
-  eventType: string;
+  event_type: string;
   source: string;
-  impactedFiles: string;
-  impactedEntities: string;
-  domainsInvolved: string;
-  infrastructureInvolved: string;
-  classificationChanges: string;
-  indexGraphDiffSummary: string | null;
-  confidenceAdjustments: string;
-  userInteraction: string | null;
-  mcpContext: string | null;
+  impacted_files: string;
+  impacted_entities: string;
+  domains_involved: string;
+  infrastructure_involved: string;
+  classification_changes: string;
+  index_graph_diff_summary: string | null;
+  confidence_adjustments: string;
+  user_interaction: string | null;
+  mcp_context: string | null;
   metadata: string;
   summary: string;
   details: string | null;
-  errorCode: string | null;
-  errorMessage: string | null;
-  stackTrace: string | null;
-  correlationId: string | null;
-  parentEventId: string | null;
-  sessionId: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  stack_trace: string | null;
+  correlation_id: string | null;
+  parent_event_id: string | null;
+  session_id: string | null;
 }
 
 // =============================================================================
@@ -69,52 +69,52 @@ export class CozoLedgerStorage implements ILedgerStorage {
   async store(entries: LedgerEntry[]): Promise<void> {
     for (const entry of entries) {
       const query = `
-        ?[id, timestamp, sequence, eventType, source,
-          impactedFiles, impactedEntities, domainsInvolved, infrastructureInvolved,
-          classificationChanges, indexGraphDiffSummary, confidenceAdjustments,
-          userInteraction, mcpContext, metadata, summary, details,
-          errorCode, errorMessage, stackTrace, correlationId, parentEventId, sessionId] <- [[
-          $id, $timestamp, $sequence, $eventType, $source,
-          $impactedFiles, $impactedEntities, $domainsInvolved, $infrastructureInvolved,
-          $classificationChanges, $indexGraphDiffSummary, $confidenceAdjustments,
-          $userInteraction, $mcpContext, $metadata, $summary, $details,
-          $errorCode, $errorMessage, $stackTrace, $correlationId, $parentEventId, $sessionId
+        ?[id, timestamp, sequence, event_type, source,
+          impacted_files, impacted_entities, domains_involved, infrastructure_involved,
+          classification_changes, index_graph_diff_summary, confidence_adjustments,
+          user_interaction, mcp_context, metadata, summary, details,
+          error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id] <- [[
+          $id, $timestamp, $sequence, $event_type, $source,
+          $impacted_files, $impacted_entities, $domains_involved, $infrastructure_involved,
+          $classification_changes, $index_graph_diff_summary, $confidence_adjustments,
+          $user_interaction, $mcp_context, $metadata, $summary, $details,
+          $error_code, $error_message, $stack_trace, $correlation_id, $parent_event_id, $session_id
         ]]
         :put LedgerEntry {
-          id, timestamp, sequence, eventType, source,
-          impactedFiles, impactedEntities, domainsInvolved, infrastructureInvolved,
-          classificationChanges, indexGraphDiffSummary, confidenceAdjustments,
-          userInteraction, mcpContext, metadata, summary, details,
-          errorCode, errorMessage, stackTrace, correlationId, parentEventId, sessionId
+          id, timestamp, sequence, event_type, source,
+          impacted_files, impacted_entities, domains_involved, infrastructure_involved,
+          classification_changes, index_graph_diff_summary, confidence_adjustments,
+          user_interaction, mcp_context, metadata, summary, details,
+          error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id
         }
       `;
 
       await this.db.query(query, {
         id: entry.id,
-        timestamp: entry.timestamp,
+        timestamp: new Date(entry.timestamp).getTime(), // Convert ISO string to Unix timestamp
         sequence: entry.sequence,
-        eventType: entry.eventType,
+        event_type: entry.eventType,
         source: entry.source,
-        impactedFiles: JSON.stringify(entry.impactedFiles),
-        impactedEntities: JSON.stringify(entry.impactedEntities),
-        domainsInvolved: JSON.stringify(entry.domainsInvolved),
-        infrastructureInvolved: JSON.stringify(entry.infrastructureInvolved),
-        classificationChanges: JSON.stringify(entry.classificationChanges),
-        indexGraphDiffSummary: entry.indexGraphDiffSummary
+        impacted_files: JSON.stringify(entry.impactedFiles),
+        impacted_entities: JSON.stringify(entry.impactedEntities),
+        domains_involved: JSON.stringify(entry.domainsInvolved),
+        infrastructure_involved: JSON.stringify(entry.infrastructureInvolved),
+        classification_changes: JSON.stringify(entry.classificationChanges),
+        index_graph_diff_summary: entry.indexGraphDiffSummary
           ? JSON.stringify(entry.indexGraphDiffSummary)
           : null,
-        confidenceAdjustments: JSON.stringify(entry.confidenceAdjustments),
-        userInteraction: entry.userInteraction ? JSON.stringify(entry.userInteraction) : null,
-        mcpContext: entry.mcpContext ? JSON.stringify(entry.mcpContext) : null,
+        confidence_adjustments: JSON.stringify(entry.confidenceAdjustments),
+        user_interaction: entry.userInteraction ? JSON.stringify(entry.userInteraction) : null,
+        mcp_context: entry.mcpContext ? JSON.stringify(entry.mcpContext) : null,
         metadata: JSON.stringify(entry.metadata),
         summary: entry.summary,
         details: entry.details ?? null,
-        errorCode: entry.errorCode ?? null,
-        errorMessage: entry.errorMessage ?? null,
-        stackTrace: entry.stackTrace ?? null,
-        correlationId: entry.correlationId ?? null,
-        parentEventId: entry.parentEventId ?? null,
-        sessionId: entry.sessionId ?? null,
+        error_code: entry.errorCode ?? null,
+        error_message: entry.errorMessage ?? null,
+        stack_trace: entry.stackTrace ?? null,
+        correlation_id: entry.correlationId ?? null,
+        parent_event_id: entry.parentEventId ?? null,
+        session_id: entry.sessionId ?? null,
       });
     }
   }
@@ -128,36 +128,36 @@ export class CozoLedgerStorage implements ILedgerStorage {
 
     if (queryParams.startTime) {
       conditions.push("timestamp >= $startTime");
-      params.startTime = queryParams.startTime;
+      params.startTime = new Date(queryParams.startTime).getTime(); // Convert to Unix timestamp
     }
     if (queryParams.endTime) {
       conditions.push("timestamp <= $endTime");
-      params.endTime = queryParams.endTime;
+      params.endTime = new Date(queryParams.endTime).getTime(); // Convert to Unix timestamp
     }
     if (queryParams.correlationId) {
-      conditions.push("correlationId == $correlationId");
-      params.correlationId = queryParams.correlationId;
+      conditions.push("correlation_id == $correlation_id");
+      params.correlation_id = queryParams.correlationId;
     }
     if (queryParams.sessionId) {
-      conditions.push("sessionId == $sessionId");
-      params.sessionId = queryParams.sessionId;
+      conditions.push("session_id == $session_id");
+      params.session_id = queryParams.sessionId;
     }
 
     const whereClause = conditions.length > 0 ? `, ${conditions.join(", ")}` : "";
     const orderDir = queryParams.orderDirection === "asc" ? "" : "-";
 
     const dbQuery = `
-      ?[id, timestamp, sequence, eventType, source,
-        impactedFiles, impactedEntities, domainsInvolved, infrastructureInvolved,
-        classificationChanges, indexGraphDiffSummary, confidenceAdjustments,
-        userInteraction, mcpContext, metadata, summary, details,
-        errorCode, errorMessage, stackTrace, correlationId, parentEventId, sessionId] :=
+      ?[id, timestamp, sequence, event_type, source,
+        impacted_files, impacted_entities, domains_involved, infrastructure_involved,
+        classification_changes, index_graph_diff_summary, confidence_adjustments,
+        user_interaction, mcp_context, metadata, summary, details,
+        error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id] :=
         *LedgerEntry{
-          id, timestamp, sequence, eventType, source,
-          impactedFiles, impactedEntities, domainsInvolved, infrastructureInvolved,
-          classificationChanges, indexGraphDiffSummary, confidenceAdjustments,
-          userInteraction, mcpContext, metadata, summary, details,
-          errorCode, errorMessage, stackTrace, correlationId, parentEventId, sessionId
+          id, timestamp, sequence, event_type, source,
+          impacted_files, impacted_entities, domains_involved, infrastructure_involved,
+          classification_changes, index_graph_diff_summary, confidence_adjustments,
+          user_interaction, mcp_context, metadata, summary, details,
+          error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id
         }${whereClause}
       :order ${orderDir}sequence
       :limit $limit
@@ -170,17 +170,17 @@ export class CozoLedgerStorage implements ILedgerStorage {
 
   async getById(id: string): Promise<LedgerEntry | null> {
     const query = `
-      ?[id, timestamp, sequence, eventType, source,
-        impactedFiles, impactedEntities, domainsInvolved, infrastructureInvolved,
-        classificationChanges, indexGraphDiffSummary, confidenceAdjustments,
-        userInteraction, mcpContext, metadata, summary, details,
-        errorCode, errorMessage, stackTrace, correlationId, parentEventId, sessionId] :=
+      ?[id, timestamp, sequence, event_type, source,
+        impacted_files, impacted_entities, domains_involved, infrastructure_involved,
+        classification_changes, index_graph_diff_summary, confidence_adjustments,
+        user_interaction, mcp_context, metadata, summary, details,
+        error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id] :=
         *LedgerEntry{
-          id, timestamp, sequence, eventType, source,
-          impactedFiles, impactedEntities, domainsInvolved, infrastructureInvolved,
-          classificationChanges, indexGraphDiffSummary, confidenceAdjustments,
-          userInteraction, mcpContext, metadata, summary, details,
-          errorCode, errorMessage, stackTrace, correlationId, parentEventId, sessionId
+          id, timestamp, sequence, event_type, source,
+          impacted_files, impacted_entities, domains_involved, infrastructure_involved,
+          classification_changes, index_graph_diff_summary, confidence_adjustments,
+          user_interaction, mcp_context, metadata, summary, details,
+          error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id
         },
         id == $id
     `;
@@ -228,8 +228,9 @@ export class CozoLedgerStorage implements ILedgerStorage {
       :limit 1
     `;
 
-    const rows = await this.db.query<{ ts: string }>(query, {});
-    return rows[0]?.ts ?? null;
+    const rows = await this.db.query<{ ts: number }>(query, {});
+    if (!rows[0]?.ts) return null;
+    return new Date(rows[0].ts).toISOString(); // Convert Unix timestamp to ISO string
   }
 
   async getNewestTimestamp(): Promise<string | null> {
@@ -239,16 +240,19 @@ export class CozoLedgerStorage implements ILedgerStorage {
       :limit 1
     `;
 
-    const rows = await this.db.query<{ ts: string }>(query, {});
-    return rows[0]?.ts ?? null;
+    const rows = await this.db.query<{ ts: number }>(query, {});
+    if (!rows[0]?.ts) return null;
+    return new Date(rows[0].ts).toISOString(); // Convert Unix timestamp to ISO string
   }
 
   async deleteOlderThan(timestamp: string): Promise<number> {
+    const timestampMs = new Date(timestamp).getTime(); // Convert ISO string to Unix timestamp
+
     // First count
     const countQuery = `
       ?[cnt] := cnt = count(id), *LedgerEntry{id, timestamp: ts}, ts < $timestamp
     `;
-    const countRows = await this.db.query<{ cnt: number }>(countQuery, { timestamp });
+    const countRows = await this.db.query<{ cnt: number }>(countQuery, { timestamp: timestampMs });
     const count = countRows[0]?.cnt ?? 0;
 
     // Then delete
@@ -256,7 +260,7 @@ export class CozoLedgerStorage implements ILedgerStorage {
       ?[id] := *LedgerEntry{id, timestamp: ts}, ts < $timestamp
       :rm LedgerEntry {id}
     `;
-    await this.db.query(deleteQuery, { timestamp });
+    await this.db.query(deleteQuery, { timestamp: timestampMs });
 
     return count;
   }
@@ -317,28 +321,28 @@ export class CozoLedgerStorage implements ILedgerStorage {
   private rowToEntry(row: LedgerRow): LedgerEntry {
     return {
       id: row.id,
-      timestamp: row.timestamp,
+      timestamp: new Date(row.timestamp).toISOString(), // Convert Unix timestamp to ISO string
       sequence: row.sequence,
-      eventType: row.eventType as LedgerEventType,
+      eventType: row.event_type as LedgerEventType,
       source: row.source as EventSource,
-      impactedFiles: JSON.parse(row.impactedFiles),
-      impactedEntities: JSON.parse(row.impactedEntities),
-      domainsInvolved: JSON.parse(row.domainsInvolved),
-      infrastructureInvolved: JSON.parse(row.infrastructureInvolved),
-      classificationChanges: JSON.parse(row.classificationChanges),
-      indexGraphDiffSummary: row.indexGraphDiffSummary ? JSON.parse(row.indexGraphDiffSummary) : undefined,
-      confidenceAdjustments: JSON.parse(row.confidenceAdjustments),
-      userInteraction: row.userInteraction ? JSON.parse(row.userInteraction) : undefined,
-      mcpContext: row.mcpContext ? JSON.parse(row.mcpContext) : undefined,
+      impactedFiles: JSON.parse(row.impacted_files),
+      impactedEntities: JSON.parse(row.impacted_entities),
+      domainsInvolved: JSON.parse(row.domains_involved),
+      infrastructureInvolved: JSON.parse(row.infrastructure_involved),
+      classificationChanges: JSON.parse(row.classification_changes),
+      indexGraphDiffSummary: row.index_graph_diff_summary ? JSON.parse(row.index_graph_diff_summary) : undefined,
+      confidenceAdjustments: JSON.parse(row.confidence_adjustments),
+      userInteraction: row.user_interaction ? JSON.parse(row.user_interaction) : undefined,
+      mcpContext: row.mcp_context ? JSON.parse(row.mcp_context) : undefined,
       metadata: JSON.parse(row.metadata),
       summary: row.summary,
       details: row.details ?? undefined,
-      errorCode: row.errorCode ?? undefined,
-      errorMessage: row.errorMessage ?? undefined,
-      stackTrace: row.stackTrace ?? undefined,
-      correlationId: row.correlationId ?? undefined,
-      parentEventId: row.parentEventId ?? undefined,
-      sessionId: row.sessionId ?? undefined,
+      errorCode: row.error_code ?? undefined,
+      errorMessage: row.error_message ?? undefined,
+      stackTrace: row.stack_trace ?? undefined,
+      correlationId: row.correlation_id ?? undefined,
+      parentEventId: row.parent_event_id ?? undefined,
+      sessionId: row.session_id ?? undefined,
     };
   }
 }

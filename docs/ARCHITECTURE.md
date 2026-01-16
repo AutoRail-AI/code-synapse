@@ -197,6 +197,52 @@ Inferred via local LLM (Qwen 2.5):
 
 ## Technology Stack
 
+### Database Lock Management
+
+Code-Synapse uses RocksDB (via CozoDB) as its embedded database, which uses file-level locking to ensure data integrity. The Lock Manager handles stale lock detection and cleanup to enable reliable multi-instance operation.
+
+**Problem Solved**: When Code-Synapse crashes or is forcefully terminated (SIGKILL, OOM), the RocksDB `LOCK` file may remain, preventing subsequent starts. The Lock Manager automatically detects and cleans up these stale locks.
+
+**How It Works**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ DATABASE INITIALIZATION                                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. Check if LOCK file exists                                   │
+│     └── If no: Proceed normally                                 │
+│     └── If yes: Continue to step 2                              │
+│                                                                  │
+│  2. Find lock owner PID (via lsof)                              │
+│     └── If no owner: Lock is orphaned → Remove it               │
+│     └── If owner found: Continue to step 3                      │
+│                                                                  │
+│  3. Check if owner process is running                           │
+│     └── Use process.kill(pid, 0) for existence                  │
+│     └── Use `ps -p` to detect zombies                           │
+│     └── If dead/zombie: Lock is stale → Remove it               │
+│     └── If alive: Lock is valid → Error (another instance)      │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Components** (`src/utils/lock-manager.ts`):
+
+| Function | Purpose |
+|----------|---------|
+| `checkLock(dbPath)` | Returns lock status: exists, isStale, ownerPid |
+| `removeStaleLock(dbPath)` | Safely removes stale lock file |
+| `ensureDatabaseAccessible(dbPath)` | Pre-flight check before DB init |
+| `registerShutdownHandlers(cleanup)` | Registers graceful shutdown handlers |
+
+**Multi-Instance Support**: Each Code-Synapse instance operates on a separate project directory with its own `.code-synapse/data/` folder. The lock manager ensures:
+- Different projects can run simultaneously (different lock files)
+- Same project cannot run multiple instances (protected by lock)
+- Crashed instances don't block future starts (stale lock cleanup)
+
+---
+
 ### Parsing Layer
 
 | Technology | Purpose | Why This Choice |
@@ -228,6 +274,7 @@ CozoDB provides both graph storage AND native vector search via HNSW indices. Th
 | **RxJS** | Reactive event handling | Backpressure, batching, deduplication |
 | **Pino** | Structured logging | Fast, JSON output, component context |
 | **Zod** | Schema validation | Runtime type safety, good error messages |
+| **Lock Manager** | RocksDB lock management | Stale lock detection, multi-instance support |
 
 ---
 
@@ -269,6 +316,7 @@ src/
 │   ├── llm/                # Local LLM inference
 │   │   └── interfaces/     # ILLMService interface
 │   ├── justification/      # Business purpose inference (V13)
+│   │   ├── hierarchy/      # Dependency graph and hierarchical processing
 │   ├── classification/     # Domain/Infrastructure classification (V14)
 │   │   ├── models/         # Classification data models
 │   │   ├── interfaces/     # IClassificationEngine, IClassificationStorage
@@ -421,6 +469,60 @@ The codebase uses explicit interface contracts for testability and modularity:
 3. **Extraction**: EntityPipeline creates unique IDs, extracts relationships (CONTAINS, CALLS, IMPORTS, etc.)
 4. **Justification**: Local LLM infers business purpose, feature context, and value for each entity
 5. **Writing**: GraphWriter batches entities and justifications into CozoDB transactions atomically
+
+### Hierarchical Justification Processing
+
+The justification phase uses **dependency-aware processing** to ensure that foundational code is justified before code that depends on it. This enables meaningful context propagation where higher-level entities can reference the already-generated justifications of their dependencies.
+
+**Processing Order (Leaf-to-Root)**:
+
+```
+Level 0 (Leaves):     [utility functions, base interfaces - no outgoing deps]
+                              ↓
+Level 1:              [code that ONLY depends on Level 0]
+                              ↓
+Level 2:              [code that depends on Level 0 or 1]
+                              ↓
+Level N (Roots):      [entry points, CLI commands, API handlers]
+```
+
+**Key Insight**: "Leaf" means code that doesn't call/depend on other project code (may call external libs).
+
+**Dependency Graph Construction** (`src/core/justification/hierarchy/dependency-graph.ts`):
+
+The system builds an in-memory dependency graph from existing relationships:
+
+| Relationship | Meaning |
+|--------------|---------|
+| `calls` | Function A calls Function B |
+| `imports` | File A imports from File B |
+| `extends` | Class A extends Class B |
+| `implements` | Class A implements Interface B |
+| `extends_interface` | Interface A extends Interface B |
+
+**Algorithm**:
+
+1. **Topological Sort (Kahn's Algorithm)**: Find nodes with no outgoing dependencies → Level 0, remove them, repeat
+2. **Cycle Handling (Tarjan's Algorithm)**: Detect Strongly Connected Components (SCCs) for mutual dependencies
+3. **SCC Processing**: Cycles are processed together as a single batch, noting mutual dependencies
+
+**Context Propagation**:
+
+When processing entities at Level N, all dependencies (Level < N) already have justifications. The LLM prompt includes these:
+
+```
+## Dependencies (Already Justified)
+*Use these justifications to understand what this function builds upon:*
+- `validateEmail`: Validates email format using RFC 5322 regex
+- `formatDate`: Formats date for display in user timezone
+```
+
+**Benefits**:
+
+1. **Better Justifications**: LLM understands what dependencies do, not just their names
+2. **Context Propagation Works**: Parent justifications exist before children are processed
+3. **Consistent Batching**: Same-level entities are naturally similar in abstraction
+4. **Predictable Progress**: "Processing Level 0 (utilities)... Level 1 (services)..."
 
 **File Filtering:**
 
@@ -641,6 +743,192 @@ User Query: "most complex functions"
   "totalCount": 45,
   "executionTimeMs": 12
 }
+```
+
+---
+
+## Web Viewer UI Architecture
+
+### Design Philosophy
+
+The Web Viewer follows these core principles:
+
+| Principle | Implementation |
+|-----------|----------------|
+| **Knowledge-First** | UI reflects the knowledge graph, not raw files. Every view answers "what does this code mean?" |
+| **Unified Mental Model** | Single coherent system with cross-linked navigation. No siloed pages. |
+| **Actionable Everywhere** | Every visible concept is inspectable, queryable, and operable |
+| **Backend Parity** | 100% of MCP/REST operations exposed. No hidden capabilities. |
+| **Human-Centric** | Optimized for human comprehension. Agents use MCP only. |
+
+### Visual Language
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  CONFIDENCE INDICATORS                                          │
+├─────────────────────────────────────────────────────────────────┤
+│  ████████████  High (≥0.8)    → Green, solid                   │
+│  ████████░░░░  Medium (0.5-0.8) → Yellow, partial              │
+│  ████░░░░░░░░  Low (0.3-0.5)  → Orange, sparse                 │
+│  ██░░░░░░░░░░  Uncertain (<0.3) → Red, pulsing                 │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  ENTITY TYPE BADGES                                             │
+├─────────────────────────────────────────────────────────────────┤
+│  [F] Function   → Blue        [C] Class      → Purple          │
+│  [I] Interface  → Cyan        [V] Variable   → Gray            │
+│  [T] TypeAlias  → Teal        [📁] File      → Yellow          │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  CLASSIFICATION BADGES                                          │
+├─────────────────────────────────────────────────────────────────┤
+│  DOMAIN: [Auth] [Billing] [User] [Notification] → Blue tones   │
+│  INFRA:  [DB] [Cache] [HTTP] [Logging] [Config] → Gray tones   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### UI Sections
+
+The Web Viewer is organized into 6 main sections:
+
+| Section | Purpose | Key Features |
+|---------|---------|--------------|
+| **Explorer** | Navigate codebase through files and entities | File tree, code viewer (Monaco), entity details |
+| **Knowledge** | Explore business meaning and justifications | Faceted filters, clarification workflow, confidence scores |
+| **Graph** | Visualize relationships as interactive graphs | Call graph, import graph, inheritance, knowledge clusters |
+| **Search** | Find entities using multiple search modes | Natural language, structural, semantic, diagnostic |
+| **Operations** | Execute MCP operations and view status | Indexing, justification, reconciliation panels |
+| **Observability** | Inspect system internals | Change ledger, project memory, compaction, health |
+
+### Component Library
+
+#### Core Component Interfaces
+
+```typescript
+// EntityCard - Displays entity with justification and classification
+interface EntityCardProps {
+  entity: {
+    id: string;
+    name: string;
+    type: 'function' | 'class' | 'interface' | 'variable' | 'file';
+    filePath: string;
+    line?: number;
+  };
+  justification?: {
+    purposeSummary: string;
+    featureContext: string;
+    confidenceScore: number;
+    clarificationPending: boolean;
+  };
+  classification?: {
+    category: 'domain' | 'infrastructure';
+    area: string;
+  };
+  showActions?: boolean;
+  compact?: boolean;
+}
+
+// ConfidenceIndicator - Visual confidence score display
+interface ConfidenceIndicatorProps {
+  score: number;        // 0-1
+  level: 'high' | 'medium' | 'low' | 'uncertain';
+  showLabel?: boolean;
+  size?: 'sm' | 'md' | 'lg';
+}
+
+// GraphViewer - Interactive graph visualization
+interface GraphViewerProps {
+  type: 'call' | 'import' | 'inheritance' | 'knowledge';
+  focusEntity?: string;
+  depth?: number;
+  layout?: 'force' | 'hierarchical' | 'circular';
+  onNodeClick?: (nodeId: string) => void;
+  onNodeDoubleClick?: (nodeId: string) => void;
+}
+
+// CodeViewer - Monaco-based code display
+interface CodeViewerProps {
+  filePath: string;
+  language: string;
+  highlightLines?: number[];
+  entityMarkers?: Array<{
+    line: number;
+    type: 'definition' | 'reference';
+    entityId: string;
+  }>;
+  onEntityClick?: (entityId: string) => void;
+}
+```
+
+### UI State Management
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      GLOBAL STATE                               │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐          │
+│  │   Project   │   │  UI State   │   │   Cache     │          │
+│  │   Context   │   │             │   │             │          │
+│  ├─────────────┤   ├─────────────┤   ├─────────────┤          │
+│  │ projectId   │   │ activeView  │   │ entities    │          │
+│  │ stats       │   │ selectedId  │   │ graphs      │          │
+│  │ config      │   │ filters     │   │ searches    │          │
+│  │ mcpStatus   │   │ modals      │   │ ledger      │          │
+│  └─────────────┘   └─────────────┘   └─────────────┘          │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                   OPERATIONS STATE                       │   │
+│  ├─────────────────────────────────────────────────────────┤   │
+│  │ indexing: { status, progress, currentFile, log }        │   │
+│  │ justification: { status, progress, batch, stats }       │   │
+│  │ reconciliation: { gaps, status, preview }               │   │
+│  │ adaptive: { paused, hotEntities, coldEntities }         │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### UI Technology Stack
+
+| Category | Library | Rationale |
+|----------|---------|-----------|
+| **Framework** | React 18+ | Component model, ecosystem |
+| **State** | Zustand | Simple, performant global state |
+| **Routing** | React Router v6 | Section navigation |
+| **Styling** | Tailwind CSS | Utility-first, consistent design |
+| **Components** | Radix UI | Accessible primitives |
+| **Code Viewer** | Monaco Editor | VS Code engine, syntax highlighting |
+| **Graph** | Cytoscape.js | Feature-rich graph visualization |
+| **Charts** | Recharts | Simple, React-native charts |
+| **Tables** | TanStack Table | Sorting, filtering, pagination |
+
+### Real-time Updates
+
+```typescript
+// WebSocket connection for live updates
+const ws = new WebSocket('ws://localhost:3100/ws');
+
+ws.onmessage = (event) => {
+  const { type, payload } = JSON.parse(event.data);
+
+  switch (type) {
+    case 'indexing:progress':
+      updateIndexingProgress(payload);
+      break;
+    case 'justification:progress':
+      updateJustificationProgress(payload);
+      break;
+    case 'ledger:entry':
+      appendLedgerEntry(payload);
+      break;
+    case 'entity:updated':
+      invalidateEntityCache(payload.entityId);
+      break;
+  }
+};
 ```
 
 ---
@@ -1089,4 +1377,4 @@ See [Extension Points](#extension-points) section for details on extending Code-
 
 ---
 
-*Last Updated: January 3, 2026*
+*Last Updated: January 16, 2026*

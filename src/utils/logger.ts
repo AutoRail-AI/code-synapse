@@ -56,6 +56,17 @@ function getLogLevel(): LogLevel {
 }
 
 /**
+ * Check if file logging should be enabled
+ * Enable via CODE_SYNAPSE_LOG_FILE=true or LOG_TO_FILE=true
+ */
+function shouldEnableFileLogging(): boolean {
+  return (
+    process.env.CODE_SYNAPSE_LOG_FILE === "true" ||
+    process.env.LOG_TO_FILE === "true"
+  );
+}
+
+/**
  * Create a logger instance for a specific component
  *
  * @param component - The component name (e.g., "parser", "indexer", "mcp")
@@ -75,7 +86,7 @@ export function createLogger(
 ): PinoLogger {
   const {
     level = getLogLevel(),
-    enableFileLogging = false,
+    enableFileLogging = options.enableFileLogging ?? shouldEnableFileLogging(),
     logDir,
   } = options;
 
@@ -84,8 +95,28 @@ export function createLogger(
     level,
   };
 
+  // If file logging is enabled, create a multi-stream logger (console + file)
+  if (enableFileLogging) {
+    const dir = getLogDir(logDir);
+    ensureLogDir(dir);
+
+    const logFile = path.join(dir, `code-synapse.log`);
+    const fileStream = pino.destination({
+      dest: logFile,
+      sync: false,
+    });
+
+    // Use pino.multistream to log to both console and file
+    const streams = [
+      { stream: process.stdout, level: level as pino.Level },
+      { stream: fileStream, level: level as pino.Level },
+    ];
+
+    return pino(baseOptions, pino.multistream(streams));
+  }
+
   // In development, use pretty printing if available
-  if (isDevelopment() && !enableFileLogging) {
+  if (isDevelopment()) {
     try {
       // Try to use pino-pretty for development
       return pino({
@@ -103,20 +134,6 @@ export function createLogger(
       // Fall back to standard pino if pino-pretty not available
       return pino(baseOptions);
     }
-  }
-
-  // Production or file logging mode
-  if (enableFileLogging) {
-    const dir = getLogDir(logDir);
-    ensureLogDir(dir);
-
-    const logFile = path.join(dir, `${component}.log`);
-    const destination = pino.destination({
-      dest: logFile,
-      sync: false, // Async for performance
-    });
-
-    return pino(baseOptions, destination);
   }
 
   return pino(baseOptions);

@@ -147,7 +147,7 @@ describe.skipIf(SKIP_NATIVE_TESTS)("MCP Server Integration", () => {
     it("should list tools via MCP protocol", async () => {
       const result = await client.listTools();
       expect(result.tools).toBeDefined();
-      expect(result.tools.length).toBe(12);
+      expect(result.tools.length).toBe(16);
 
       const toolNames = result.tools.map((t) => t.name);
       expect(toolNames).toContain("search_code");
@@ -158,6 +158,11 @@ describe.skipIf(SKIP_NATIVE_TESTS)("MCP Server Integration", () => {
       expect(toolNames).toContain("request_reindex");
       expect(toolNames).toContain("enhance_prompt");
       expect(toolNames).toContain("create_generation_context");
+      // Vibe coding tools
+      expect(toolNames).toContain("vibe_start");
+      expect(toolNames).toContain("vibe_change");
+      expect(toolNames).toContain("vibe_complete");
+      expect(toolNames).toContain("vibe_status");
     });
 
     it("should list resources via MCP protocol", async () => {

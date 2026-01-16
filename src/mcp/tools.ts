@@ -86,6 +86,12 @@ export interface FunctionDetails {
   complexity?: number;
   callers: Array<{ name: string; filePath: string; line: number }>;
   callees: Array<{ name: string; filePath: string; line: number }>;
+  /** Business justification for this function */
+  justification?: {
+    purposeSummary: string;
+    featureArea?: string;
+    confidence: number;
+  };
 }
 
 export interface ClassDetails {
@@ -100,6 +106,12 @@ export interface ClassDetails {
   implementsInterfaces: string[];
   docComment?: string;
   methods: Array<{ name: string; signature: string; visibility: string }>;
+  /** Business justification for this class */
+  justification?: {
+    purposeSummary: string;
+    featureArea?: string;
+    confidence: number;
+  };
 }
 
 export interface FileSymbols {
@@ -388,6 +400,36 @@ export async function getFunction(
     line: r.line_number,
   }));
 
+  // Query justification for this function
+  let justification: FunctionDetails["justification"] | undefined;
+  try {
+    const justQuery = `
+      ?[purpose_summary, feature_area, confidence_score] :=
+        *justification{entity_id, purpose_summary, feature_area, confidence_score},
+        entity_id = $entityId
+      :limit 1
+    `;
+    const justResult = await store.query<{
+      purpose_summary: string;
+      feature_area: string;
+      confidence_score: number;
+    }>(justQuery, { entityId: func.id });
+
+    if (justResult.length > 0) {
+      const just = justResult[0]!;
+      justification = {
+        purposeSummary: just.purpose_summary,
+        featureArea: just.feature_area || undefined,
+        confidence: just.confidence_score,
+      };
+      logger.debug({ functionId: func.id }, "Found justification for function");
+    } else {
+      logger.debug({ functionId: func.id }, "No justification found for function");
+    }
+  } catch (e) {
+    logger.warn({ error: e, functionId: func.id }, "Failed to query justification for function");
+  }
+
   return {
     id: func.id,
     name: func.name,
@@ -402,6 +444,7 @@ export async function getFunction(
     complexity: func.complexity,
     callers,
     callees,
+    justification,
   };
 }
 
@@ -477,6 +520,36 @@ export async function getClass(
     visibility: r.visibility,
   }));
 
+  // Query justification for this class
+  let justification: ClassDetails["justification"] | undefined;
+  try {
+    const justQuery = `
+      ?[purpose_summary, feature_area, confidence_score] :=
+        *justification{entity_id, purpose_summary, feature_area, confidence_score},
+        entity_id = $entityId
+      :limit 1
+    `;
+    const justResult = await store.query<{
+      purpose_summary: string;
+      feature_area: string;
+      confidence_score: number;
+    }>(justQuery, { entityId: cls.id });
+
+    if (justResult.length > 0) {
+      const just = justResult[0]!;
+      justification = {
+        purposeSummary: just.purpose_summary,
+        featureArea: just.feature_area || undefined,
+        confidence: just.confidence_score,
+      };
+      logger.debug({ classId: cls.id }, "Found justification for class");
+    } else {
+      logger.debug({ classId: cls.id }, "No justification found for class");
+    }
+  } catch (e) {
+    logger.warn({ error: e, classId: cls.id }, "Failed to query justification for class");
+  }
+
   return {
     id: cls.id,
     name: cls.name,
@@ -489,6 +562,7 @@ export async function getClass(
     implementsInterfaces: cls.implements_interfaces || [],
     docComment: cls.doc_comment,
     methods,
+    justification,
   };
 }
 

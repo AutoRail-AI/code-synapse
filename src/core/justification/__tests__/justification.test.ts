@@ -419,6 +419,7 @@ describe("ClarificationEngine", () => {
     getLowestConfidenceEntities: vi.fn(),
     getUncertainFeatures: vi.fn(),
     getRecentlyUpdatedUncertain: vi.fn(),
+    getAllJustifications: vi.fn(),
   });
 
   let mockStorage: MockedJustificationStorage;
