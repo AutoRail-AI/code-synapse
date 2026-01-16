@@ -21,6 +21,7 @@ Code-Synapse transforms your codebase into a structured Knowledge Graph optimize
 - [CLI Commands](#-cli-commands)
 - [MCP Tools](#-mcp-tools-available)
 - [Vibe Coding](#-vibe-coding)
+- [Skills](#-skills)
 - [Architecture](#-architecture)
 - [Roadmap](#-roadmap)
 - [Contributing](#-contributing)
@@ -79,6 +80,8 @@ Unlike standard tools (LSP, grep) that only see syntax, Code-Synapse builds a mu
 * **⚡ Performance Optimized:** LRU caching, bloom filters, heat tracking, batch writes, and worker pools for large codebases.
 * **🌐 Multi-Model Support:** Unified interface for local models AND cloud providers (OpenAI, Anthropic, Google) with intelligent routing.
 * **📈 Observability:** Tracks performance metrics, token costs, latency, and cache hit rates for monitoring and debugging.
+* **🎨 Vibe Coding Workflow:** Session-based coding workflow that enriches AI prompts with full context, tracks changes, and maintains audit trails.
+* **🛠️ Pre-built Skills:** Ready-to-use integration configs for Cursor and Claude Code with best practices.
 
 ### 🎯 How Business Justification Works
 
@@ -352,6 +355,8 @@ Now ask complex, context-aware questions in your AI agent:
 
 - **[How It Works](./docs/HOW-IT-WORKS.md)** - Deep dive into architecture, data flow, MCP integration, and running from source
 - **[Architecture](./docs/ARCHITECTURE.md)** - Technical design decisions, implementation status, and technology references
+- **[Vision 2026](./docs/VISION-2026.md)** - Extended capabilities from multi-agent orchestration to legacy modernization
+- **[Skills](./skills/README.md)** - Pre-configured skills for Cursor and Claude Code integration
 - **[Contributing](./CONTRIBUTING.md)** - Guidelines for contributing to Code-Synapse
 
 ### Documentation Structure
@@ -361,6 +366,8 @@ Now ask complex, context-aware questions in your AI agent:
 | **README.md** | All users | Quick start, overview, installation |
 | **HOW-IT-WORKS.md** | Users & Developers | Operational details, workflows, examples |
 | **ARCHITECTURE.md** | Developers | Technical design, extension points, API reference |
+| **VISION-2026.md** | Stakeholders | Extended capabilities, competitive analysis, market vision |
+| **skills/README.md** | Users | AI tool integration, vibe coding setup |
 | **CONTRIBUTING.md** | Contributors | Contribution guidelines, development setup |
 
 ---
@@ -611,6 +618,42 @@ Add a password strength validator to the signup form
 3. **Include target files** - Helps find the most relevant context
 4. **Record all changes** - Call `vibe_change` after every file modification
 5. **Complete sessions** - Always call `vibe_complete` for proper ledger entries
+
+---
+
+## 🔧 Skills
+
+Code-Synapse provides pre-configured skills for seamless integration with AI coding tools.
+
+### Available Skills
+
+| Tool | Files | Setup |
+|------|-------|-------|
+| **Cursor** | `cursor-rules.txt`, `mcp-config.json` | Copy to `.cursor/` directory |
+| **Claude Code** | `CLAUDE-SKILL.md`, `mcp-config.json` | Add to `CLAUDE.md` and `.mcp.json` |
+
+### Quick Setup
+
+**For Cursor:**
+```bash
+cp skills/cursor/mcp-config.json .cursor/mcp.json
+cp skills/cursor/cursor-rules.txt .cursorrules  # Optional
+```
+
+**For Claude Code:**
+```bash
+cp skills/claude-code/mcp-config.json .mcp.json
+cat skills/claude-code/CLAUDE-SKILL.md >> CLAUDE.md
+```
+
+### What Skills Provide
+
+- **Vibe Coding Workflow** - Step-by-step instructions for context-aware coding
+- **MCP Configuration** - Ready-to-use server configuration
+- **Best Practices** - Guidelines for getting the most out of Code-Synapse
+- **Troubleshooting** - Common issues and solutions
+
+See the full [Skills documentation](./skills/README.md) for detailed setup instructions.
 
 ---
 
