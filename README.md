@@ -7,6 +7,8 @@
 
 **An agent-first knowledge engine that bridges the gap between blind syntax generation and deep, intent-aware engineering.**
 
+> **The industry has focused on generating code faster. But enterprise engineering needs more: understanding, explainability, verifiability, traceability, compliance. Code-Synapse is the knowledge foundation that finally makes these tools possible—and opens the door to capabilities we haven't imagined yet.**
+
 Code-Synapse transforms your codebase into a structured Knowledge Graph optimized for AI reasoning. It runs locally as a sidecar alongside AI coding assistants (Claude Code, Cursor) via the Model Context Protocol (MCP), providing deep code understanding without sending your code to external services.
 
 ---
