@@ -10,7 +10,7 @@
 #   ./scripts/e2e-test.sh --quick      # Run quick tests only (no LLM)
 #   ./scripts/e2e-test.sh --section X  # Run specific section (1-10)
 #
-# See docs/TESTING.md for detailed test documentation.
+# See docs/ARCHITECTURE.md "Testing & Verification" section for detailed documentation.
 
 set -e
 

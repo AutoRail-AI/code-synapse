@@ -1086,11 +1086,104 @@ This pattern maximizes initial quality while maintaining privacy and cost effici
 
 ## Testing & Verification
 
+### Test Organization
+
+Code-Synapse testing is organized into three tiers:
+
+| Tier | Type | Location | Purpose |
+|------|------|----------|---------|
+| **Unit Tests** | Vitest | `src/**/__tests__/*.test.ts` | Test individual modules in isolation |
+| **Integration Tests** | Vitest | `src/**/__tests__/*.integration.test.ts` | Test module interactions |
+| **E2E Tests** | Shell Script | `scripts/e2e-test.sh` | Test CLI commands and full workflows |
+
 ### Test Summary
 
 - **Total Tests**: 539+ passing
+- **Unit Tests**: 381+ tests across 10 test files
+- **E2E Tests**: 73+ scenarios across 10 sections
 - **Test Files**: 20+
 - **Skipped**: 6 (MCP transport tests, tested manually)
+
+### Running Tests
+
+```bash
+# Unit tests
+pnpm test              # Watch mode
+pnpm test:ci           # Single run (excludes integration tests)
+
+# E2E tests
+./scripts/e2e-test.sh              # Run all tests
+./scripts/e2e-test.sh --quick      # Skip LLM tests (faster)
+./scripts/e2e-test.sh --section 7  # Run specific section
+./scripts/e2e-test.sh --verbose    # Show detailed output
+```
+
+### Key Test Files
+
+| File | Purpose |
+|------|---------|
+| `src/core/justification/__tests__/justification.test.ts` | Justification service |
+| `src/core/memory/__tests__/memory.test.ts` | Developer memory |
+| `src/core/reconciliation/__tests__/reconciliation.test.ts` | Ledger reconciliation |
+| `src/core/ledger/__tests__/compaction.test.ts` | Ledger compaction |
+| `src/viewer/__tests__/query-builder.test.ts` | NL Search query building |
+| `src/viewer/__tests__/intent-classifier.test.ts` | NL Search intent classification |
+| `src/core/parser/__tests__/multi-language.test.ts` | Multi-language parsing |
+
+### E2E Test Sections
+
+| Section | Tests | Description |
+|---------|-------|-------------|
+| **1. CLI Help** | 8 | Help displays for all commands |
+| **2. Initialization** | 9 | Project init workflow |
+| **3. Indexing** | 5 | Code indexing functionality |
+| **4. Status** | 7 | Project status display |
+| **5. Configuration** | 3 | Config management |
+| **6. Model Listing** | 16 | Model registry display |
+| **7. Web Viewer API** | 11 | REST API endpoints |
+| **8. Justification** | 3 | Business justification |
+| **9. Incremental Updates** | 3 | File change detection |
+| **10. Error Handling** | 4 | Error scenarios |
+
+### API Endpoint Testing
+
+```bash
+# Start viewer
+code-synapse viewer -p 3100 &
+
+# Health & Stats
+curl http://127.0.0.1:3100/api/health
+curl http://127.0.0.1:3100/api/stats/overview
+curl http://127.0.0.1:3100/api/stats/languages
+
+# Entity Lists
+curl http://127.0.0.1:3100/api/files
+curl http://127.0.0.1:3100/api/functions
+curl http://127.0.0.1:3100/api/classes
+
+# Search
+curl "http://127.0.0.1:3100/api/search?q=User"
+curl "http://127.0.0.1:3100/api/nl-search?q=most+complex+functions"
+```
+
+### Performance Benchmarks
+
+| Operation | Target | Actual |
+|-----------|--------|--------|
+| **Indexing 50 files** | < 3 seconds | ✅ |
+| **Indexing 100 files** | < 5 seconds | ✅ |
+| **Indexing 500 files** | < 20 seconds | ✅ |
+| **Simple search** | < 50ms | ✅ |
+| **NL search** | < 100ms | ✅ |
+| **100 parses** | < 5 seconds | ✅ |
+| **50 queries** | < 2 seconds | ✅ |
+
+### Memory Benchmarks
+
+| Operation | Target |
+|-----------|--------|
+| **Indexing 100 files** | < 200MB |
+| **Running viewer** | < 100MB |
 
 ### Key Verifications
 
@@ -1114,7 +1207,71 @@ This pattern maximizes initial quality while maintaining privacy and cost effici
 - Multi-Model routing with local and cloud provider support
 - Horizontal Documentation with known registry and NPM metadata fetching
 - Self-Optimizing Feedback with automatic routing adjustments
-- Performance benchmarks pass (100 parses <5s, 50 queries <2s)
+
+### Troubleshooting Test Failures
+
+**Database Lock Error**
+```bash
+pkill -f "code-synapse"
+rm -f .code-synapse/data/cozodb/data/LOCK
+```
+
+**Port Already in Use**
+```bash
+pkill -f "viewer"
+pkill -f "code-synapse start"
+code-synapse viewer -p 3200  # Use different port
+```
+
+**Tree-sitter WASM Error**
+```bash
+pnpm install
+pnpm build
+```
+
+**LLM Model Not Found**
+```bash
+code-synapse justify --skip-llm  # Test without LLM
+code-synapse config --provider anthropic  # Or configure cloud
+```
+
+**Debug Mode**
+```bash
+LOG_LEVEL=debug code-synapse index
+code-synapse start --debug
+```
+
+**Reset Test State**
+```bash
+rm -rf .code-synapse && code-synapse init && code-synapse index
+```
+
+### Adding New Tests
+
+**E2E Test Template** (in `scripts/e2e-test.sh`):
+```bash
+if [ -z "$SECTION" ] || [ "$SECTION" = "N" ]; then
+    log_section "Section N: New Feature"
+    cd "$TEST_DIR/test-project"
+    run_test "description" "command" expected_exit_code
+    run_test_contains "description" "command" "expected_string"
+    cd "$PROJECT_ROOT"
+fi
+```
+
+**Unit Test Template**:
+```typescript
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+
+describe('NewFeature', () => {
+  beforeEach(async () => { /* Setup */ });
+  afterEach(async () => { /* Cleanup */ });
+
+  it('should do something', async () => {
+    expect(result).toBe(expected);
+  });
+});
+```
 
 ---
 
