@@ -1,0 +1,37 @@
+{
+  "name": "business-aware-testing-mvp",
+  "version": "0.1.0",
+  "description": "MVP for Business-Aware Testing platform using Code-Synapse APIs",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "bat": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "report": "node dist/index.js report",
+    "coverage": "node dist/index.js coverage",
+    "risk": "node dist/index.js risk",
+    "debt": "node dist/index.js debt",
+    "bus-factor": "node dist/index.js bus-factor",
+    "test-quality": "node dist/index.js test-quality",
+    "test-intelligence": "node dist/index.js test-intelligence",
+    "day0": "node dist/index.js day0",
+    "pr-risk": "node dist/index.js pr-risk",
+    "context": "node dist/index.js context"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
