@@ -13,7 +13,7 @@ import type {
   StreamChunk,
   ModelVendor,
 } from "../interfaces/IModel.js";
-import { LOCAL_MODELS } from "../interfaces/IModel.js";
+import { LOCAL_MODELS } from "../Registry.js";
 import { createLogger } from "../../telemetry/logger.js";
 
 const logger = createLogger("local-provider");

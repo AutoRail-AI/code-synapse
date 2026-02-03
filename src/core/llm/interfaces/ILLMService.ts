@@ -25,7 +25,9 @@ export interface InferenceOptions {
   /** Skip cache lookup for this request */
   skipCache?: boolean;
   /** Thinking level for reasoning models (e.g. Gemini 3) */
-  thinkingLevel?: "low" | "high";
+  thinkingLevel?: "minimal" | "low" | "medium" | "high";
+  /** Media resolution for vision tasks */
+  mediaResolution?: "low" | "medium" | "high" | "ultra_high";
 }
 
 /**

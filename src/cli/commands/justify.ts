@@ -27,24 +27,13 @@ import {
   createInitializedModelRouter,
   type IModelRouter,
 } from "../../core/models/index.js";
+import { PROVIDER_METADATA } from "../../core/models/Registry.js";
 import {
   type ModelPreset,
   MODEL_PRESETS,
 } from "../../core/llm/index.js";
 
 const logger = createLogger("justify");
-
-/**
- * Get default model ID for an API provider
- */
-function getDefaultApiModel(provider: string): string {
-  const defaults: Record<string, string> = {
-    anthropic: "claude-sonnet-4-20250514",
-    openai: "gpt-4o",
-    google: "gemini-1.5-pro",
-  };
-  return defaults[provider] || "claude-sonnet-4-20250514";
-}
 
 /**
  * Extended config with LLM settings
@@ -168,12 +157,13 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
 
     // Get API key from config if available
     const apiKey = extendedConfig?.apiKeys?.[modelProvider as keyof typeof extendedConfig.apiKeys];
-    
+
     // Set API key in environment for providers
     if (apiKey) {
-      if (modelProvider === "openai") process.env.OPENAI_API_KEY = apiKey;
-      if (modelProvider === "anthropic") process.env.ANTHROPIC_API_KEY = apiKey;
-      if (modelProvider === "google") process.env.GOOGLE_API_KEY = apiKey;
+      const envVar = PROVIDER_METADATA[modelProvider]?.envVar;
+      if (envVar) {
+        process.env[envVar] = apiKey;
+      }
     }
 
     // Initialize Model Router if not skipping
@@ -184,7 +174,7 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
 
       try {
         spinner.text = "Initializing model router...";
-        
+
         modelRouter = await createInitializedModelRouter({
           enableLocal: modelProvider === "local",
           enableOpenAI: modelProvider === "openai",
@@ -196,7 +186,7 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
           actualModelId = MODEL_PRESETS[preset];
           spinner.text = `Local model router initialized (${preset})`;
         } else {
-          actualModelId = savedModelId || getDefaultApiModel(modelProvider);
+          actualModelId = savedModelId || PROVIDER_METADATA[modelProvider]?.defaultModelId || "claude-sonnet-4-20250514";
           spinner.text = `${modelProvider} API connected`;
           console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId})`));
         }

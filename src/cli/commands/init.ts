@@ -19,7 +19,7 @@ import {
 import {
   MODEL_PRESETS,
   getModelById,
-  
+
   type ModelPreset,
 } from "../../core/llm/index.js";
 
@@ -32,7 +32,7 @@ function getDefaultApiModel(provider: "openai" | "anthropic" | "google"): string
   const defaults: Record<string, string> = {
     anthropic: "claude-sonnet-4-20250514",
     openai: "gpt-4o",
-    google: "gemini-1.5-pro",
+    google: "gemini-3-pro-preview",
   };
   return defaults[provider] || "claude-sonnet-4-20250514";
 }

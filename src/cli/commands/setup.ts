@@ -103,10 +103,11 @@ const PROVIDERS: Record<ModelProvider, {
     description: "Gemini models. Requires API key.",
     requiresApiKey: true,
     envVar: "GOOGLE_API_KEY",
-    defaultModel: "gemini-1.5-pro",
+    defaultModel: "gemini-3-pro-preview",
     models: [
+      { id: "gemini-3-pro-preview", name: "Gemini 3 Pro", description: "Self-reasoning, 1M context" },
+      { id: "gemini-3-flash-preview", name: "Gemini 3 Flash", description: "Ultra-fast, 1M context" },
       { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", description: "Large context, high quality" },
-      { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", description: "Fast and efficient" },
     ],
   },
 };

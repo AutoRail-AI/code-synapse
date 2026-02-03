@@ -136,8 +136,8 @@ export const DEFAULT_TOKEN_BATCH_CONFIG: TokenBatchConfig = {
   maxContextTokens: 4096,
   maxOutputTokens: 2048,
   systemPromptTokens: 500,
-  outputTokensPerEntity: 120, // ~480 chars per entity response
-  safetyMargin: 0.15,
+  outputTokensPerEntity: 500, // Conservative estimate to prevent truncation
+  safetyMargin: 0.20,
 };
 
 /**
@@ -158,8 +158,8 @@ export function getTokenBatchConfig(
     maxContextTokens: modelConfig.contextWindow,
     maxOutputTokens: modelConfig.maxOutputTokens,
     systemPromptTokens: 500,
-    outputTokensPerEntity: 120,
-    safetyMargin: 0.12, // 12% safety margin
+    outputTokensPerEntity: 500,
+    safetyMargin: 0.20, // 20% safety margin
   };
 
   logger.debug(

@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import * as readline from "node:readline";
 import type { createLLMJustificationService, ClarificationBatch } from "../core/justification/index.js";
+import { pauseLogging, resumeLogging } from "../utils/index.js";
 
 /**
  * Create a readline interface for interactive mode
@@ -13,14 +14,20 @@ export function createReadlineInterface(): readline.Interface {
 }
 
 /**
- * Ask a question and get user input
+ * Ask a question and get user input.
+ * Automatically pauses logging while waiting for input to prevent
+ * log lines from interrupting the prompt.
  */
 export async function askQuestion(
     rl: readline.Interface,
     question: string
 ): Promise<string> {
     return new Promise((resolve) => {
+        // Pause logging so no log lines appear after the prompt
+        pauseLogging();
         rl.question(question, (answer) => {
+            // Resume logging after user responds
+            resumeLogging();
             resolve(answer.trim());
         });
     });

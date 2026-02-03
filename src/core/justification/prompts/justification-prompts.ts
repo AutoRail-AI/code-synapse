@@ -738,16 +738,18 @@ ALWAYS describe the SPECIFIC business purpose:
 5. **confidenceScore** - Be honest about uncertainty
 
 ## OUTPUT FORMAT
-[
-  {
-    "id": "entity_id_from_input",
-    "purposeSummary": "Specific action on specific data for specific reason",
-    "businessValue": "What breaks or degrades without this",
-    "featureContext": "Specific subsystem name",
-    "tags": ["domain-concept1", "domain-concept2"],
-    "confidenceScore": 0.0-1.0
-  }
-]`;
+{
+  "justifications": [
+    {
+      "id": "entity_id_from_input",
+      "purposeSummary": "Specific action on specific data for specific reason",
+      "businessValue": "What breaks or degrades without this",
+      "featureContext": "Specific subsystem name",
+      "tags": ["domain-concept1", "domain-concept2"],
+      "confidenceScore": 0.0-1.0
+    }
+  ]
+}`;
 
 /**
  * Generate a batch prompt for multiple entities
@@ -792,19 +794,25 @@ export function generateBatchPrompt(entities: BatchEntityInput[]): string {
  * JSON schema for batch response
  */
 export const BATCH_JUSTIFICATION_JSON_SCHEMA = {
-  type: "array",
-  items: {
-    type: "object",
-    properties: {
-      id: { type: "string" },
-      purposeSummary: { type: "string" },
-      businessValue: { type: "string" },
-      featureContext: { type: "string" },
-      tags: { type: "array", items: { type: "string" } },
-      confidenceScore: { type: "number" },
+  type: "object",
+  properties: {
+    justifications: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          purposeSummary: { type: "string" },
+          businessValue: { type: "string" },
+          featureContext: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+          confidenceScore: { type: "number" },
+        },
+        required: ["id", "purposeSummary", "businessValue", "confidenceScore"],
+      },
     },
-    required: ["id", "purposeSummary", "businessValue", "confidenceScore"],
   },
+  required: ["justifications"],
 };
 
 /**
@@ -818,27 +826,18 @@ export function parseBatchResponse(
 
   try {
     let parsed: any;
-    if (Array.isArray(response)) {
+    // Handle SDK structured output object (which is not an array)
+    if (typeof response === "object" && response !== null && !Array.isArray(response)) {
+      parsed = response;
+    } else if (Array.isArray(response)) {
       parsed = response;
     } else if (typeof response === "string") {
       let jsonText = response;
 
-      // Extract JSON array from text
+      // Extract JSON from text
       const markdownMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (markdownMatch && markdownMatch[1]) {
         jsonText = markdownMatch[1].trim();
-      }
-
-      const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        const fallbackMatch = response.match(/\[[\s\S]*\]/);
-        if (!fallbackMatch) {
-          logger.debug("No JSON array found in batch response");
-          return results;
-        }
-        jsonText = fallbackMatch[0];
-      } else {
-        jsonText = jsonMatch[0];
       }
 
       try {
@@ -849,18 +848,31 @@ export function parseBatchResponse(
         if (fixed) {
           parsed = JSON.parse(fixed);
         } else {
-          throw parseError;
+          try {
+            // Try finding just the array or object
+            const firstBrace = jsonText.indexOf("{");
+            const lastBrace = jsonText.lastIndexOf("}");
+            if (firstBrace >= 0 && lastBrace > firstBrace) {
+              parsed = JSON.parse(jsonText.substring(firstBrace, lastBrace + 1));
+            } else {
+              throw parseError;
+            }
+          } catch {
+            throw parseError;
+          }
         }
       }
-    } else {
+    }
+
+    // Unwrap justifications if wrapped in object
+    const items = Array.isArray(parsed) ? parsed : (parsed?.justifications || []);
+
+    if (!Array.isArray(items)) {
+      logger.debug({ parsedType: typeof parsed }, "Parsed batch response is not an array or wrapped array");
       return results;
     }
 
-    if (!Array.isArray(parsed)) {
-      return results;
-    }
-
-    for (const item of parsed) {
+    for (const item of items) {
       if (!item || typeof item !== "object") continue;
       const obj = item as Record<string, unknown>;
 

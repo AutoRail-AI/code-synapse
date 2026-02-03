@@ -5,7 +5,7 @@
  * - Local models (node-llama-cpp: Qwen, Llama, CodeLlama, DeepSeek)
  * - OpenAI (GPT-4o, GPT-4o-mini)
  * - Anthropic (Claude 3.5 Sonnet, Claude 3 Haiku)
- * - Google (Gemini 1.5 Pro, Gemini 1.5 Flash)
+ * - Google (Gemini 3 Pro, Gemini 3 Flash)
  *
  * Features:
  * - Intelligent routing based on task type, cost, and latency
@@ -19,12 +19,17 @@
 // Interfaces
 export * from "./interfaces/IModel.js";
 
+// Registry (Model Definitions)
+export * from "./Registry.js";
+
 // Router
 export * from "./router/ModelRouter.js";
 
 // Providers
 export * from "./providers/LocalProvider.js";
 export * from "./providers/OpenAIProvider.js";
+export * from "./providers/GoogleProvider.js";
+export * from "./providers/AnthropicProvider.js";
 
 // =============================================================================
 // Convenience Factory
@@ -33,6 +38,8 @@ export * from "./providers/OpenAIProvider.js";
 import { ModelRouter, createModelRouter } from "./router/ModelRouter.js";
 import { createLocalProvider } from "./providers/LocalProvider.js";
 import { createOpenAIProvider } from "./providers/OpenAIProvider.js";
+import { createGoogleProvider } from "./providers/GoogleProvider.js";
+import { createAnthropicProvider } from "./providers/AnthropicProvider.js";
 import type { RoutingPolicy } from "./interfaces/IModel.js";
 
 /**
@@ -48,7 +55,7 @@ export async function createInitializedModelRouter(options?: {
     enableLocal = true,
     enableOpenAI = true,
     enableAnthropic = false, // Not implemented yet
-    enableGoogle = false, // Not implemented yet
+    enableGoogle = true,
   } = options ?? {};
 
   const router = createModelRouter();
@@ -62,13 +69,12 @@ export async function createInitializedModelRouter(options?: {
     router.registerProvider(createOpenAIProvider());
   }
 
-  // TODO: Add Anthropic and Google providers when implemented
   if (enableAnthropic) {
-    // router.registerProvider(createAnthropicProvider());
+    router.registerProvider(createAnthropicProvider());
   }
 
   if (enableGoogle) {
-    // router.registerProvider(createGoogleProvider());
+    router.registerProvider(createGoogleProvider());
   }
 
   // Initialize all providers
@@ -121,5 +127,16 @@ export function createLowLatencyPolicy(): RoutingPolicy {
     maxLatencyMs: 2000,
     qualityThreshold: 0.7,
     fallbackOrder: ["google", "local", "openai", "anthropic"],
+  };
+}
+
+/**
+ * Create a routing policy that uses Gemini 3 models exclusively if possible
+ */
+export function createGemini3ExclusivePolicy(): RoutingPolicy {
+  return {
+    preferLocal: false,
+    qualityThreshold: 0.9,
+    fallbackOrder: ["google"],
   };
 }

@@ -246,7 +246,7 @@ export class LLMClassificationEngine implements IClassificationEngine {
         relatedEntities: [],
         dependsOn: [],
         usedBy: [],
-        classifiedAt: new Date().toISOString(),
+        classifiedAt: Date.now(),
         classifiedBy: "system",
         version: 1,
       };
@@ -521,11 +521,12 @@ export class LLMClassificationEngine implements IClassificationEngine {
         parameters: {
           maxTokens: 500,
           temperature: 0.1,
+          thinkingLevel: "low",
         },
         schema: CLASSIFICATION_JSON_SCHEMA,
       });
 
-      const parsed = (JSON.parse(response.content) || {}) as LLMClassificationResponse;
+      const parsed = (response.parsed || {}) as LLMClassificationResponse;
 
       if (!parsed.category) {
         return null;

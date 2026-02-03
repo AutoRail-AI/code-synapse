@@ -21,7 +21,7 @@ import type {
   RouterStats,
   ModelVendor,
 } from "../interfaces/IModel.js";
-import { ALL_MODELS } from "../interfaces/IModel.js";
+import { ALL_MODELS } from "../Registry.js";
 import type { IFeedbackLoop, ModelOutcome } from "../../feedback/interfaces/IFeedback.js";
 import { createLogger } from "../../telemetry/logger.js";
 import * as crypto from "node:crypto";
@@ -33,11 +33,11 @@ const logger = createLogger("model-router");
 // =============================================================================
 
 export const DEFAULT_ROUTING_POLICY: RoutingPolicy = {
-  preferLocal: true,
-  maxLatencyMs: 10000,
-  maxCostPerRequest: 0.10,
-  qualityThreshold: 0.6,
-  fallbackOrder: ["local", "google", "anthropic", "openai"],
+  preferLocal: false,
+  maxLatencyMs: 20000,
+  maxCostPerRequest: 0.20,
+  qualityThreshold: 0.8,
+  fallbackOrder: ["google", "local", "anthropic", "openai"],
 };
 
 // =============================================================================

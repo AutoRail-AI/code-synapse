@@ -36,6 +36,8 @@ export interface ClassificationEngineConfig {
   maxRetries: number;
   /** Timeout for single classification (ms) */
   timeout: number;
+  /** Model ID to use for classification */
+  modelId?: string;
 }
 
 /**
@@ -48,6 +50,7 @@ export const DEFAULT_CLASSIFICATION_CONFIG: ClassificationEngineConfig = {
   useDependencyAnalysis: true,
   maxRetries: 2,
   timeout: 30000,
+  modelId: "gemini-3-pro-preview",
 };
 
 /**

@@ -3,7 +3,7 @@
  * Structured logging using pino with file and console output
  */
 
-import pino, { type Logger as PinoLogger } from "pino";
+import pino, { type Logger as PinoLogger, type DestinationStream } from "pino";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getConfigDir } from "./index.js";
@@ -18,6 +18,58 @@ export interface LoggerOptions {
 }
 
 const LOG_DIR_NAME = "logs";
+
+// =============================================================================
+// Log Suppression for Interactive Prompts
+// =============================================================================
+
+/**
+ * Global state for log suppression during interactive prompts.
+ * When true, logs are buffered instead of being written immediately.
+ */
+let loggingSuppressed = false;
+
+/**
+ * Buffer to hold suppressed log entries
+ */
+const suppressedLogBuffer: string[] = [];
+
+/**
+ * Pause logging output. Use before showing interactive prompts.
+ * Logs will be buffered and written when resumeLogging() is called.
+ * 
+ * @example
+ * ```typescript
+ * pauseLogging();
+ * const answer = await rl.question("Continue? (Y/n)");
+ * resumeLogging();
+ * ```
+ */
+export function pauseLogging(): void {
+  loggingSuppressed = true;
+}
+
+/**
+ * Resume logging output. Call after user responds to interactive prompt.
+ * This will NOT flush buffered logs - they are discarded to keep the
+ * terminal clean after user input.
+ */
+export function resumeLogging(): void {
+  // Discard buffered logs to keep terminal clean
+  suppressedLogBuffer.length = 0;
+  loggingSuppressed = false;
+}
+
+/**
+ * Check if logging is currently suppressed
+ */
+export function isLoggingSuppressed(): boolean {
+  return loggingSuppressed;
+}
+
+// =============================================================================
+// Log Directory Helpers
+// =============================================================================
 
 /**
  * Ensures the log directory exists
@@ -67,6 +119,23 @@ function shouldEnableFileLogging(): boolean {
 }
 
 /**
+ * Create a destination stream that respects log suppression.
+ * Wraps another destination and buffers writes when suppressed.
+ */
+function createSuppressibleDestination(target: DestinationStream | NodeJS.WritableStream): DestinationStream {
+  return {
+    write(msg: string): void {
+      if (loggingSuppressed) {
+        // Buffer the log but don't write it
+        suppressedLogBuffer.push(msg);
+        return;
+      }
+      (target as NodeJS.WritableStream).write(msg);
+    },
+  };
+}
+
+/**
  * Create a logger instance for a specific component
  *
  * @param component - The component name (e.g., "parser", "indexer", "mcp")
@@ -106,10 +175,10 @@ export function createLogger(
       sync: false,
     });
 
-    // Use pino.multistream to log to both console and file
+    // Wrap streams with suppression check
     const streams = [
-      { stream: process.stdout, level: level as pino.Level },
-      { stream: fileStream, level: level as pino.Level },
+      { stream: createSuppressibleDestination(process.stdout), level: level as pino.Level },
+      { stream: fileStream, level: level as pino.Level }, // File always gets logs
     ];
 
     return pino(baseOptions, pino.multistream(streams));
@@ -118,7 +187,8 @@ export function createLogger(
   // In development, use pretty printing if available
   if (isDevelopment()) {
     try {
-      // Try to use pino-pretty for development
+      // For pino-pretty, we use a custom destination that wraps stdout
+      // but respects suppression before the transport processes it
       return pino({
         ...baseOptions,
         transport: {
@@ -127,16 +197,17 @@ export function createLogger(
             colorize: true,
             translateTime: "SYS:HH:MM:ss",
             ignore: "pid,hostname",
+            destination: 1, // stdout file descriptor
           },
         },
       });
     } catch {
       // Fall back to standard pino if pino-pretty not available
-      return pino(baseOptions);
+      return pino(baseOptions, createSuppressibleDestination(process.stdout));
     }
   }
 
-  return pino(baseOptions);
+  return pino(baseOptions, createSuppressibleDestination(process.stdout));
 }
 
 /**
@@ -180,3 +251,4 @@ export const log = {
   error: (msg: string, obj?: object) => getDefaultLogger().error(obj, msg),
   fatal: (msg: string, obj?: object) => getDefaultLogger().fatal(obj, msg),
 };
+

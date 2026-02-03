@@ -54,6 +54,7 @@ import {
 import {
   type ModelPreset,
   MODEL_PRESETS,
+  getDefaultModelForProvider,
 } from "../../core/llm/index.js";
 import type { ProjectConfig } from "../../types/index.js";
 import { InteractiveSetup, type CodeSynapseConfig } from "./setup.js";
@@ -79,17 +80,7 @@ export interface DefaultOptions {
 const PORT_RANGE_START = 3100;
 const PORT_RANGE_END = 3200;
 
-/**
- * Get default model ID for an API provider
- */
-function getDefaultApiModel(provider: string): string {
-  const defaults: Record<string, string> = {
-    anthropic: "claude-sonnet-4-20250514",
-    openai: "gpt-4o",
-    google: "gemini-1.5-pro",
-  };
-  return defaults[provider] || "claude-sonnet-4-20250514";
-}
+
 
 /**
  * Format duration in human readable format
@@ -122,6 +113,9 @@ function formatConfidence(score: number): string {
  * Prompt user for a port number
  */
 async function promptForPort(): Promise<number> {
+  // Import logging control (already re-exported from utils)
+  const { pauseLogging, resumeLogging } = await import("../../utils/index.js");
+
   const rl = readline.createInterface({
     input: stdin,
     output: stdout,
@@ -129,9 +123,11 @@ async function promptForPort(): Promise<number> {
 
   try {
     while (true) {
+      pauseLogging();
       const answer = await rl.question(
         chalk.yellow("Enter a port number (1024-65535): ")
       );
+      resumeLogging();
 
       const port = parseInt(answer.trim(), 10);
 
@@ -277,7 +273,7 @@ async function runJustification(
 
     // Get API key from config if available
     const apiKey = config?.apiKeys?.[modelProvider as keyof typeof config.apiKeys];
-    
+
     // Set API key in environment for providers
     if (apiKey) {
       if (modelProvider === "openai") process.env.OPENAI_API_KEY = apiKey;
@@ -291,7 +287,7 @@ async function runJustification(
 
     try {
       spinner.text = "Initializing model router...";
-      
+
       modelRouter = await createInitializedModelRouter({
         enableLocal: modelProvider === "local",
         enableOpenAI: modelProvider === "openai",
@@ -303,7 +299,7 @@ async function runJustification(
         actualModelId = MODEL_PRESETS[preset];
         spinner.text = `Local model router initialized (${preset})`;
       } else {
-        actualModelId = savedModelId || getDefaultApiModel(modelProvider);
+        actualModelId = savedModelId || getDefaultModelForProvider(modelProvider);
         spinner.text = `${modelProvider} API connected`;
         console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId})`));
       }
@@ -646,7 +642,7 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       // but ideally we should refactor. 
       // Actually, let's just initialize it again in runClassification if needed, or pass null.
       // But wait, runJustification initializes it locally.
-      
+
       const justifySuccess = await runJustification(graphStore, options.model, spinner);
       if (!justifySuccess) {
         spinner.warn(chalk.yellow("Business justification had issues, continuing..."));

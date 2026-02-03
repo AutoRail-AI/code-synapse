@@ -595,12 +595,13 @@ export class LLMJustificationService implements IJustificationService {
       parameters: {
         maxTokens: estimatedResponseTokens,
         temperature: 0.3,
+        thinkingLevel: "medium",
       },
       schema: BATCH_JUSTIFICATION_JSON_SCHEMA,
     });
 
-    // Parse batch response
-    const batchResponses = parseBatchResponse(inferenceResult.content);
+    // Use native parsed results if available
+    const batchResponses = (inferenceResult.parsed as Map<string, any>) || parseBatchResponse(inferenceResult.content);
 
     // Create justifications for each entity
     const justifications: EntityJustification[] = [];
@@ -919,12 +920,13 @@ export class LLMJustificationService implements IJustificationService {
           parameters: {
             maxTokens: 1024,
             temperature: 0.3,
+            thinkingLevel: "medium",
           },
           schema: JUSTIFICATION_JSON_SCHEMA,
         });
 
-        const parsed = parseJustificationResponse(inferenceResult.content);
-        llmResponse = parsed || createDefaultResponse(context.entity);
+        const parsed = inferenceResult.parsed || parseJustificationResponse(inferenceResult.content);
+        llmResponse = (parsed as LLMJustificationResponse) || createDefaultResponse(context.entity);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.warn(

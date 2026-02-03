@@ -148,9 +148,9 @@ export const EntityClassificationSchema = z.object({
   usedBy: z.array(z.string()).default([]),
 
   // Audit
-  classifiedAt: z.string().datetime(),
+  classifiedAt: z.number(),
   classifiedBy: z.string().default("system"),
-  lastUpdated: z.string().datetime().optional(),
+  lastUpdated: z.number().optional(),
   version: z.number().default(1),
 });
 
@@ -289,7 +289,7 @@ export function createDomainClassification(
     relatedEntities: [],
     dependsOn: [],
     usedBy: [],
-    classifiedAt: new Date().toISOString(),
+    classifiedAt: Date.now(),
     classifiedBy: "system",
     version: 1,
   };
@@ -329,7 +329,7 @@ export function createInfrastructureClassification(
     relatedEntities: [],
     dependsOn: [],
     usedBy: [],
-    classifiedAt: new Date().toISOString(),
+    classifiedAt: Date.now(),
     classifiedBy: "system",
     version: 1,
   };

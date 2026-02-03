@@ -35,9 +35,9 @@ interface ClassificationRow {
   relatedEntities: string;
   dependsOn: string;
   usedBy: string;
-  classifiedAt: string;
+  classifiedAt: number; // Stored as epoch
   classifiedBy: string;
-  lastUpdated: string | null;
+  lastUpdated: number | null; // Stored as epoch
   version: number;
 }
 
@@ -174,7 +174,7 @@ export class CozoClassificationStorage implements IClassificationStorage {
     const updated: EntityClassification = {
       ...existing,
       ...updates,
-      lastUpdated: new Date().toISOString(),
+      lastUpdated: Date.now(),
       version: existing.version + 1,
     };
 
@@ -499,16 +499,24 @@ export class CozoClassificationStorage implements IClassificationStorage {
     ]);
 
     const counts: Record<string, number> = {};
-    for (const row of countRows) {
-      // Row is like { category: 'domain', "count(id)": 5 }
-      // We extract the count value safely
-      const category = row.category as string;
-      const cnt = Object.values(row).find(v => typeof v === 'number') as number || 0;
-      counts[category] = cnt;
+    if (Array.isArray(countRows)) {
+      for (const row of countRows) {
+        // Row is like { category: 'domain', "count(id)": 5 }
+        // We extract the count value safely
+        const category = row.category as string;
+        const cnt = (Object.values(row).find((v) => typeof v === "number") as number) || 0;
+        counts[category] = cnt;
+      }
     }
 
-    const firstConfRow = confRows[0];
-    const avgConfidence = firstConfRow ? (Object.values(firstConfRow)[0] as number) : 0;
+    let avgConfidence = 0;
+    if (Array.isArray(confRows) && confRows.length > 0) {
+      const firstConfRow = confRows[0];
+      avgConfidence = firstConfRow
+        ? (Object.values(firstConfRow)[0] as number)
+        : 0;
+    }
+
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
 
     return {

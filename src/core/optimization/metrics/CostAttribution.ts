@@ -82,6 +82,8 @@ export const DEFAULT_COST_CONFIG: CostAttributionConfig = {
     { modelId: "gpt-4o-mini", inputTokenCost: 0.00015, outputTokenCost: 0.0006, embeddingCost: 0.00002 },
     { modelId: "claude-3-5-sonnet", inputTokenCost: 0.003, outputTokenCost: 0.015, embeddingCost: 0 },
     { modelId: "claude-3-haiku", inputTokenCost: 0.00025, outputTokenCost: 0.00125, embeddingCost: 0 },
+    { modelId: "gemini-3-pro-preview", inputTokenCost: 0.002, outputTokenCost: 0.012, embeddingCost: 0.00001 },
+    { modelId: "gemini-3-flash-preview", inputTokenCost: 0.0005, outputTokenCost: 0.003, embeddingCost: 0.00001 },
     { modelId: "gemini-1.5-pro", inputTokenCost: 0.00125, outputTokenCost: 0.005, embeddingCost: 0.00001 },
     { modelId: "gemini-1.5-flash", inputTokenCost: 0.000075, outputTokenCost: 0.0003, embeddingCost: 0.00001 },
   ],
