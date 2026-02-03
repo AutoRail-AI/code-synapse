@@ -8,7 +8,7 @@
  */
 
 import type { IGraphStore } from "../../core/interfaces/IGraphStore.js";
-import type { LLMService } from "../../core/llm/llm-service.js";
+import type { ILLMService } from "../../core/llm/interfaces/ILLMService.js";
 import { IntentClassifier, createIntentClassifier } from "./intent-classifier.js";
 import { QueryBuilder, createQueryBuilder, type GeneratedQuery } from "./query-builder.js";
 import type {
@@ -28,9 +28,9 @@ export class NaturalLanguageSearchService {
   private classifier: IntentClassifier;
   private queryBuilder: QueryBuilder;
   private config: Required<NLSearchConfig>;
-  private llmService?: LLMService;
+  private llmService?: ILLMService;
 
-  constructor(store: IGraphStore, config?: NLSearchConfig, llmService?: LLMService) {
+  constructor(store: IGraphStore, config?: NLSearchConfig, llmService?: ILLMService) {
     this.store = store;
     this.config = { ...DEFAULT_NL_SEARCH_CONFIG, ...config };
     this.llmService = llmService;
@@ -377,7 +377,7 @@ export class NaturalLanguageSearchService {
    */
   async close(): Promise<void> {
     if (this.llmService) {
-      await this.llmService.close();
+      await this.llmService.shutdown();
     }
   }
 }
@@ -392,7 +392,7 @@ export class NaturalLanguageSearchService {
 export function createNLSearchService(
   store: IGraphStore,
   config?: NLSearchConfig,
-  llmService?: LLMService
+  llmService?: ILLMService
 ): NaturalLanguageSearchService {
   return new NaturalLanguageSearchService(store, config, llmService);
 }

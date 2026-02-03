@@ -60,20 +60,35 @@ export class CozoClassificationStorage implements IClassificationStorage {
 
   async store(classification: EntityClassification): Promise<void> {
     const query = `
-      ?[id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version] <- [[
+      ?[id, entity_id, entity_type, entity_name, file_path, category,
+        domain_metadata, infrastructure_metadata, confidence, classification_method,
+        reasoning, indicators, related_entities, depends_on, used_by,
+        classified_at, classified_by, last_updated, version] <- [[
         $id, $entityId, $entityType, $entityName, $filePath, $category,
         $domainMetadata, $infrastructureMetadata, $confidence, $classificationMethod,
         $reasoning, $indicators, $relatedEntities, $dependsOn, $usedBy,
         $classifiedAt, $classifiedBy, $lastUpdated, $version
       ]]
       :put EntityClassification {
-        id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version
+        id,
+        entity_id,
+        entity_type,
+        entity_name,
+        file_path,
+        category,
+        domain_metadata,
+        infrastructure_metadata,
+        confidence,
+        classification_method,
+        reasoning,
+        indicators,
+        related_entities,
+        depends_on,
+        used_by,
+        classified_at,
+        classified_by,
+        last_updated,
+        version
       }
     `;
 
@@ -118,10 +133,25 @@ export class CozoClassificationStorage implements IClassificationStorage {
         reasoning, indicators, relatedEntities, dependsOn, usedBy,
         classifiedAt, classifiedBy, lastUpdated, version] :=
         *EntityClassification{
-          id, entityId, entityType, entityName, filePath, category,
-          domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-          reasoning, indicators, relatedEntities, dependsOn, usedBy,
-          classifiedAt, classifiedBy, lastUpdated, version
+          id,
+          entity_id: entityId,
+          entity_type: entityType,
+          entity_name: entityName,
+          file_path: filePath,
+          category,
+          domain_metadata: domainMetadata,
+          infrastructure_metadata: infrastructureMetadata,
+          confidence,
+          classification_method: classificationMethod,
+          reasoning,
+          indicators,
+          related_entities: relatedEntities,
+          depends_on: dependsOn,
+          used_by: usedBy,
+          classified_at: classifiedAt,
+          classified_by: classifiedBy,
+          last_updated: lastUpdated,
+          version
         },
         entityId == $entityId
     `;
@@ -154,7 +184,7 @@ export class CozoClassificationStorage implements IClassificationStorage {
 
   async delete(entityId: string): Promise<boolean> {
     const query = `
-      ?[id] := *EntityClassification{id, entityId}, entityId == $entityId
+      ?[id] := *EntityClassification{id, entity_id: entityId}, entityId == $entityId
       :rm EntityClassification {id}
     `;
 
@@ -169,14 +199,16 @@ export class CozoClassificationStorage implements IClassificationStorage {
   async deleteForFile(filePath: string): Promise<number> {
     // First count the existing entries
     const countQuery = `
-      ?[cnt] := cnt = count(id), *EntityClassification{id, filePath: fp}, fp == $filePath
+      ?[count(id)] := *EntityClassification{id, file_path: fp}, fp == $filePath
     `;
-    const countRows = await this.db.query<{ cnt: number }>(countQuery, { filePath });
-    const count = countRows[0]?.cnt ?? 0;
+    const countRows = await this.db.query<any>(countQuery, { filePath });
+    // Aggregation result key is usually 'count(id)' or similar
+    const firstRow = countRows[0];
+    const count = firstRow ? (Object.values(firstRow)[0] as number) : 0;
 
     // Then delete them
     const deleteQuery = `
-      ?[id] := *EntityClassification{id, filePath: fp}, fp == $filePath
+      ?[id] := *EntityClassification{id, file_path: fp}, fp == $filePath
       :rm EntityClassification {id}
     `;
     await this.db.query(deleteQuery, { filePath });
@@ -199,10 +231,25 @@ export class CozoClassificationStorage implements IClassificationStorage {
         reasoning, indicators, relatedEntities, dependsOn, usedBy,
         classifiedAt, classifiedBy, lastUpdated, version] :=
         *EntityClassification{
-          id, entityId, entityType, entityName, filePath, category,
-          domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-          reasoning, indicators, relatedEntities, dependsOn, usedBy,
-          classifiedAt, classifiedBy, lastUpdated, version
+          id,
+          entity_id: entityId,
+          entity_type: entityType,
+          entity_name: entityName,
+          file_path: filePath,
+          category,
+          domain_metadata: domainMetadata,
+          infrastructure_metadata: infrastructureMetadata,
+          confidence,
+          classification_method: classificationMethod,
+          reasoning,
+          indicators,
+          related_entities: relatedEntities,
+          depends_on: dependsOn,
+          used_by: usedBy,
+          classified_at: classifiedAt,
+          classified_by: classifiedBy,
+          last_updated: lastUpdated,
+          version
         },
         category == $category
         ${options?.minConfidence ? `, confidence >= $minConfidence` : ""}
@@ -234,10 +281,25 @@ export class CozoClassificationStorage implements IClassificationStorage {
         reasoning, indicators, relatedEntities, dependsOn, usedBy,
         classifiedAt, classifiedBy, lastUpdated, version] :=
         *EntityClassification{
-          id, entityId, entityType, entityName, filePath, category,
-          domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-          reasoning, indicators, relatedEntities, dependsOn, usedBy,
-          classifiedAt, classifiedBy, lastUpdated, version
+          id,
+          entity_id: entityId,
+          entity_type: entityType,
+          entity_name: entityName,
+          file_path: filePath,
+          category,
+          domain_metadata: domainMetadata,
+          infrastructure_metadata: infrastructureMetadata,
+          confidence,
+          classification_method: classificationMethod,
+          reasoning,
+          indicators,
+          related_entities: relatedEntities,
+          depends_on: dependsOn,
+          used_by: usedBy,
+          classified_at: classifiedAt,
+          classified_by: classifiedBy,
+          last_updated: lastUpdated,
+          version
         },
         category == "domain",
         domainMetadata != null
@@ -266,10 +328,25 @@ export class CozoClassificationStorage implements IClassificationStorage {
         reasoning, indicators, relatedEntities, dependsOn, usedBy,
         classifiedAt, classifiedBy, lastUpdated, version] :=
         *EntityClassification{
-          id, entityId, entityType, entityName, filePath, category,
-          domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-          reasoning, indicators, relatedEntities, dependsOn, usedBy,
-          classifiedAt, classifiedBy, lastUpdated, version
+          id,
+          entity_id: entityId,
+          entity_type: entityType,
+          entity_name: entityName,
+          file_path: filePath,
+          category,
+          domain_metadata: domainMetadata,
+          infrastructure_metadata: infrastructureMetadata,
+          confidence,
+          classification_method: classificationMethod,
+          reasoning,
+          indicators,
+          related_entities: relatedEntities,
+          depends_on: dependsOn,
+          used_by: usedBy,
+          classified_at: classifiedAt,
+          classified_by: classifiedBy,
+          last_updated: lastUpdated,
+          version
         },
         category == "infrastructure",
         infrastructureMetadata != null
@@ -296,10 +373,25 @@ export class CozoClassificationStorage implements IClassificationStorage {
         reasoning, indicators, relatedEntities, dependsOn, usedBy,
         classifiedAt, classifiedBy, lastUpdated, version] :=
         *EntityClassification{
-          id, entityId, entityType, entityName, filePath, category,
-          domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-          reasoning, indicators, relatedEntities, dependsOn, usedBy,
-          classifiedAt, classifiedBy, lastUpdated, version
+          id,
+          entity_id: entityId,
+          entity_type: entityType,
+          entity_name: entityName,
+          file_path: filePath,
+          category,
+          domain_metadata: domainMetadata,
+          infrastructure_metadata: infrastructureMetadata,
+          confidence,
+          classification_method: classificationMethod,
+          reasoning,
+          indicators,
+          related_entities: relatedEntities,
+          depends_on: dependsOn,
+          used_by: usedBy,
+          classified_at: classifiedAt,
+          classified_by: classifiedBy,
+          last_updated: lastUpdated,
+          version
         },
         (contains(entityName, $searchQuery) || contains(reasoning, $searchQuery) || contains(filePath, $searchQuery))
         ${options?.category ? `, category == $category` : ""}
@@ -324,10 +416,25 @@ export class CozoClassificationStorage implements IClassificationStorage {
         reasoning, indicators, relatedEntities, dependsOn, usedBy,
         classifiedAt, classifiedBy, lastUpdated, version] :=
         *EntityClassification{
-          id, entityId, entityType, entityName, filePath, category,
-          domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-          reasoning, indicators, relatedEntities, dependsOn, usedBy,
-          classifiedAt, classifiedBy, lastUpdated, version
+          id,
+          entity_id: entityId,
+          entity_type: entityType,
+          entity_name: entityName,
+          file_path: filePath,
+          category,
+          domain_metadata: domainMetadata,
+          infrastructure_metadata: infrastructureMetadata,
+          confidence,
+          classification_method: classificationMethod,
+          reasoning,
+          indicators,
+          related_entities: relatedEntities,
+          depends_on: dependsOn,
+          used_by: usedBy,
+          classified_at: classifiedAt,
+          classified_by: classifiedBy,
+          last_updated: lastUpdated,
+          version
         },
         filePath == $filePath
     `;
@@ -343,10 +450,25 @@ export class CozoClassificationStorage implements IClassificationStorage {
         reasoning, indicators, relatedEntities, dependsOn, usedBy,
         classifiedAt, classifiedBy, lastUpdated, version] :=
         *EntityClassification{
-          id, entityId, entityType, entityName, filePath, category,
-          domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-          reasoning, indicators, relatedEntities, dependsOn, usedBy,
-          classifiedAt, classifiedBy, lastUpdated, version
+          id,
+          entity_id: entityId,
+          entity_type: entityType,
+          entity_name: entityName,
+          file_path: filePath,
+          category,
+          domain_metadata: domainMetadata,
+          infrastructure_metadata: infrastructureMetadata,
+          confidence,
+          classification_method: classificationMethod,
+          reasoning,
+          indicators,
+          related_entities: relatedEntities,
+          depends_on: dependsOn,
+          used_by: usedBy,
+          classified_at: classifiedAt,
+          classified_by: classifiedBy,
+          last_updated: lastUpdated,
+          version
         },
         category == "infrastructure",
         infrastructureMetadata != null
@@ -362,28 +484,31 @@ export class CozoClassificationStorage implements IClassificationStorage {
 
   async getStats(): Promise<ClassificationStats> {
     const countQuery = `
-      ?[category, cnt] :=
-        *EntityClassification{category},
-        cnt = count(category)
+      ?[category, count(id)] :=
+        *EntityClassification{id, category}
     `;
 
     const confidenceQuery = `
-      ?[avg_conf] :=
-        avg_conf = mean(c),
+      ?[mean(c)] :=
         *EntityClassification{confidence: c}
     `;
 
     const [countRows, confRows] = await Promise.all([
-      this.db.query<{ category: string; cnt: number }>(countQuery, {}),
-      this.db.query<{ avg_conf: number }>(confidenceQuery, {}),
+      this.db.query<any>(countQuery, {}),
+      this.db.query<any>(confidenceQuery, {}),
     ]);
 
     const counts: Record<string, number> = {};
     for (const row of countRows) {
-      counts[row.category] = row.cnt;
+      // Row is like { category: 'domain', "count(id)": 5 }
+      // We extract the count value safely
+      const category = row.category as string;
+      const cnt = Object.values(row).find(v => typeof v === 'number') as number || 0;
+      counts[category] = cnt;
     }
 
-    const avgConfidence = confRows[0]?.avg_conf ?? 0;
+    const firstConfRow = confRows[0];
+    const avgConfidence = firstConfRow ? (Object.values(firstConfRow)[0] as number) : 0;
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
 
     return {
@@ -401,11 +526,12 @@ export class CozoClassificationStorage implements IClassificationStorage {
 
   async exists(entityId: string): Promise<boolean> {
     const query = `
-      ?[cnt] := cnt = count(id), *EntityClassification{id, entityId}, entityId == $entityId
+      ?[id] := *EntityClassification{id, entity_id: entityId}, entityId == $entityId
+      :limit 1
     `;
 
-    const rows = await this.db.query<{ cnt: number }>(query, { entityId });
-    return (rows[0]?.cnt ?? 0) > 0;
+    const rows = await this.db.query<{ id: string }>(query, { entityId });
+    return rows.length > 0;
   }
 
   private rowToClassification(row: ClassificationRow): EntityClassification {

@@ -138,6 +138,20 @@ Respond in this exact JSON format:
   "libraryVersion": "<version if known, null otherwise>"
 }`;
 
+const CLASSIFICATION_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    category: { enum: ["domain", "infrastructure"] },
+    area: { type: "string" },
+    confidence: { type: "number" },
+    reasoning: { type: "string" },
+    indicators: { type: "array", items: { type: "string" } },
+    library: { type: ["string", "null"] },
+    libraryVersion: { type: ["string", "null"] },
+  },
+  required: ["category", "area", "confidence"],
+};
+
 // =============================================================================
 // Implementation
 // =============================================================================
@@ -494,13 +508,14 @@ export class LLMClassificationEngine implements IClassificationEngine {
       const response = await this.llm.infer(prompt, {
         maxTokens: 500,
         temperature: 0.1,
+        jsonSchema: CLASSIFICATION_JSON_SCHEMA,
       });
 
-      // Parse JSON response
-      const jsonMatch = response.text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return null;
+      const parsed = (response.parsed || {}) as any;
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      if (!parsed.category) {
+        return null;
+      }
 
       if (parsed.category === "domain") {
         const area = DomainAreaSchema.safeParse(parsed.area);

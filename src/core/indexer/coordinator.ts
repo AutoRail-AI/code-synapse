@@ -18,6 +18,7 @@ import { FileScanner } from "./scanner.js";
 import { EntityPipeline } from "../extraction/pipeline.js";
 import { GraphWriter, IncrementalUpdater } from "../graph-builder/index.js";
 import { createLogger } from "../../utils/logger.js";
+import { mapConcurrent } from "../../utils/async.js";
 
 const logger = createLogger("indexer-coordinator");
 
@@ -452,74 +453,90 @@ export class IndexerCoordinator {
     errors: IndexingError[],
     phaseStats: IndexingCoordinatorResult["phases"]
   ): Promise<WriteResult[]> {
-    const results: WriteResult[] = [];
+    // Process files concurrently with a limit of 4
+    // TODO: Make concurrency configurable via options
+    const CONCURRENCY = 4;
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]!;
-      const overallProcessed = processedSoFar + i;
-      const percentage = Math.round((overallProcessed / totalFiles) * 100);
+    return mapConcurrent(
+      files,
+      async (file: FileInfo, index: number) => {
+        // Calculate progress based on start index + current index
+        // Note: In concurrent execution, completion order isn't guaranteed,
+        // so progress percentage will jump around slightly or need atomic counter
+        // For simplicity, we just use the index for estimation
+        const overallProcessed = processedSoFar + index;
+        const percentage = Math.round((overallProcessed / totalFiles) * 100);
 
-      try {
-        // Phase 2: Parsing
-        const parseStart = Date.now();
-        this.emitProgress("parsing", overallProcessed, totalFiles, percentage, `Parsing ${file.relativePath}`);
+        try {
+          // Phase 2: Parsing
+          const parseStart = Date.now();
+          this.emitProgress("parsing", overallProcessed, totalFiles, percentage, `Parsing ${file.relativePath}`);
 
-        const parsed = await this.parser.parseFile(file.absolutePath);
-        phaseStats.parsing.files++;
-        phaseStats.parsing.durationMs += Date.now() - parseStart;
+          const parsed = await this.parser.parseFile(file.absolutePath);
+          phaseStats.parsing.files++;
+          phaseStats.parsing.durationMs += Date.now() - parseStart;
 
-        // Phase 3: Extracting
-        const extractStart = Date.now();
-        this.emitProgress("extracting", overallProcessed, totalFiles, percentage, `Extracting ${file.relativePath}`);
+          // Phase 3: Extracting
+          const extractStart = Date.now();
+          this.emitProgress("extracting", overallProcessed, totalFiles, percentage, `Extracting ${file.relativePath}`);
 
-        const extracted = await this.pipeline.extract(parsed, file.hash, file.size);
-        phaseStats.extracting.files++;
-        phaseStats.extracting.durationMs += Date.now() - extractStart;
+          const extracted = await this.pipeline.extract(parsed, file.hash, file.size);
+          phaseStats.extracting.files++;
+          phaseStats.extracting.durationMs += Date.now() - extractStart;
 
-        // Log extraction errors (non-fatal)
-        if (extracted.errors.length > 0) {
-          for (const err of extracted.errors) {
-            logger.warn({ file: file.relativePath, error: err }, "Extraction warning");
+          // Log extraction errors (non-fatal)
+          if (extracted.errors.length > 0) {
+            for (const err of extracted.errors) {
+              logger.warn({ file: file.relativePath, error: err }, "Extraction warning");
+            }
           }
-        }
 
-        // Phase 4: Writing
-        const writeStart = Date.now();
-        this.emitProgress("writing", overallProcessed, totalFiles, percentage, `Writing ${file.relativePath}`);
+          // Phase 4: Writing
+          const writeStart = Date.now();
+          this.emitProgress("writing", overallProcessed, totalFiles, percentage, `Writing ${file.relativePath}`);
 
-        const writeResult = await this.writer.writeFile(extracted);
-        phaseStats.writing.files++;
-        phaseStats.writing.durationMs += Date.now() - writeStart;
+          const writeResult = await this.writer.writeFile(extracted);
+          phaseStats.writing.files++;
+          phaseStats.writing.durationMs += Date.now() - writeStart;
 
-        results.push(writeResult);
+          if (!writeResult.success) {
+            const err: IndexingError = {
+              filePath: file.absolutePath,
+              phase: "writing",
+              error: writeResult.error ?? "Unknown write error",
+              recoverable: true,
+            };
+            errors.push(err);
+            this.options.onError?.(err);
+          }
 
-        if (!writeResult.success) {
+          return writeResult;
+        } catch (error) {
           const err: IndexingError = {
             filePath: file.absolutePath,
-            phase: "writing",
-            error: writeResult.error ?? "Unknown write error",
+            phase: "parsing",
+            error: error instanceof Error ? error.message : String(error),
             recoverable: true,
           };
           errors.push(err);
           this.options.onError?.(err);
-        }
-      } catch (error) {
-        const err: IndexingError = {
-          filePath: file.absolutePath,
-          phase: "parsing",
-          error: error instanceof Error ? error.message : String(error),
-          recoverable: true,
-        };
-        errors.push(err);
-        this.options.onError?.(err);
 
-        if (!this.options.continueOnError) {
-          throw error;
-        }
-      }
-    }
+          if (!this.options.continueOnError) {
+            throw error;
+          }
 
-    return results;
+          // Return failed result
+          return {
+            fileId: `file:${file.absolutePath}`,
+            filePath: file.absolutePath,
+            success: false,
+            error: err.error,
+            stats: { entitiesWritten: 0, relationshipsWritten: 0, entitiesDeleted: 0 }
+          };
+        }
+      },
+      CONCURRENCY
+    );
   }
 
   /**

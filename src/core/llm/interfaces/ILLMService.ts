@@ -24,6 +24,8 @@ export interface InferenceOptions {
   jsonSchema?: JsonSchema;
   /** Skip cache lookup for this request */
   skipCache?: boolean;
+  /** Thinking level for reasoning models (e.g. Gemini 3) */
+  thinkingLevel?: "low" | "high";
 }
 
 /**

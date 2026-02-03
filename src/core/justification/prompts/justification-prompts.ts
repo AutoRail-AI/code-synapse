@@ -557,16 +557,22 @@ export function generateClarificationPrompt(
  * Parse LLM response into structured justification
  */
 export function parseJustificationResponse(
-  response: string
+  response: string | unknown
 ): LLMJustificationResponse | null {
   try {
-    // Try to extract JSON from response
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    let parsed: any;
+    if (typeof response !== "string" && response !== null && typeof response === "object") {
+      parsed = response;
+    } else if (typeof response === "string") {
+      // Try to extract JSON from response
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return null;
+      }
+      parsed = JSON.parse(jsonMatch[0]);
+    } else {
       return null;
     }
-
-    const parsed = JSON.parse(jsonMatch[0]);
 
     // Validate required fields
     if (!parsed.purposeSummary || typeof parsed.confidenceScore !== "number") {
@@ -806,82 +812,64 @@ export const BATCH_JUSTIFICATION_JSON_SCHEMA = {
  * Handles both camelCase and snake_case property names from different LLM providers
  */
 export function parseBatchResponse(
-  response: string
+  response: string | unknown
 ): Map<string, BatchEntityResponse> {
   const results = new Map<string, BatchEntityResponse>();
 
   try {
-    // Try to extract JSON content - handle multiple formats:
-    // 1. Raw JSON array
-    // 2. JSON wrapped in markdown code blocks (```json ... ```)
-    // 3. JSON with text before/after
-    let jsonText = response;
+    let parsed: any;
+    if (Array.isArray(response)) {
+      parsed = response;
+    } else if (typeof response === "string") {
+      let jsonText = response;
 
-    // Check if response is wrapped in markdown code blocks
-    const markdownMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (markdownMatch && markdownMatch[1]) {
-      // Extract content from within markdown blocks
-      jsonText = markdownMatch[1].trim();
-      logger.debug("Extracted JSON from markdown code blocks");
-    }
-
-    // Try to extract JSON array from the text
-    const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-      // If still no match, try the original response (in case markdown extraction went wrong)
-      const fallbackMatch = response.match(/\[[\s\S]*\]/);
-      if (!fallbackMatch) {
-        logger.debug(
-          { responseLength: response.length, preview: response.slice(0, 200) },
-          "No JSON array found in batch response"
-        );
-        return results;
+      // Extract JSON array from text
+      const markdownMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (markdownMatch && markdownMatch[1]) {
+        jsonText = markdownMatch[1].trim();
       }
-      jsonText = fallbackMatch[0];
-    } else {
-      jsonText = jsonMatch[0];
-    }
 
-    // Try to parse, and if it fails due to truncation, try to fix it
-    let parsed: unknown[];
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch (parseError) {
-      // JSON might be truncated - try to fix by finding last complete object
-      logger.debug("JSON parse failed, attempting to fix truncated response");
-      const fixedJson = fixTruncatedJsonArray(jsonText);
-      if (fixedJson) {
-        parsed = JSON.parse(fixedJson);
-        logger.debug({ fixedItemCount: parsed.length }, "Successfully fixed truncated JSON");
+      const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) {
+        const fallbackMatch = response.match(/\[[\s\S]*\]/);
+        if (!fallbackMatch) {
+          logger.debug("No JSON array found in batch response");
+          return results;
+        }
+        jsonText = fallbackMatch[0];
       } else {
-        throw parseError;
+        jsonText = jsonMatch[0];
       }
-    }
 
-    if (!Array.isArray(parsed)) {
-      logger.debug({ parsedType: typeof parsed }, "Parsed response is not an array");
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch (parseError) {
+        // Fallback for truncated JSON
+        const fixed = fixTruncatedJsonArray(jsonText);
+        if (fixed) {
+          parsed = JSON.parse(fixed);
+        } else {
+          throw parseError;
+        }
+      }
+    } else {
       return results;
     }
 
-    logger.debug({ itemCount: parsed.length }, "Parsing batch response items");
+    if (!Array.isArray(parsed)) {
+      return results;
+    }
 
     for (const item of parsed) {
       if (!item || typeof item !== "object") continue;
       const obj = item as Record<string, unknown>;
 
-      // Handle both camelCase and snake_case property names
       const purposeSummary = obj.purposeSummary || obj.purpose_summary;
       const businessValue = obj.businessValue || obj.business_value;
       const featureContext = obj.featureContext || obj.feature_context;
       const confidenceScore = obj.confidenceScore ?? obj.confidence_score;
 
-      if (!obj.id || !purposeSummary) {
-        logger.debug(
-          { itemId: obj.id, hasPurposeSummary: !!purposeSummary, itemKeys: Object.keys(obj) },
-          "Skipping item with missing required fields"
-        );
-        continue;
-      }
+      if (!obj.id || !purposeSummary) continue;
 
       results.set(String(obj.id), {
         id: String(obj.id),
@@ -892,13 +880,8 @@ export function parseBatchResponse(
         confidenceScore: Math.max(0, Math.min(1, Number(confidenceScore) || 0.5)),
       });
     }
-
-    logger.debug({ resultCount: results.size }, "Batch response parsing complete");
   } catch (error) {
-    logger.debug(
-      { error: String(error), preview: response.slice(0, 200) },
-      "Failed to parse batch response JSON"
-    );
+    logger.debug({ error: String(error) }, "Failed to parse batch response");
   }
 
   return results;

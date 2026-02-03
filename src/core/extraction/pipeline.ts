@@ -114,6 +114,9 @@ export class EntityPipeline {
     const filePath = uceFile.filePath;
     const fileId = generateFileId(filePath);
 
+    // Map of full scope name to Entity ID for hierarchy resolution
+    const scopeMap = new Map<string, string>();
+
     // ===========================================================================
     // 1. File Entity
     // ===========================================================================
@@ -139,8 +142,17 @@ export class EntityPipeline {
 
         batch.function.push(result.row);
 
+        // Register in scope map
+        const fullName = fn.parentScope ? `${fn.parentScope}.${fn.name}` : fn.name;
+        scopeMap.set(fullName, result.row[0]);
+
         // CONTAINS relationship
-        const containsRow: ContainsRow = [fileId, result.row[0], fn.location.startLine];
+        let containerId = fileId;
+        if (fn.parentScope && scopeMap.has(fn.parentScope)) {
+          containerId = scopeMap.get(fn.parentScope)!;
+        }
+
+        const containsRow: ContainsRow = [containerId, result.row[0], fn.location.startLine];
         batch.contains.push(containsRow);
 
         if (this.options.extractEmbeddings) {
@@ -168,14 +180,29 @@ export class EntityPipeline {
         // Add class row
         batch.class.push(result.classRow);
 
-        // Add method rows
+        // Register class in scope map
+        const fullName = cls.parentScope ? `${cls.parentScope}.${cls.name}` : cls.name;
+        scopeMap.set(fullName, result.classRow[0]);
+
+        // Add method rows and register them
         batch.function.push(...result.methodRows);
+        for (const methodRow of result.methodRows) {
+          // methodRow[1] is name, methodRow[0] is id
+          // Method scope is class name.
+          const methodFullName = `${fullName}.${methodRow[1]}`;
+          scopeMap.set(methodFullName, methodRow[0]);
+        }
 
         // Add HAS_METHOD relationships
         batch.hasMethod.push(...result.hasMethodRows);
 
         // CONTAINS relationship for class
-        const containsRow: ContainsRow = [fileId, result.classRow[0], cls.location.startLine];
+        let containerId = fileId;
+        if (cls.parentScope && scopeMap.has(cls.parentScope)) {
+          containerId = scopeMap.get(cls.parentScope)!;
+        }
+
+        const containsRow: ContainsRow = [containerId, result.classRow[0], cls.location.startLine];
         batch.contains.push(containsRow);
 
         if (this.options.extractEmbeddings) {

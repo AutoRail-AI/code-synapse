@@ -8,7 +8,8 @@
  */
 
 import { createLogger } from "../../utils/logger.js";
-import type { LLMService, JsonSchema } from "./llm-service.js";
+import type { JsonSchema } from "./llm-service.js";
+import type { ILLMService } from "./interfaces/ILLMService.js";
 
 const logger = createLogger("business-logic-inferrer");
 
@@ -314,10 +315,10 @@ function extractFirstSentence(text: string): string {
 // =============================================================================
 
 export class BusinessLogicInferrer {
-  private llmService: LLMService;
+  private llmService: ILLMService;
   private config: Required<BusinessLogicInferrerConfig>;
 
-  constructor(llmService: LLMService, config: BusinessLogicInferrerConfig = {}) {
+  constructor(llmService: ILLMService, config: BusinessLogicInferrerConfig = {}) {
     this.llmService = llmService;
     this.config = {
       maxBodyLength: config.maxBodyLength ?? 1500,
@@ -389,7 +390,7 @@ export class BusinessLogicInferrer {
   ): Promise<Omit<InferredBusinessLogic, "durationMs">> {
     const prompt = `${SYSTEM_PROMPT}\n\n${createFunctionPrompt(ctx)}`;
 
-    const result = await this.llmService.complete(prompt, {
+    const result = await this.llmService.infer(prompt, {
       maxTokens: 256,
       temperature: this.config.temperature,
       jsonSchema: INFERENCE_SCHEMA,
@@ -464,7 +465,7 @@ export class BusinessLogicInferrer {
    * Get inference statistics
    */
   getStats(): {
-    llmStats: ReturnType<LLMService["getStats"]>;
+    llmStats: ReturnType<ILLMService["getStats"]>;
     config: Required<BusinessLogicInferrerConfig>;
   } {
     return {
@@ -478,7 +479,7 @@ export class BusinessLogicInferrer {
  * Create a business logic inferrer
  */
 export function createBusinessLogicInferrer(
-  llmService: LLMService,
+  llmService: ILLMService,
   config?: BusinessLogicInferrerConfig
 ): BusinessLogicInferrer {
   return new BusinessLogicInferrer(llmService, config);

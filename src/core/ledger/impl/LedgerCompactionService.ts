@@ -35,30 +35,30 @@ const logger = createLogger("ledger-compaction");
 
 interface CompactedEntryRow {
   id: string;
-  sessionId: string;
-  timestampStart: string;
-  timestampEnd: string;
+  session_id: string;
+  timestamp_start: string;
+  timestamp_end: string;
   source: string;
-  intentSummary: string;
-  intentCategory: string;
-  userPrompts: string;
-  mcpQueries: string;
-  totalMcpQueries: number;
-  uniqueToolsUsed: string;
-  codeAccessed: string;
-  codeChanges: string;
-  semanticImpact: string;
-  indexUpdates: string;
-  memoryUpdates: string;
-  memoryRulesApplied: string;
-  rawEventIds: string;
-  rawEventCount: number;
-  confidenceScore: number;
+  intent_summary: string;
+  intent_category: string;
+  user_prompts: string;
+  mcp_queries: string;
+  total_mcp_queries: number;
+  unique_tools_used: string;
+  code_accessed: string;
+  code_changes: string;
+  semantic_impact: string;
+  index_updates: string;
+  memory_updates: string;
+  memory_rules_applied: string;
+  raw_event_ids: string;
+  raw_event_count: number;
+  confidence_score: number;
   completeness: number;
-  correlatedSessions: string;
-  gitCommitSha: string | null;
-  gitBranch: string | null;
-  contentHash: string | null;
+  correlated_sessions: string;
+  git_commit_sha: string | null;
+  git_branch: string | null;
+  content_hash: string | null;
 }
 
 export class CozoCompactionStorage implements ICompactionStorage {
@@ -75,11 +75,11 @@ export class CozoCompactionStorage implements ICompactionStorage {
 
   async store(entry: CompactedLedgerEntry): Promise<void> {
     const query = `
-      ?[id, sessionId, timestampStart, timestampEnd, source,
-        intentSummary, intentCategory, userPrompts, mcpQueries, totalMcpQueries,
-        uniqueToolsUsed, codeAccessed, codeChanges, semanticImpact,
-        indexUpdates, memoryUpdates, memoryRulesApplied, rawEventIds, rawEventCount,
-        confidenceScore, completeness, correlatedSessions, gitCommitSha, gitBranch, contentHash] <- [[
+      ?[id, session_id, timestamp_start, timestamp_end, source,
+        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
+        unique_tools_used, code_accessed, code_changes, semantic_impact,
+        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
+        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash] <- [[
         $id, $sessionId, $timestampStart, $timestampEnd, $source,
         $intentSummary, $intentCategory, $userPrompts, $mcpQueries, $totalMcpQueries,
         $uniqueToolsUsed, $codeAccessed, $codeChanges, $semanticImpact,
@@ -87,11 +87,11 @@ export class CozoCompactionStorage implements ICompactionStorage {
         $confidenceScore, $completeness, $correlatedSessions, $gitCommitSha, $gitBranch, $contentHash
       ]]
       :put CompactedLedgerEntry {
-        id, sessionId, timestampStart, timestampEnd, source,
-        intentSummary, intentCategory, userPrompts, mcpQueries, totalMcpQueries,
-        uniqueToolsUsed, codeAccessed, codeChanges, semanticImpact,
-        indexUpdates, memoryUpdates, memoryRulesApplied, rawEventIds, rawEventCount,
-        confidenceScore, completeness, correlatedSessions, gitCommitSha, gitBranch, contentHash
+        id, session_id, timestamp_start, timestamp_end, source,
+        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
+        unique_tools_used, code_accessed, code_changes, semantic_impact,
+        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
+        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash
       }
     `;
 
@@ -132,17 +132,17 @@ export class CozoCompactionStorage implements ICompactionStorage {
 
   async getById(id: string): Promise<CompactedLedgerEntry | null> {
     const query = `
-      ?[id, sessionId, timestampStart, timestampEnd, source,
-        intentSummary, intentCategory, userPrompts, mcpQueries, totalMcpQueries,
-        uniqueToolsUsed, codeAccessed, codeChanges, semanticImpact,
-        indexUpdates, memoryUpdates, memoryRulesApplied, rawEventIds, rawEventCount,
-        confidenceScore, completeness, correlatedSessions, gitCommitSha, gitBranch, contentHash] :=
+      ?[id, session_id, timestamp_start, timestamp_end, source,
+        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
+        unique_tools_used, code_accessed, code_changes, semantic_impact,
+        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
+        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash] :=
         *CompactedLedgerEntry{
-          id, sessionId, timestampStart, timestampEnd, source,
-          intentSummary, intentCategory, userPrompts, mcpQueries, totalMcpQueries,
-          uniqueToolsUsed, codeAccessed, codeChanges, semanticImpact,
-          indexUpdates, memoryUpdates, memoryRulesApplied, rawEventIds, rawEventCount,
-          confidenceScore, completeness, correlatedSessions, gitCommitSha, gitBranch, contentHash
+          id, session_id, timestamp_start, timestamp_end, source,
+          intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
+          unique_tools_used, code_accessed, code_changes, semantic_impact,
+          index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
+          confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash
         },
         id == $id
     `;
@@ -154,19 +154,19 @@ export class CozoCompactionStorage implements ICompactionStorage {
 
   async getBySessionId(sessionId: string): Promise<CompactedLedgerEntry | null> {
     const query = `
-      ?[id, sessionId, timestampStart, timestampEnd, source,
-        intentSummary, intentCategory, userPrompts, mcpQueries, totalMcpQueries,
-        uniqueToolsUsed, codeAccessed, codeChanges, semanticImpact,
-        indexUpdates, memoryUpdates, memoryRulesApplied, rawEventIds, rawEventCount,
-        confidenceScore, completeness, correlatedSessions, gitCommitSha, gitBranch, contentHash] :=
+      ?[id, session_id, timestamp_start, timestamp_end, source,
+        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
+        unique_tools_used, code_accessed, code_changes, semantic_impact,
+        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
+        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash] :=
         *CompactedLedgerEntry{
-          id, sessionId, timestampStart, timestampEnd, source,
-          intentSummary, intentCategory, userPrompts, mcpQueries, totalMcpQueries,
-          uniqueToolsUsed, codeAccessed, codeChanges, semanticImpact,
-          indexUpdates, memoryUpdates, memoryRulesApplied, rawEventIds, rawEventCount,
-          confidenceScore, completeness, correlatedSessions, gitCommitSha, gitBranch, contentHash
+          id, session_id, timestamp_start, timestamp_end, source,
+          intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
+          unique_tools_used, code_accessed, code_changes, semantic_impact,
+          index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
+          confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash
         },
-        sessionId == $sessionId
+        session_id == $sessionId
     `;
 
     const rows = await this.db.query<CompactedEntryRow>(query, { sessionId });
@@ -182,7 +182,7 @@ export class CozoCompactionStorage implements ICompactionStorage {
     };
 
     if (queryParams.sessionId) {
-      conditions.push("sessionId == $sessionId");
+      conditions.push("session_id == $sessionId");
       params.sessionId = queryParams.sessionId;
     }
     if (queryParams.source) {
@@ -190,30 +190,30 @@ export class CozoCompactionStorage implements ICompactionStorage {
       params.source = queryParams.source;
     }
     if (queryParams.startTime) {
-      conditions.push("timestampStart >= $startTime");
+      conditions.push("timestamp_start >= $startTime");
       params.startTime = queryParams.startTime;
     }
     if (queryParams.endTime) {
-      conditions.push("timestampEnd <= $endTime");
+      conditions.push("timestamp_end <= $endTime");
       params.endTime = queryParams.endTime;
     }
 
     const whereClause = conditions.length > 0 ? `, ${conditions.join(", ")}` : "";
 
     const dbQuery = `
-      ?[id, sessionId, timestampStart, timestampEnd, source,
-        intentSummary, intentCategory, userPrompts, mcpQueries, totalMcpQueries,
-        uniqueToolsUsed, codeAccessed, codeChanges, semanticImpact,
-        indexUpdates, memoryUpdates, memoryRulesApplied, rawEventIds, rawEventCount,
-        confidenceScore, completeness, correlatedSessions, gitCommitSha, gitBranch, contentHash] :=
+      ?[id, session_id, timestamp_start, timestamp_end, source,
+        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
+        unique_tools_used, code_accessed, code_changes, semantic_impact,
+        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
+        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash] :=
         *CompactedLedgerEntry{
-          id, sessionId, timestampStart, timestampEnd, source,
-          intentSummary, intentCategory, userPrompts, mcpQueries, totalMcpQueries,
-          uniqueToolsUsed, codeAccessed, codeChanges, semanticImpact,
-          indexUpdates, memoryUpdates, memoryRulesApplied, rawEventIds, rawEventCount,
-          confidenceScore, completeness, correlatedSessions, gitCommitSha, gitBranch, contentHash
+          id, session_id, timestamp_start, timestamp_end, source,
+          intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
+          unique_tools_used, code_accessed, code_changes, semantic_impact,
+          index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
+          confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash
         }${whereClause}
-      :order -timestampEnd
+      :order -timestamp_end
       :limit $limit
       :offset $offset
     `;
@@ -248,13 +248,13 @@ export class CozoCompactionStorage implements ICompactionStorage {
 
   async deleteOlderThan(timestamp: string): Promise<number> {
     const countQuery = `
-      ?[cnt] := cnt = count(id), *CompactedLedgerEntry{id, timestampEnd: ts}, ts < $timestamp
+      ?[cnt] := cnt = count(id), *CompactedLedgerEntry{id, timestamp_end: ts}, ts < $timestamp
     `;
     const countRows = await this.db.query<{ cnt: number }>(countQuery, { timestamp });
     const count = countRows[0]?.cnt ?? 0;
 
     const deleteQuery = `
-      ?[id] := *CompactedLedgerEntry{id, timestampEnd: ts}, ts < $timestamp
+      ?[id] := *CompactedLedgerEntry{id, timestamp_end: ts}, ts < $timestamp
       :rm CompactedLedgerEntry {id}
     `;
     await this.db.query(deleteQuery, { timestamp });
@@ -289,33 +289,34 @@ export class CozoCompactionStorage implements ICompactionStorage {
     };
   }
 
+
   private rowToEntry(row: CompactedEntryRow): CompactedLedgerEntry {
     return {
       id: row.id,
-      sessionId: row.sessionId,
-      timestampStart: row.timestampStart,
-      timestampEnd: row.timestampEnd,
+      sessionId: row.session_id,
+      timestampStart: row.timestamp_start,
+      timestampEnd: row.timestamp_end,
       source: row.source as CompactedLedgerEntry["source"],
-      intentSummary: row.intentSummary,
-      intentCategory: row.intentCategory as CompactedLedgerEntry["intentCategory"],
-      userPrompts: JSON.parse(row.userPrompts),
-      mcpQueries: JSON.parse(row.mcpQueries),
-      totalMcpQueries: row.totalMcpQueries,
-      uniqueToolsUsed: JSON.parse(row.uniqueToolsUsed),
-      codeAccessed: JSON.parse(row.codeAccessed),
-      codeChanges: JSON.parse(row.codeChanges),
-      semanticImpact: JSON.parse(row.semanticImpact),
-      indexUpdates: JSON.parse(row.indexUpdates),
-      memoryUpdates: JSON.parse(row.memoryUpdates),
-      memoryRulesApplied: JSON.parse(row.memoryRulesApplied),
-      rawEventIds: JSON.parse(row.rawEventIds),
-      rawEventCount: row.rawEventCount,
-      confidenceScore: row.confidenceScore,
+      intentSummary: row.intent_summary,
+      intentCategory: row.intent_category as CompactedLedgerEntry["intentCategory"],
+      userPrompts: JSON.parse(row.user_prompts),
+      mcpQueries: JSON.parse(row.mcp_queries),
+      totalMcpQueries: row.total_mcp_queries,
+      uniqueToolsUsed: JSON.parse(row.unique_tools_used),
+      codeAccessed: JSON.parse(row.code_accessed),
+      codeChanges: JSON.parse(row.code_changes),
+      semanticImpact: JSON.parse(row.semantic_impact),
+      indexUpdates: JSON.parse(row.index_updates),
+      memoryUpdates: JSON.parse(row.memory_updates),
+      memoryRulesApplied: JSON.parse(row.memory_rules_applied),
+      rawEventIds: JSON.parse(row.raw_event_ids),
+      rawEventCount: row.raw_event_count,
+      confidenceScore: row.confidence_score,
       completeness: row.completeness,
-      correlatedSessions: JSON.parse(row.correlatedSessions),
-      gitCommitSha: row.gitCommitSha ?? undefined,
-      gitBranch: row.gitBranch ?? undefined,
-      contentHash: row.contentHash ?? undefined,
+      correlatedSessions: JSON.parse(row.correlated_sessions),
+      gitCommitSha: row.git_commit_sha ?? undefined,
+      gitBranch: row.git_branch ?? undefined,
+      contentHash: row.content_hash ?? undefined,
     };
   }
 }

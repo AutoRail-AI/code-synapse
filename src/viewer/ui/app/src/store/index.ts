@@ -210,7 +210,13 @@ export const useSearchStore = create<SearchState>()(
 
 // Graph view state
 interface GraphState {
-  nodes: Array<{ id: string; label: string; kind: string }>;
+  nodes: Array<{
+    id: string;
+    label: string;
+    kind: string;
+    confidence?: number; // 0-1
+    classification?: 'domain' | 'infrastructure' | 'unknown';
+  }>;
   edges: Array<{ source: string; target: string; type: string }>;
   setGraphData: (nodes: GraphState['nodes'], edges: GraphState['edges']) => void;
   focusedNode: string | null;

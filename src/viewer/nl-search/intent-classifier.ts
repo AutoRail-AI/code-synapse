@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { LLMService } from "../../core/llm/llm-service.js";
+import type { ILLMService } from "../../core/llm/interfaces/ILLMService.js";
 import {
   type SearchIntent,
   type IntentClassification,
@@ -22,10 +22,10 @@ import {
 // =============================================================================
 
 export class IntentClassifier {
-  private llmService?: LLMService;
+  private llmService?: ILLMService;
   private synonyms: Record<string, string[]>;
 
-  constructor(llmService?: LLMService, synonyms?: Record<string, string[]>) {
+  constructor(llmService?: ILLMService, synonyms?: Record<string, string[]>) {
     this.llmService = llmService;
     this.synonyms = synonyms ?? DEFAULT_NL_SEARCH_CONFIG.synonyms;
   }
@@ -179,7 +179,7 @@ Respond with JSON only:
   "entityType": "<function|class|interface|file|all>"
 }`;
 
-    const result = await this.llmService.complete(prompt, {
+    const result = await this.llmService.infer(prompt, {
       maxTokens: 150,
       temperature: 0.1,
       jsonSchema: {
@@ -404,7 +404,7 @@ Respond with JSON only:
  * Create an intent classifier
  */
 export function createIntentClassifier(
-  llmService?: LLMService,
+  llmService?: ILLMService,
   synonyms?: Record<string, string[]>
 ): IntentClassifier {
   return new IntentClassifier(llmService, synonyms);

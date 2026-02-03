@@ -371,6 +371,37 @@ export const SCHEMA = {
       sessionId: { type: "STRING", nullable: true, index: true },
     },
 
+    /**
+     * CompactedLedgerEntry - consolidated summary of coding session
+     */
+    CompactedLedgerEntry: {
+      id: { type: "STRING", primary: true },
+      sessionId: { type: "STRING", index: true },
+      timestampStart: { type: "TIMESTAMP", index: true },
+      timestampEnd: { type: "TIMESTAMP", index: true },
+      source: { type: "STRING", index: true },
+      intentSummary: { type: "STRING", fulltext: true },
+      intentCategory: { type: "STRING", index: true },
+      userPrompts: { type: "JSON" }, // string[]
+      mcpQueries: { type: "JSON" }, // MCPQueryTrace[]
+      totalMcpQueries: { type: "INT32" },
+      uniqueToolsUsed: { type: "JSON" }, // string[]
+      codeAccessed: { type: "JSON" }, // CodeAccessSummary
+      codeChanges: { type: "JSON" }, // CodeChangesSummary
+      semanticImpact: { type: "JSON" }, // SemanticImpact
+      indexUpdates: { type: "JSON" }, // IndexUpdatesSummary
+      memoryUpdates: { type: "JSON" }, // MemoryUpdate[]
+      memoryRulesApplied: { type: "JSON" }, // string[]
+      rawEventIds: { type: "JSON" }, // string[]
+      rawEventCount: { type: "INT32" },
+      confidenceScore: { type: "FLOAT" },
+      completeness: { type: "FLOAT" },
+      correlatedSessions: { type: "JSON" }, // string[]
+      gitCommitSha: { type: "STRING", nullable: true },
+      gitBranch: { type: "STRING", nullable: true },
+      contentHash: { type: "STRING", nullable: true },
+    },
+
     // =========================================================================
     // Adaptive Indexing (V14) - MCP-Driven Intelligence
     // =========================================================================

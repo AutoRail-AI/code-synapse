@@ -11,7 +11,8 @@
  */
 
 import { createLogger } from "../../utils/logger.js";
-import type { LLMService, JsonSchema } from "./llm-service.js";
+import type { JsonSchema } from "./llm-service.js";
+import type { ILLMService } from "./interfaces/ILLMService.js";
 import type { GraphDatabase } from "../graph/database.js";
 
 const logger = createLogger("graph-rag-summarizer");
@@ -118,7 +119,7 @@ const SYSTEM_SUMMARY_SCHEMA: JsonSchema = {
 // =============================================================================
 
 export class GraphRAGSummarizer {
-  private llmService: LLMService;
+  private llmService: ILLMService;
   private graphDb: GraphDatabase;
   private config: Required<GraphRAGConfig>;
   private hierarchy: SummaryHierarchy = {
@@ -129,7 +130,7 @@ export class GraphRAGSummarizer {
   };
 
   constructor(
-    llmService: LLMService,
+    llmService: ILLMService,
     graphDb: GraphDatabase,
     config: GraphRAGConfig = {}
   ) {
@@ -340,7 +341,7 @@ ${functions.map((f) => `- ${f.name}: ${f.summary}`).join("\n")}
 Provide a JSON summary with: summary, purpose, mainEntities, tags, confidence`;
 
     try {
-      const result = await this.llmService.complete(prompt, {
+      const result = await this.llmService.infer(prompt, {
         maxTokens: 200,
         temperature: this.config.temperature,
         jsonSchema: FILE_SUMMARY_SCHEMA,
@@ -472,7 +473,7 @@ Dependencies: ${dependencies.join(", ") || "none"}
 Provide a JSON summary with: summary, responsibilities, tags, confidence`;
 
     try {
-      const result = await this.llmService.complete(prompt, {
+      const result = await this.llmService.infer(prompt, {
         maxTokens: 200,
         temperature: this.config.temperature,
         jsonSchema: MODULE_SUMMARY_SCHEMA,
@@ -578,7 +579,7 @@ Total functions: ${this.hierarchy.functions.size}
 Provide a JSON summary with: summary, architecture, keyFeatures, techStack, confidence`;
 
     try {
-      const result = await this.llmService.complete(prompt, {
+      const result = await this.llmService.infer(prompt, {
         maxTokens: 300,
         temperature: this.config.temperature,
         jsonSchema: SYSTEM_SUMMARY_SCHEMA,
@@ -684,7 +685,7 @@ Provide a JSON summary with: summary, architecture, keyFeatures, techStack, conf
  * Create a GraphRAG summarizer
  */
 export function createGraphRAGSummarizer(
-  llmService: LLMService,
+  llmService: ILLMService,
   graphDb: GraphDatabase,
   config?: GraphRAGConfig
 ): GraphRAGSummarizer {

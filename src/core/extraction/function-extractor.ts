@@ -89,7 +89,7 @@ export class FunctionExtractor {
     const disambiguator = createParamDisambiguator(
       fn.params.map((p) => ({ name: p.name, type: p.type }))
     );
-    const id = generateEntityId(filePath, "function", fn.name, "", disambiguator);
+    const id = generateEntityId(filePath, "function", fn.name, fn.parentScope || "", disambiguator);
 
     // Prepare text for vector embedding
     const embeddingText = this.prepareEmbeddingText(fn);

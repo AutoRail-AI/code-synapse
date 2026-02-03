@@ -35,7 +35,8 @@ export function GraphView() {
     setLoading(true);
     getGraphData({ depth: 2 })
       .then((data) => {
-        setGraphData(data.nodes, data.edges);
+        // Type casting needed because API returns string but store expects specific union
+        setGraphData(data.nodes as any, data.edges);
         setLoading(false);
       })
       .catch((err) => {
@@ -44,9 +45,112 @@ export function GraphView() {
       });
   }, [setGraphData]);
 
-  // Calculate node positions using simple force layout
+  // Calculate tree/hierarchy layout
+  const calculateTreeLayout = useCallback(() => {
+    if (nodes.length === 0) return new Map();
+
+    const positions = new Map<string, { x: number; y: number }>();
+    const width = containerRef.current?.clientWidth || 800;
+    // height unused
+
+
+    // Build adjacency list and in-degree map
+    const adj = new Map<string, string[]>();
+    const inDegree = new Map<string, number>();
+
+    nodes.forEach(n => {
+      adj.set(n.id, []);
+      inDegree.set(n.id, 0);
+    });
+
+    edges.forEach(e => {
+      // Directed: Source -> Target (e.g. Function calls Function)
+      // For layout, we want dependencies to go down or up?
+      // Usually "File contains Function" -> File is parent.
+      // "Function A calls Function B" -> A flows to B?
+      // Let's assume standard directed edges flow "down"
+      if (adj.has(e.source)) {
+        adj.get(e.source)?.push(e.target);
+        inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+      }
+    });
+
+    // Identify roots (in-degree 0)
+    let roots = nodes.filter(n => (inDegree.get(n.id) || 0) === 0);
+
+    // If no roots (cycle), pick the node with max out-degree as pseudo-root
+    if (roots.length === 0 && nodes.length > 0) {
+      // Simple fallback: pick first node
+      roots = [nodes[0]];
+    }
+
+    // BFS to assign levels
+    const levels = new Map<string, number>();
+    const queue: { id: string, level: number }[] = roots.map(r => ({ id: r.id, level: 0 }));
+    const visited = new Set<string>();
+
+    roots.forEach(r => visited.add(r.id));
+
+    let maxLevel = 0;
+
+    while (queue.length > 0) {
+      const { id, level } = queue.shift()!;
+      levels.set(id, level);
+      maxLevel = Math.max(maxLevel, level);
+
+      const neighbors = adj.get(id) || [];
+      for (const next of neighbors) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push({ id: next, level: level + 1 });
+        }
+      }
+    }
+
+    // Handle disconnected components / unvisited nodes
+    nodes.forEach(n => {
+      if (!visited.has(n.id)) {
+        levels.set(n.id, 0); // Put orphaned nodes at top
+      }
+    });
+
+    // Group by level
+    const levelNodes = new Map<number, string[]>();
+    levels.forEach((lvl, id) => {
+      if (!levelNodes.has(lvl)) levelNodes.set(lvl, []);
+      levelNodes.get(lvl)?.push(id);
+    });
+
+    // Assign positions
+    // Y is determined by level
+    // X is determined by index in level
+    const verticalSpacing = 100;
+    const horizontalSpacing = 80;
+
+    levelNodes.forEach((ids, lvl) => {
+      const levelWidth = ids.length * horizontalSpacing;
+      const startX = (width - levelWidth) / 2;
+
+      ids.forEach((id, idx) => {
+        positions.set(id, {
+          x: startX + idx * horizontalSpacing + horizontalSpacing / 2,
+          y: 60 + lvl * verticalSpacing // Start with some top padding
+        });
+      });
+    });
+
+    return positions;
+  }, [nodes, edges]);
+
+  // Calculate node positions
   useEffect(() => {
     if (nodes.length === 0) return;
+
+    if (layout === 'hierarchy') {
+      const positions = calculateTreeLayout();
+      setNodePositions(positions);
+      return;
+    }
 
     const positions = new Map<string, { x: number; y: number }>();
     const width = containerRef.current?.clientWidth || 800;
@@ -66,7 +170,7 @@ export function GraphView() {
     });
 
     setNodePositions(positions);
-  }, [nodes, layout]);
+  }, [nodes, layout, calculateTreeLayout]);
 
   // Draw graph on canvas
   useEffect(() => {
@@ -135,6 +239,30 @@ export function GraphView() {
       ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
+
+      // Draw Justification/Classification Overlay
+      // Classification Halo
+      if (node.classification) {
+        ctx.beginPath();
+        const haloRadius = radius + 4;
+        ctx.arc(pos.x, pos.y, haloRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = node.classification === 'domain' ? '#10b981' : '#f59e0b'; // Green for domain, Amber for infra
+        ctx.lineWidth = 2;
+        ctx.setLineDash([2, 4]); // Dotted for classification
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset
+      }
+
+      // Confidence Ring (Inner or Outer?)
+      if (node.confidence !== undefined) {
+        const conf = node.confidence;
+        ctx.beginPath();
+        // Outer ring
+        ctx.arc(pos.x, pos.y, radius + 2, 0, Math.PI * 2 * conf); // partial arc indicating confidence
+        ctx.strokeStyle = `rgba(255, 255, 255, 0.7)`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
 
       if (isHovered || isFocused) {
         ctx.strokeStyle = '#ffffff';
@@ -263,7 +391,7 @@ export function GraphView() {
               className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200"
             >
               <option value="force">Force-Directed</option>
-              <option value="hierarchy">Hierarchy</option>
+              <option value="hierarchy">Hierarchy (Tree)</option>
               <option value="radial">Radial</option>
             </select>
           </div>
@@ -402,11 +530,10 @@ function FilterButton({
   return (
     <button
       onClick={onClick}
-      className={`px-2 py-1 text-xs rounded border transition-colors ${
-        active
-          ? colorClasses
-          : 'bg-slate-700 text-slate-400 border-slate-600 hover:border-slate-500'
-      }`}
+      className={`px-2 py-1 text-xs rounded border transition-colors ${active
+        ? colorClasses
+        : 'bg-slate-700 text-slate-400 border-slate-600 hover:border-slate-500'
+        }`}
     >
       {label}
     </button>

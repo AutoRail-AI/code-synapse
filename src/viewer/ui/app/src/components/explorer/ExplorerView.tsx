@@ -6,12 +6,13 @@ import {
   Folder,
   FolderOpen,
   Code,
+  FileCode,
   Box,
   Layers,
-  Hash,
-  FileCode,
+  Hash
 } from 'lucide-react';
 import { useExplorerStore, useUIStore } from '../../store';
+import { EntityInsightsPanel } from '../common/EntityInsightsPanel';
 import {
   getFileTree,
   getFileContent,
@@ -140,26 +141,28 @@ export function ExplorerView() {
         </div>
       </div>
 
-      {/* Entity Details Panel */}
-      <div className="w-80 border-l border-slate-700 flex flex-col">
-        <div className="panel-header flex items-center gap-2">
-          <Code className="w-4 h-4" />
-          Entity Details
-        </div>
-        <div className="flex-1 overflow-auto custom-scrollbar">
-          {selectedEntity ? (
-            <EntityDetails entity={selectedEntity} />
-          ) : fileEntities.length > 0 ? (
-            <EntityList
-              entities={fileEntities}
-              onSelect={setSelectedEntity}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-500 p-4 text-center">
-              Select a file to see its entities
+      {/* Entity Insights Panel */}
+      <div className="w-96 border-l border-slate-700 flex flex-col bg-slate-900">
+        {selectedEntity ? (
+          <EntityInsightsPanel entity={selectedEntity} onClose={() => setSelectedEntity(null)} />
+        ) : fileEntities.length > 0 ? (
+          <div className="flex flex-col h-full">
+            <div className="panel-header flex items-center gap-2 p-2 border-b border-slate-700 bg-slate-800">
+              <Code className="w-4 h-4" />
+              File Entities
             </div>
-          )}
-        </div>
+            <div className="flex-1 overflow-auto custom-scrollbar">
+              <EntityList
+                entities={fileEntities}
+                onSelect={setSelectedEntity}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full text-slate-500 p-4 text-center">
+            Select a file to see its entities
+          </div>
+        )}
       </div>
     </div>
   );
@@ -197,9 +200,8 @@ function FileTreeNode({
     <div>
       <button
         onClick={handleClick}
-        className={`w-full flex items-center gap-1 py-1 px-2 rounded text-sm hover:bg-slate-700/50 ${
-          isSelected ? 'bg-slate-700 text-white' : 'text-slate-300'
-        }`}
+        className={`w-full flex items-center gap-1 py-1 px-2 rounded text-sm hover:bg-slate-700/50 ${isSelected ? 'bg-slate-700 text-white' : 'text-slate-300'
+          }`}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
       >
         {isDirectory ? (
@@ -286,9 +288,8 @@ function CodeViewer({
             return (
               <tr
                 key={idx}
-                className={`${
-                  isHighlighted ? 'bg-blue-900/30' : 'hover:bg-slate-800/50'
-                }`}
+                className={`${isHighlighted ? 'bg-blue-900/30' : 'hover:bg-slate-800/50'
+                  }`}
                 onClick={() => {
                   if (entityList && entityList.length > 0) {
                     onEntityClick(entityList[0]);
@@ -305,15 +306,14 @@ function CodeViewer({
                       {entityList.map((e) => (
                         <span
                           key={e.id}
-                          className={`inline-block w-2 h-2 rounded-full ml-1 ${
-                            e.kind === 'function'
+                          className={`inline-block w-2 h-2 rounded-full ml-1 ${e.kind === 'function'
                               ? 'bg-blue-500'
                               : e.kind === 'class'
                                 ? 'bg-purple-500'
                                 : e.kind === 'interface'
                                   ? 'bg-cyan-500'
                                   : 'bg-gray-500'
-                          }`}
+                            }`}
                           title={`${e.kind}: ${e.name}`}
                         />
                       ))}
@@ -381,126 +381,12 @@ function EntityList({
   );
 }
 
-// Entity details panel
-function EntityDetails({ entity }: { entity: EntitySummary }) {
-  return (
-    <div className="p-4">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
-        <div
-          className={`p-2 rounded ${
-            entity.kind === 'function'
-              ? 'bg-blue-500/20'
-              : entity.kind === 'class'
-                ? 'bg-purple-500/20'
-                : entity.kind === 'interface'
-                  ? 'bg-cyan-500/20'
-                  : 'bg-gray-500/20'
-          }`}
-        >
-          <EntityIcon kind={entity.kind} size="lg" />
-        </div>
-        <div>
-          <h3 className="font-semibold text-white">{entity.name}</h3>
-          <span
-            className={`text-xs px-2 py-0.5 rounded border ${
-              entity.kind === 'function'
-                ? 'badge-function'
-                : entity.kind === 'class'
-                  ? 'badge-class'
-                  : entity.kind === 'interface'
-                    ? 'badge-interface'
-                    : 'badge-variable'
-            }`}
-          >
-            {entity.kind}
-          </span>
-        </div>
-      </div>
-
-      {/* Location */}
-      <div className="mb-4">
-        <h4 className="text-xs font-medium text-slate-500 uppercase mb-1">
-          Location
-        </h4>
-        <div className="text-sm text-slate-300">
-          <div className="truncate">{entity.filePath}</div>
-          <div className="text-slate-500">
-            Lines {entity.startLine} - {entity.endLine}
-          </div>
-        </div>
-      </div>
-
-      {/* Confidence */}
-      {entity.confidence !== undefined && (
-        <div className="mb-4">
-          <h4 className="text-xs font-medium text-slate-500 uppercase mb-1">
-            Confidence
-          </h4>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
-              <div
-                className={`h-full ${
-                  entity.confidence >= 0.8
-                    ? 'bg-green-500'
-                    : entity.confidence >= 0.6
-                      ? 'bg-yellow-500'
-                      : entity.confidence >= 0.4
-                        ? 'bg-orange-500'
-                        : 'bg-red-500'
-                }`}
-                style={{ width: `${entity.confidence * 100}%` }}
-              />
-            </div>
-            <span className="text-sm text-slate-400">
-              {Math.round(entity.confidence * 100)}%
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Justification */}
-      {entity.justification && (
-        <div className="mb-4">
-          <h4 className="text-xs font-medium text-slate-500 uppercase mb-1">
-            Business Justification
-          </h4>
-          <p className="text-sm text-slate-300 bg-slate-700/50 rounded p-2">
-            {entity.justification}
-          </p>
-        </div>
-      )}
-
-      {/* Classification */}
-      {entity.classification && (
-        <div className="mb-4">
-          <h4 className="text-xs font-medium text-slate-500 uppercase mb-1">
-            Classification
-          </h4>
-          <span
-            className={`text-xs px-2 py-0.5 rounded ${
-              entity.classification === 'domain'
-                ? 'badge-domain'
-                : 'badge-infrastructure'
-            }`}
-          >
-            {entity.classification}
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Icon component for entity kinds
 function EntityIcon({
   kind,
-  size = 'sm',
 }: {
   kind: string;
-  size?: 'sm' | 'lg';
 }) {
-  const sizeClass = size === 'lg' ? 'w-5 h-5' : 'w-4 h-4';
+  const sizeClass = 'w-4 h-4';
   const colorClass =
     kind === 'function'
       ? 'text-blue-400'

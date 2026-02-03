@@ -123,6 +123,10 @@ export interface UCEFunction {
   signature: string;
   /** Cyclomatic complexity score */
   complexity: number;
+  /** Parent scope name (for nested entities) */
+  parentScope?: string;
+  /** Parent entity kind (function, class, etc) */
+  parentKind?: string;
 }
 
 // =============================================================================
@@ -229,6 +233,10 @@ export interface UCEClass {
   docComment: string | null;
   /** Whether the class is abstract */
   isAbstract: boolean;
+  /** Parent scope name (for nested classes) */
+  parentScope?: string;
+  /** Parent entity kind */
+  parentKind?: string;
 }
 
 // =============================================================================

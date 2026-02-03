@@ -57,6 +57,8 @@ import {
 } from "../../core/llm/index.js";
 import type { ProjectConfig } from "../../types/index.js";
 import { InteractiveSetup, type CodeSynapseConfig } from "./setup.js";
+import { runInteractiveClarification, createReadlineInterface, askQuestion } from "../interactive.js";
+
 
 const logger = createLogger("default");
 
@@ -287,7 +289,7 @@ async function runJustification(
         // don't pass it - let the API service use its default
         const isLocalModel = savedModelId &&
           (savedModelId.includes("qwen") || savedModelId.includes("llama") ||
-           savedModelId.includes("codellama") || savedModelId.includes("deepseek"));
+            savedModelId.includes("codellama") || savedModelId.includes("deepseek"));
         const apiModelId = isLocalModel ? undefined : savedModelId;
 
         spinner.text = `Connecting to ${modelProvider} API...`;
@@ -347,6 +349,20 @@ async function runJustification(
 
     console.log();
     console.log(chalk.dim("─".repeat(50)));
+
+    // Interactive mode for pending clarifications
+    if (result.stats.pendingClarification > 0) {
+      console.log();
+      console.log(chalk.yellow(`There are ${result.stats.pendingClarification} entities that need clarification.`));
+
+      const rl = createReadlineInterface();
+      const answer = await askQuestion(rl, chalk.white("Do you want to answer clarification questions now? (Y/n) "));
+      rl.close();
+
+      if (answer.toLowerCase() !== 'n' && answer.toLowerCase() !== 'no') {
+        await runInteractiveClarification(justificationService, false);
+      }
+    }
 
     return true;
   } catch (error) {

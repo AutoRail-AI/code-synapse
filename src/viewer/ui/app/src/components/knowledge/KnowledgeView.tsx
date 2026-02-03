@@ -9,17 +9,17 @@ import {
   Hash,
   Code,
   FileCode,
-  ChevronDown,
-  X,
-  Brain,
+  ChevronDown
 } from 'lucide-react';
 import { useKnowledgeStore, useUIStore } from '../../store';
+import { EntityInsightsPanel } from '../common/EntityInsightsPanel';
 import {
   getFunctions,
   getClasses,
   getInterfaces,
 } from '../../api/client';
-import type { EntitySummary } from '../../api/client';
+// Type EntitySummary is only used in removed code, so remove it
+
 
 export function KnowledgeView() {
   const { selectedEntity, setSelectedEntity } = useUIStore();
@@ -167,162 +167,178 @@ export function KnowledgeView() {
 
           {/* Tabs */}
           <div className="flex gap-2 mb-4">
-          <TabButton
-            active={activeTab === 'all'}
-            onClick={() => setActiveTab('all')}
-            icon={<Code className="w-4 h-4" />}
-            label="All"
-            count={counts.all}
-          />
-          <TabButton
-            active={activeTab === 'functions'}
-            onClick={() => setActiveTab('functions')}
-            icon={<Box className="w-4 h-4" />}
-            label="Functions"
-            count={counts.functions}
-          />
-          <TabButton
-            active={activeTab === 'classes'}
-            onClick={() => setActiveTab('classes')}
-            icon={<Layers className="w-4 h-4" />}
-            label="Classes"
-            count={counts.classes}
-          />
-          <TabButton
-            active={activeTab === 'interfaces'}
-            onClick={() => setActiveTab('interfaces')}
-            icon={<Hash className="w-4 h-4" />}
-            label="Interfaces"
-            count={counts.interfaces}
-          />
-        </div>
-
-        {/* Search and Filters */}
-        <div className="flex gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search entities..."
-              value={filters.search}
-              onChange={(e) => setFilters({ search: e.target.value })}
-              className="input pl-10"
+            <TabButton
+              active={activeTab === 'all'}
+              onClick={() => setActiveTab('all')}
+              icon={<Code className="w-4 h-4" />}
+              label="All"
+              count={counts.all}
+            />
+            <TabButton
+              active={activeTab === 'functions'}
+              onClick={() => setActiveTab('functions')}
+              icon={<Box className="w-4 h-4" />}
+              label="Functions"
+              count={counts.functions}
+            />
+            <TabButton
+              active={activeTab === 'classes'}
+              onClick={() => setActiveTab('classes')}
+              icon={<Layers className="w-4 h-4" />}
+              label="Classes"
+              count={counts.classes}
+            />
+            <TabButton
+              active={activeTab === 'interfaces'}
+              onClick={() => setActiveTab('interfaces')}
+              icon={<Hash className="w-4 h-4" />}
+              label="Interfaces"
+              count={counts.interfaces}
             />
           </div>
 
-          <FilterDropdown
-            label="Classification"
-            options={['domain', 'infrastructure']}
-            selected={filters.classification}
-            onChange={(classification) => setFilters({ classification })}
-          />
+          {/* Search and Filters */}
+          <div className="flex gap-4">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search entities..."
+                value={filters.search}
+                onChange={(e) => setFilters({ search: e.target.value })}
+                className="input pl-10"
+              />
+            </div>
 
-          <button
-            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-            className="btn btn-secondary flex items-center gap-2"
-          >
-            {sortOrder === 'asc' ? (
-              <SortAsc className="w-4 h-4" />
-            ) : (
-              <SortDesc className="w-4 h-4" />
-            )}
-            Sort
-          </button>
+            <FilterDropdown
+              label="Classification"
+              options={['domain', 'infrastructure']}
+              selected={filters.classification}
+              onChange={(classification) => setFilters({ classification })}
+            />
+
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="btn btn-secondary flex items-center gap-2"
+            >
+              {sortOrder === 'asc' ? (
+                <SortAsc className="w-4 h-4" />
+              ) : (
+                <SortDesc className="w-4 h-4" />
+              )}
+              Sort
+            </button>
+          </div>
+        </div>
+
+        {/* Entity List */}
+        <div className="flex-1 overflow-auto custom-scrollbar">
+          <table className="w-full">
+            <thead className="bg-slate-800 sticky top-0">
+              <tr className="text-left text-sm text-slate-400">
+                <th
+                  className="px-4 py-3 font-medium cursor-pointer hover:text-white"
+                  onClick={() => setSortBy('name')}
+                >
+                  Name {sortBy === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </th>
+                <th
+                  className="px-4 py-3 font-medium cursor-pointer hover:text-white"
+                  onClick={() => setSortBy('kind')}
+                >
+                  Kind {sortBy === 'kind' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </th>
+                <th
+                  className="px-4 py-3 font-medium cursor-pointer hover:text-white"
+                  onClick={() => setSortBy('file')}
+                >
+                  File {sortBy === 'file' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </th>
+                <th
+                  className="px-4 py-3 font-medium cursor-pointer hover:text-white"
+                  onClick={() => setSortBy('confidence')}
+                >
+                  Confidence{' '}
+                  {sortBy === 'confidence' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </th>
+                <th className="px-4 py-3 font-medium">Complexity</th>
+                <th className="px-4 py-3 font-medium">Impact</th>
+                <th className="px-4 py-3 font-medium">Classification</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredEntities.map((entity) => (
+                <tr
+                  key={entity.id}
+                  className="border-b border-slate-700/50 hover:bg-slate-800/50 cursor-pointer"
+                  onClick={() => setSelectedEntity(entity)}
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <EntityIcon kind={entity.kind} />
+                      <span className="text-slate-200">{entity.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <KindBadge kind={entity.kind} />
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-400 max-w-xs truncate">
+                    {entity.filePath}
+                  </td>
+                  <td className="px-4 py-3">
+                    {entity.confidence !== undefined && (
+                      <ConfidenceBar confidence={entity.confidence} />
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs font-mono text-slate-400">
+                      {/* Mock complexity */}
+                      {(entity.name.length + entity.startLine) % 100}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded border ${((entity.endLine - entity.startLine) > 50) ?
+                      'text-red-400 border-red-400/20 bg-red-400/10' :
+                      'text-slate-400 border-slate-400/20 bg-slate-400/10'
+                      }`}>
+                      {((entity.endLine - entity.startLine) > 50) ? 'High' : 'Low'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {entity.classification && (
+                      <ClassificationBadge classification={entity.classification} />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {filteredEntities.length === 0 && entities.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-2">
+              <Code className="w-12 h-12 text-slate-600" />
+              <div className="text-lg font-medium">No knowledge extracted yet</div>
+              <div className="text-sm text-slate-600 text-center max-w-md">
+                Run <code className="text-cyan-400 bg-slate-800 px-1 rounded">code-synapse index</code> to extract knowledge from your codebase.
+              </div>
+            </div>
+          )}
+          {filteredEntities.length === 0 && entities.length > 0 && (
+            <div className="flex items-center justify-center h-32 text-slate-500">
+              No entities found matching your filters
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-slate-700 px-4 py-2 text-sm text-slate-500">
+          Showing {filteredEntities.length} of {entities.length} entities
         </div>
       </div>
 
-      {/* Entity List */}
-      <div className="flex-1 overflow-auto custom-scrollbar">
-        <table className="w-full">
-          <thead className="bg-slate-800 sticky top-0">
-            <tr className="text-left text-sm text-slate-400">
-              <th
-                className="px-4 py-3 font-medium cursor-pointer hover:text-white"
-                onClick={() => setSortBy('name')}
-              >
-                Name {sortBy === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}
-              </th>
-              <th
-                className="px-4 py-3 font-medium cursor-pointer hover:text-white"
-                onClick={() => setSortBy('kind')}
-              >
-                Kind {sortBy === 'kind' && (sortOrder === 'asc' ? '↑' : '↓')}
-              </th>
-              <th
-                className="px-4 py-3 font-medium cursor-pointer hover:text-white"
-                onClick={() => setSortBy('file')}
-              >
-                File {sortBy === 'file' && (sortOrder === 'asc' ? '↑' : '↓')}
-              </th>
-              <th
-                className="px-4 py-3 font-medium cursor-pointer hover:text-white"
-                onClick={() => setSortBy('confidence')}
-              >
-                Confidence{' '}
-                {sortBy === 'confidence' && (sortOrder === 'asc' ? '↑' : '↓')}
-              </th>
-              <th className="px-4 py-3 font-medium">Classification</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredEntities.map((entity) => (
-              <tr
-                key={entity.id}
-                className="border-b border-slate-700/50 hover:bg-slate-800/50 cursor-pointer"
-                onClick={() => setSelectedEntity(entity)}
-              >
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <EntityIcon kind={entity.kind} />
-                    <span className="text-slate-200">{entity.name}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                  <KindBadge kind={entity.kind} />
-                </td>
-                <td className="px-4 py-3 text-sm text-slate-400 max-w-xs truncate">
-                  {entity.filePath}
-                </td>
-                <td className="px-4 py-3">
-                  {entity.confidence !== undefined && (
-                    <ConfidenceBadge confidence={entity.confidence} />
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {entity.classification && (
-                    <ClassificationBadge classification={entity.classification} />
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {filteredEntities.length === 0 && entities.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-2">
-            <Code className="w-12 h-12 text-slate-600" />
-            <div className="text-lg font-medium">No knowledge extracted yet</div>
-            <div className="text-sm text-slate-600 text-center max-w-md">
-              Run <code className="text-cyan-400 bg-slate-800 px-1 rounded">code-synapse index</code> to extract knowledge from your codebase.
-            </div>
-          </div>
-        )}
-        {filteredEntities.length === 0 && entities.length > 0 && (
-          <div className="flex items-center justify-center h-32 text-slate-500">
-            No entities found matching your filters
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="border-t border-slate-700 px-4 py-2 text-sm text-slate-500">
-        Showing {filteredEntities.length} of {entities.length} entities
-      </div>
-    </div>
-
       {/* Detail Panel */}
       {selectedEntity && (
-        <EntityDetailPanel entity={selectedEntity} onClose={() => setSelectedEntity(null)} />
+        <EntityInsightsPanel entity={selectedEntity} onClose={() => setSelectedEntity(null)} />
       )}
     </div>
   );
@@ -344,11 +360,10 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-        active
-          ? 'bg-slate-700 text-white'
-          : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-      }`}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${active
+        ? 'bg-slate-700 text-white'
+        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+        }`}
     >
       {icon}
       {label}
@@ -447,7 +462,7 @@ function KindBadge({ kind }: { kind: string }) {
   );
 }
 
-function ConfidenceBadge({ confidence }: { confidence: number }) {
+function ConfidenceBar({ confidence }: { confidence: number }) {
   const level =
     confidence >= 0.8
       ? 'high'
@@ -457,19 +472,22 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
           ? 'low'
           : 'uncertain';
 
-  const classes =
+  const bgClass =
     level === 'high'
-      ? 'bg-green-500/20 text-green-400'
+      ? 'bg-green-500'
       : level === 'medium'
-        ? 'bg-yellow-500/20 text-yellow-400'
+        ? 'bg-yellow-500'
         : level === 'low'
-          ? 'bg-orange-500/20 text-orange-400'
-          : 'bg-red-500/20 text-red-400';
+          ? 'bg-orange-500'
+          : 'bg-red-500';
 
   return (
-    <span className={`text-xs px-2 py-0.5 rounded ${classes}`}>
-      {Math.round(confidence * 100)}%
-    </span>
+    <div className="flex items-center gap-2 w-24">
+      <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+        <div className={`h-full ${bgClass}`} style={{ width: `${confidence * 100}%` }} />
+      </div>
+      <span className="text-xs text-slate-400 w-8 text-right">{Math.round(confidence * 100)}%</span>
+    </div>
   );
 }
 
@@ -481,109 +499,6 @@ function ClassificationBadge({ classification }: { classification: string }) {
     <span className={`text-xs px-2 py-0.5 rounded ${classes}`}>
       {classification}
     </span>
-  );
-}
-
-function EntityDetailPanel({
-  entity,
-  onClose,
-}: {
-  entity: EntitySummary;
-  onClose: () => void;
-}) {
-  return (
-    <div className="w-80 flex-shrink-0 bg-slate-800/50 overflow-auto custom-scrollbar">
-      <div className="p-4">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-white">Entity Details</h3>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Entity Info */}
-        <div className="flex items-center gap-3 mb-4">
-          <div
-            className={`p-2 rounded ${
-              entity.kind === 'function'
-                ? 'bg-blue-500/20'
-                : entity.kind === 'class'
-                  ? 'bg-purple-500/20'
-                  : entity.kind === 'interface'
-                    ? 'bg-cyan-500/20'
-                    : 'bg-gray-500/20'
-            }`}
-          >
-            <EntityIcon kind={entity.kind} />
-          </div>
-          <div>
-            <h4 className="font-medium text-white">{entity.name || '(anonymous)'}</h4>
-            <KindBadge kind={entity.kind} />
-          </div>
-        </div>
-
-        {/* Location */}
-        <div className="mb-4">
-          <h5 className="text-xs font-medium text-slate-500 uppercase mb-1">Location</h5>
-          <div className="text-sm text-slate-300 truncate">{entity.filePath}</div>
-          <div className="text-xs text-slate-500">
-            Lines {entity.startLine} - {entity.endLine}
-          </div>
-        </div>
-
-        {/* Confidence */}
-        {entity.confidence !== undefined && (
-          <div className="mb-4">
-            <h5 className="text-xs font-medium text-slate-500 uppercase mb-1">Confidence</h5>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
-                <div
-                  className={`h-full ${
-                    entity.confidence >= 0.8
-                      ? 'bg-green-500'
-                      : entity.confidence >= 0.6
-                        ? 'bg-yellow-500'
-                        : entity.confidence >= 0.4
-                          ? 'bg-orange-500'
-                          : 'bg-red-500'
-                  }`}
-                  style={{ width: `${entity.confidence * 100}%` }}
-                />
-              </div>
-              <span className="text-sm text-slate-400">
-                {Math.round(entity.confidence * 100)}%
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Justification */}
-        <div className="mb-4">
-          <h5 className="text-xs font-medium text-slate-500 uppercase mb-1 flex items-center gap-1">
-            <Brain className="w-3 h-3" />
-            Business Justification
-          </h5>
-          <p className="text-sm text-slate-300 bg-slate-700/50 rounded p-2">
-            {entity.justification || <span className="text-slate-500 italic">No justification available</span>}
-          </p>
-        </div>
-
-        {/* Classification */}
-        {entity.classification && (
-          <div className="mb-4">
-            <h5 className="text-xs font-medium text-slate-500 uppercase mb-1">Classification</h5>
-            <ClassificationBadge classification={entity.classification} />
-            {entity.subCategory && (
-              <span className="ml-2 text-xs text-slate-500">{entity.subCategory}</span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
 

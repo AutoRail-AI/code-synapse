@@ -261,6 +261,73 @@ export class ASTTransformer {
     };
   }
 
+  /**
+   * Resolves the parent scope and kind for a given node.
+   * Walks up the AST to find the enclosing function or class.
+   */
+  private resolveParentScope(node: SyntaxNode): { scope: string; kind: string } | null {
+    let current = node.parent;
+    const scopeParts: string[] = [];
+    let kind = "";
+
+    // Helper to get name from a node
+    const getName = (n: SyntaxNode): string | null => {
+      // Try 'name' field first
+      const nameNode = n.childForFieldName("name");
+      if (nameNode) return nameNode.text;
+
+      // Handle variable declarations (for arrow functions assigned to vars)
+      if (n.type === "variable_declarator" || n.type === "lexical_declaration") {
+        const decl = n.type === "lexical_declaration"
+          ? n.children.find(c => c.type === "variable_declarator")
+          : n;
+        if (decl) {
+          return decl.childForFieldName("name")?.text ?? null;
+        }
+      }
+      return null;
+    };
+
+    while (current) {
+      let name = "";
+      let currentKind = "";
+
+      // Check if current node is a function
+      const funcTypes = FUNCTION_NODE_TYPES[this.language] || FUNCTION_NODE_TYPES["typescript"] || [];
+      if (funcTypes.includes(current.type)) {
+        name = getName(current) ?? "";
+        currentKind = "function";
+      }
+
+      // Check if current node is a class
+      const classTypes = CLASS_NODE_TYPES[this.language] || CLASS_NODE_TYPES["typescript"] || [];
+      if (classTypes.includes(current.type)) {
+        name = getName(current) ?? "";
+        currentKind = "class";
+      }
+
+      // Also check for arrow functions assigned to variables (simplified check)
+      if (!name && (current.type === "variable_declarator" || current.type === "lexical_declaration")) {
+        // If we are inside a variable declaration that is initialized with an arrow function, we consider it a function scope
+        // But determining if it IS an arrow function requires checking value. 
+        // For semantic hierarchy, using variable name is good enough if it wraps use.
+        // We'll optimistically treat named variable decls as scopes if we haven't found a kind yet? 
+        // No, safer to rely on explicit types.
+      }
+
+      if (name) {
+        scopeParts.unshift(name);
+        // We capture the kind of the innermost parent as the 'parentKind'
+        if (!kind) kind = currentKind;
+      }
+
+      current = current.parent;
+    }
+
+    if (scopeParts.length === 0) return null;
+    return { scope: scopeParts.join("."), kind };
+  }
+
   // ===========================================================================
   // Function Extraction
   // ===========================================================================
@@ -275,10 +342,24 @@ export class ASTTransformer {
     // Find function declarations based on language
     this.findNodes(rootNode, nodeTypes).forEach((node) => {
       // Skip if inside a class (for TypeScript/JavaScript/Java)
+      // Note: We might want to include nested functions inside methods?
+      // Existing logic excludes them if inside class.
+      // But methods are extracted by extractClasses -> parseClassBody.
+      // Functions inside methods (closures) are NOT extracted by parseClassBody unless we parse them too.
+      // If `isInsideClass` returns true for a function inside a method, it is skipped here.
+      // And `parseClassBody` only extracts *methods*.
+      // So functions inside methods are currently ignored?
+      // Yes, seems likely. This is a potential issue.
+      // But for now, let's stick to the current exclusion logic which assumes methods cover class members.
       if (this.isInsideClass(node) && !["go", "rust"].includes(this.language)) return;
 
       const fn = this.parseFunctionNode(node);
       if (fn) {
+        const parentInfo = this.resolveParentScope(node);
+        if (parentInfo) {
+          fn.parentScope = parentInfo.scope;
+          fn.parentKind = parentInfo.kind;
+        }
         functions.push(fn);
       }
     });
@@ -297,6 +378,11 @@ export class ASTTransformer {
             if (value?.type === "arrow_function" || value?.type === "function_expression") {
               const fn = this.parseArrowFunctionVariable(node, declarator, value);
               if (fn) {
+                const parentInfo = this.resolveParentScope(node);
+                if (parentInfo) {
+                  fn.parentScope = parentInfo.scope;
+                  fn.parentKind = parentInfo.kind;
+                }
                 functions.push(fn);
               }
             }
@@ -1248,6 +1334,11 @@ export class ASTTransformer {
 
       const cls = this.parseClassNode(node);
       if (cls) {
+        const parentInfo = this.resolveParentScope(node);
+        if (parentInfo) {
+          cls.parentScope = parentInfo.scope;
+          cls.parentKind = parentInfo.kind;
+        }
         classes.push(cls);
       }
     });
@@ -4562,7 +4653,7 @@ export class ASTTransformer {
     // Check if local
     const modifiers: UCEModifier[] = [];
     const isLocal = node.parent?.type === "local_function" ||
-                    node.children.some((c: SyntaxNode) => c.text === "local");
+      node.children.some((c: SyntaxNode) => c.text === "local");
     if (isLocal) modifiers.push("private");
 
     const docComment = this.extractDocComment(node);

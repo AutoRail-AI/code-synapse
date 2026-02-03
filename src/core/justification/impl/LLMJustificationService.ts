@@ -597,7 +597,7 @@ export class LLMJustificationService implements IJustificationService {
     );
 
     // Parse batch response
-    const batchResponses = parseBatchResponse(inferenceResult.text);
+    const batchResponses = parseBatchResponse(inferenceResult.parsed || inferenceResult.text);
 
     // Create justifications for each entity
     const justifications: EntityJustification[] = [];
@@ -918,7 +918,7 @@ export class LLMJustificationService implements IJustificationService {
           }
         );
 
-        const parsed = parseJustificationResponse(inferenceResult.text);
+        const parsed = parseJustificationResponse(inferenceResult.parsed || inferenceResult.text);
         llmResponse = parsed || createDefaultResponse(context.entity);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

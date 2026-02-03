@@ -42,7 +42,7 @@ export interface APILLMServiceConfig {
 const DEFAULT_MODELS: Record<APIProvider, string> = {
   anthropic: "claude-sonnet-4-20250514",
   openai: "gpt-4o",
-  google: "gemini-1.5-pro",
+  google: "gemini-3-pro-preview",
 };
 
 // =============================================================================
@@ -432,32 +432,42 @@ export class APILLMService implements ILLMService {
     }
 
     const startTime = Date.now();
-
     try {
+      const generationConfig: any = {
+        maxOutputTokens: options?.maxTokens ?? 2048,
+        stopSequences: options?.stopSequences,
+      };
+
+      if (options?.thinkingLevel) {
+        generationConfig.thinkingConfig = {
+          thinkingLevel: options.thinkingLevel,
+        };
+      }
+
+      // Use native Structured Outputs if schema is provided
+      if (options?.jsonSchema) {
+        generationConfig.responseMimeType = "application/json";
+        generationConfig.responseJsonSchema = options.jsonSchema;
+      }
+
       const result = await this.googleModel.generateContent({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          maxOutputTokens: options?.maxTokens ?? 2048,
-          stopSequences: options?.stopSequences,
-        },
+        generationConfig,
       });
 
       const response = result.response;
       const text = response.text();
       const durationMs = Date.now() - startTime;
 
-      // Parse JSON if schema was provided
+      // Parse JSON
       let parsed: unknown;
       if (options?.jsonSchema) {
         try {
-          const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, text];
-          const jsonStr = jsonMatch[1]?.trim() || text.trim();
-          parsed = JSON.parse(jsonStr);
+          parsed = JSON.parse(text);
         } catch (parseError) {
-          const preview = text.length > 200 ? text.slice(0, 200) + "..." : text;
           logger.warn(
-            { preview, error: String(parseError) },
-            "Failed to parse JSON response from Google API"
+            { text, error: String(parseError) },
+            "Failed to parse JSON response from Google API (Structured Output)"
           );
         }
       }

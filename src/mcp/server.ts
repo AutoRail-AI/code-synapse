@@ -24,7 +24,8 @@ import { createLogger } from "../utils/logger.js";
 import { getConfigPath, readJson } from "../utils/index.js";
 import {
   createInitializedLLMService,
-  type LLMService,
+  createInitializedAPILLMService,
+  type ILLMService,
 } from "../core/llm/index.js";
 import {
   createLLMJustificationService,
@@ -86,7 +87,7 @@ let indexer: Indexer | null = null;
 let server: Server | null = null;
 let fileWatcher: FileWatcher | null = null;
 let observer: MCPObserverService | null = null;
-let llmService: LLMService | null = null;
+let llmService: ILLMService | null = null;
 let justificationService: IJustificationService | null = null;
 let changeLedger: IChangeLedger | null = null;
 
@@ -948,25 +949,36 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const modelProvider = extendedConfig?.modelProvider ?? "local";
   const modelId = extendedConfig?.llmModel ?? "qwen2.5-coder-3b";
 
-  // Initialize LLM service if enabled and local provider
-  if (!skipLlm && modelProvider === "local") {
+  // Initialize LLM service if enabled
+  if (!skipLlm) {
     try {
-      logger.info({ modelId }, "Initializing LLM service");
-      llmService = await createInitializedLLMService({ modelId });
-      logger.info({ modelId }, "LLM service initialized");
+      if (modelProvider === "local") {
+        logger.info({ modelId }, "Initializing Local LLM service");
+        llmService = await createInitializedLLMService({
+          modelId,
+          store: graphStore as unknown as import("../core/graph/index.js").IGraphStore
+        });
+      } else if (["openai", "anthropic", "google"].includes(modelProvider)) {
+        logger.info({ modelId, provider: modelProvider }, "Initializing API LLM service");
+        llmService = await createInitializedAPILLMService({
+          provider: modelProvider as "openai" | "anthropic" | "google",
+          modelId,
+        });
+      } else {
+        logger.warn({ modelProvider }, "Unknown model provider - skipping LLM initialization");
+      }
+
+      if (llmService) {
+        logger.info({ modelId, provider: modelProvider }, "LLM service initialized");
+      }
     } catch (llmError) {
       logger.warn(
         { error: llmError, modelId },
         "Failed to initialize LLM service - justifications will use code analysis only"
       );
     }
-  } else if (skipLlm) {
-    logger.info("LLM service disabled by configuration");
   } else {
-    logger.info(
-      { modelProvider },
-      "Non-local model provider - LLM service not available for MCP server"
-    );
+    logger.info("LLM service disabled by configuration");
   }
 
   // Initialize justification service

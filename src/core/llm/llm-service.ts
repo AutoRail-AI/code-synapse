@@ -21,6 +21,7 @@ import { createLogger } from "../../utils/logger.js";
 import type { AsyncDisposable } from "../../utils/disposable.js";
 import { resolveModel, getModelById, MODEL_PRESETS, type ModelSpec, type ModelPreset } from "./models.js";
 import type { ILLMService } from "./interfaces/ILLMService.js";
+import type { IGraphStore } from "../graph/index.js";
 
 const logger = createLogger("llm-service");
 
@@ -43,6 +44,8 @@ export interface LLMServiceConfig {
   maxCacheEntries?: number;
   /** Custom directory for model storage */
   modelsDir?: string;
+  /** Optional graph store for persistent caching */
+  store?: IGraphStore;
 }
 
 /** JSON schema type for structured output */
@@ -111,6 +114,7 @@ export class LLMService implements AsyncDisposable, ILLMService {
   private context: LlamaContext | null = null;
   private contextSequence: LlamaContextSequence | null = null;
   private cache: Map<string, CacheEntry> = new Map();
+  private store?: IGraphStore;
   private stats: LLMStats = {
     totalCalls: 0,
     cacheHits: 0,
@@ -142,6 +146,8 @@ export class LLMService implements AsyncDisposable, ILLMService {
         throw new Error(`Unknown model ID: ${config.modelId}. Use getAvailableModels() to see valid options.`);
       }
     }
+
+    this.store = config.store;
   }
 
   /**
@@ -249,8 +255,24 @@ export class LLMService implements AsyncDisposable, ILLMService {
       const cached = this.cache.get(cacheKey);
       if (cached) {
         this.stats.cacheHits++;
-        logger.debug({ cacheKey }, "Cache hit");
+        logger.debug({ cacheKey }, "Memory cache hit");
         return { ...cached.result, fromCache: true };
+      }
+
+      // Check persistent cache
+      if (this.store) {
+        try {
+          const dbResult = await this.getFromPersistentCache(cacheKey);
+          if (dbResult) {
+            this.stats.cacheHits++;
+            logger.debug({ cacheKey }, "Persistent cache hit");
+            // Promote to memory cache
+            this.addToCache(cacheKey, dbResult, false); // false = don't write back to DB
+            return { ...dbResult, fromCache: true };
+          }
+        } catch (err) {
+          logger.warn({ err }, "Failed to read from persistent cache");
+        }
       }
     }
     this.stats.cacheMisses++;
@@ -317,7 +339,7 @@ export class LLMService implements AsyncDisposable, ILLMService {
 
       // Cache the result
       if (this.config.enableCache) {
-        this.addToCache(cacheKey, result);
+        this.addToCache(cacheKey, result, true);
       }
 
       logger.debug(
@@ -367,7 +389,7 @@ export class LLMService implements AsyncDisposable, ILLMService {
   /**
    * Add result to cache with LRU eviction
    */
-  private addToCache(key: string, result: InferenceResult): void {
+  private addToCache(key: string, result: InferenceResult, persist = true): void {
     // Evict oldest entries if cache is full
     if (this.cache.size >= this.config.maxCacheEntries!) {
       const oldest = Array.from(this.cache.entries()).sort(
@@ -378,10 +400,52 @@ export class LLMService implements AsyncDisposable, ILLMService {
       }
     }
 
+    // Add to memory cache
     this.cache.set(key, {
       result,
       timestamp: Date.now(),
     });
+
+    // Add to persistent cache
+    if (persist && this.store) {
+      this.writeToPersistentCache(key, result).catch(err => {
+        logger.warn({ err }, "Failed to write to persistent cache");
+      });
+    }
+  }
+
+  private async getFromPersistentCache(key: string): Promise<InferenceResult | null> {
+    if (!this.store) return null;
+    try {
+      const query = `?[result] := *llm_cache{cache_key: $key, result}`;
+      const dbResult = await this.store.query<{ result: any }>(query, { key });
+      if (dbResult.rows.length > 0) {
+        return dbResult.rows[0]!.result as InferenceResult;
+      }
+    } catch (error) {
+      // Table might not exist yet if migration failed or didn't run
+      logger.debug({ error }, "Persistent cache lookup failed (table might be missing)");
+    }
+    return null;
+  }
+
+  private async writeToPersistentCache(key: string, result: InferenceResult): Promise<void> {
+    if (!this.store) return;
+    try {
+      // Clean result for storage (remove large fields if needed, but InferenceResult is small enough)
+      // We set fromCache to true on the stored object so checking it later reveals context
+      // But strictly, when we retrieve it, we want it as is.
+      const query = `
+         :create llm_cache {
+           cache_key: $key,
+           result: $result,
+           timestamp: to_int(now())
+         }
+       `;
+      await this.store.execute(query, { key, result });
+    } catch (error) {
+      logger.warn({ error }, "Persistent cache write failed");
+    }
   }
 
   /**
