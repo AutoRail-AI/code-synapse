@@ -102,6 +102,8 @@ export interface IndexerCoordinatorOptions {
   project: DetectedProject;
   /** Batch size for processing files (default: 10) */
   batchSize?: number;
+  /** Concurrency limit for processing files (default: 4) */
+  concurrency?: number;
   /** Whether to continue on errors (default: true) */
   continueOnError?: boolean;
   /** Progress callback */
@@ -158,6 +160,7 @@ export class IndexerCoordinator {
       store: options.store,
       project: options.project,
       batchSize: options.batchSize ?? 10,
+      concurrency: options.concurrency ?? 4,
       continueOnError: options.continueOnError ?? true,
       onProgress: options.onProgress,
       onError: options.onError,
@@ -453,9 +456,8 @@ export class IndexerCoordinator {
     errors: IndexingError[],
     phaseStats: IndexingCoordinatorResult["phases"]
   ): Promise<WriteResult[]> {
-    // Process files concurrently with a limit of 4
-    // TODO: Make concurrency configurable via options
-    const CONCURRENCY = 4;
+    // Process files concurrently with configured limit
+    const CONCURRENCY = this.options.concurrency;
 
     return mapConcurrent(
       files,

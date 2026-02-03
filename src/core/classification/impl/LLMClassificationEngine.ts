@@ -29,7 +29,7 @@ import {
   DomainAreaSchema,
   InfrastructureLayerSchema,
 } from "../models/classification.js";
-import type { ILLMService } from "../../llm/interfaces/ILLMService.js";
+import type { IModelRouter } from "../../models/interfaces/IModel.js";
 import { createLogger } from "../../telemetry/logger.js";
 
 const logger = createLogger("classification-engine");
@@ -156,19 +156,29 @@ const CLASSIFICATION_JSON_SCHEMA = {
 // Implementation
 // =============================================================================
 
+interface LLMClassificationResponse {
+  category: "domain" | "infrastructure";
+  area: string;
+  confidence: number;
+  reasoning: string;
+  indicators: string[];
+  library?: string;
+  libraryVersion?: string;
+}
+
 export class LLMClassificationEngine implements IClassificationEngine {
   private storage: IClassificationStorage;
-  private llm: ILLMService | null;
+  private modelRouter: IModelRouter | null;
   private config: ClassificationEngineConfig;
   private initialized = false;
 
   constructor(
     storage: IClassificationStorage,
-    llm: ILLMService | null,
+    modelRouter: IModelRouter | null,
     config: ClassificationEngineConfig
   ) {
     this.storage = storage;
-    this.llm = llm;
+    this.modelRouter = modelRouter;
     this.config = config;
   }
 
@@ -210,7 +220,7 @@ export class LLMClassificationEngine implements IClassificationEngine {
       }
 
       // Fall back to LLM classification
-      if (this.config.useLLM && this.llm) {
+      if (this.config.useLLM && this.modelRouter) {
         const llmResult = await this.classifyByLLM(request);
         if (llmResult) {
           await this.storage.store(llmResult);
@@ -488,7 +498,7 @@ export class LLMClassificationEngine implements IClassificationEngine {
   }
 
   private async classifyByLLM(request: ClassificationRequest): Promise<EntityClassification | null> {
-    if (!this.llm) return null;
+    if (!this.modelRouter) return null;
 
     try {
       const justificationContext = request.justification
@@ -505,13 +515,17 @@ export class LLMClassificationEngine implements IClassificationEngine {
         .replace("{justificationContext}", justificationContext)
         .replace("{imports}", request.imports.join(", ") || "None");
 
-      const response = await this.llm.infer(prompt, {
-        maxTokens: 500,
-        temperature: 0.1,
-        jsonSchema: CLASSIFICATION_JSON_SCHEMA,
+      const response = await this.modelRouter.execute({
+        prompt: prompt,
+        taskType: "classification",
+        parameters: {
+          maxTokens: 500,
+          temperature: 0.1,
+        },
+        schema: CLASSIFICATION_JSON_SCHEMA,
       });
 
-      const parsed = (response.parsed || {}) as any;
+      const parsed = (JSON.parse(response.content) || {}) as LLMClassificationResponse;
 
       if (!parsed.category) {
         return null;
@@ -574,19 +588,19 @@ export class LLMClassificationEngine implements IClassificationEngine {
  */
 export async function createClassificationEngine(
   storage: IClassificationStorage,
-  llm: ILLMService | null,
+  modelRouter: IModelRouter | null,
   config?: Partial<ClassificationEngineConfig>
 ): Promise<IClassificationEngine> {
   const defaultConfig: ClassificationEngineConfig = {
     confidenceThreshold: 0.6,
-    useLLM: !!llm,
+    useLLM: !!modelRouter,
     usePatterns: true,
     useDependencyAnalysis: true,
     maxRetries: 2,
     timeout: 30000,
   };
 
-  const engine = new LLMClassificationEngine(storage, llm, { ...defaultConfig, ...config });
+  const engine = new LLMClassificationEngine(storage, modelRouter, { ...defaultConfig, ...config });
   await engine.initialize();
   return engine;
 }

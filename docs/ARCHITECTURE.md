@@ -1086,6 +1086,8 @@ This pattern maximizes initial quality while maintaining privacy and cost effici
 
 ## Testing & Verification
 
+For a **vertical-sliced launch plan** (CLI → Indexing → Justification → AST → UI → Code Query → MCP → Prompts → Skills → Ledger → Graph → Models), see **[LAUNCH-TESTING-PLAN.md](./LAUNCH-TESTING-PLAN.md)**. It defines one slice per major component with acceptance criteria, test steps, and sign-off checklists.
+
 ### Test Organization
 
 Code-Synapse testing is organized into three tiers:

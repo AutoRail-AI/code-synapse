@@ -24,12 +24,12 @@ import {
   type ClarificationBatch,
 } from "../../core/justification/index.js";
 import {
-  createLLMServiceWithPreset,
-  createInitializedAPILLMService,
-  MODEL_PRESETS,
+  createInitializedModelRouter,
+  type IModelRouter,
+} from "../../core/models/index.js";
+import {
   type ModelPreset,
-  type APIProvider,
-  type ILLMService,
+  MODEL_PRESETS,
 } from "../../core/llm/index.js";
 
 const logger = createLogger("justify");
@@ -151,7 +151,7 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
 
   // Track resources for cleanup
   let store: Awaited<ReturnType<typeof createGraphStore>> | null = null;
-  let llmService: ILLMService | null = null;
+  let modelRouter: IModelRouter | null = null;
 
   try {
     // Initialize graph store
@@ -163,56 +163,53 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
     const extendedConfig = readJson<CodeSynapseConfig>(configPath);
 
     // Command-line options override config settings
-    const modelProvider = (options.provider as APIProvider | "local") ?? extendedConfig?.modelProvider ?? "local";
+    const modelProvider = (options.provider as "local" | "openai" | "anthropic" | "google") ?? extendedConfig?.modelProvider ?? "local";
     const savedModelId = options.modelId ?? extendedConfig?.llmModel;
 
     // Get API key from config if available
     const apiKey = extendedConfig?.apiKeys?.[modelProvider as keyof typeof extendedConfig.apiKeys];
+    
+    // Set API key in environment for providers
+    if (apiKey) {
+      if (modelProvider === "openai") process.env.OPENAI_API_KEY = apiKey;
+      if (modelProvider === "anthropic") process.env.ANTHROPIC_API_KEY = apiKey;
+      if (modelProvider === "google") process.env.GOOGLE_API_KEY = apiKey;
+    }
 
-    // Initialize LLM service if not skipping
+    // Initialize Model Router if not skipping
     let actualModelId: string | undefined;
 
     if (!options.skipLlm) {
       const preset = options.model || "balanced";
 
       try {
-        if (modelProvider === "anthropic" || modelProvider === "openai" || modelProvider === "google") {
-          // Use API-based LLM service
-          // If saved modelId is a local model (contains "qwen", "llama", "codellama", "deepseek"),
-          // don't pass it - let the API service use its default
-          const isLocalModel = savedModelId &&
-            (savedModelId.includes("qwen") || savedModelId.includes("llama") ||
-              savedModelId.includes("codellama") || savedModelId.includes("deepseek"));
-          const apiModelId = isLocalModel ? undefined : savedModelId;
+        spinner.text = "Initializing model router...";
+        
+        modelRouter = await createInitializedModelRouter({
+          enableLocal: modelProvider === "local",
+          enableOpenAI: modelProvider === "openai",
+          enableAnthropic: modelProvider === "anthropic",
+          enableGoogle: modelProvider === "google",
+        });
 
-          spinner.text = `Connecting to ${modelProvider} API...`;
-          llmService = await createInitializedAPILLMService({
-            provider: modelProvider as APIProvider,
-            modelId: apiModelId,
-            apiKey: apiKey,
-          });
-          spinner.text = `${modelProvider} API connected`;
-          actualModelId = apiModelId || getDefaultApiModel(modelProvider);
-          console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId}) for LLM inference`));
-        } else {
-          // Use local LLM service
-          spinner.text = "Loading local LLM model...";
-          const localService = createLLMServiceWithPreset(preset);
-          await localService.initialize();
-          llmService = localService;
+        if (modelProvider === "local") {
           actualModelId = MODEL_PRESETS[preset];
-          spinner.text = `Local LLM model loaded (${preset})`;
+          spinner.text = `Local model router initialized (${preset})`;
+        } else {
+          actualModelId = savedModelId || getDefaultApiModel(modelProvider);
+          spinner.text = `${modelProvider} API connected`;
+          console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId})`));
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         spinner.warn(chalk.yellow(`LLM not available: ${errorMessage}`));
         console.log(chalk.dim("  Continuing with code analysis only"));
-        llmService = null;
+        modelRouter = null;
       }
     }
 
     // Create justification service
-    const justificationService = createLLMJustificationService(store, llmService ?? undefined);
+    const justificationService = createLLMJustificationService(store, modelRouter ?? undefined);
     await justificationService.initialize();
 
     // Stats mode
@@ -327,9 +324,9 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
     throw error;
   } finally {
     // Always cleanup resources
-    if (llmService) {
+    if (modelRouter) {
       try {
-        await llmService.shutdown();
+        await modelRouter.shutdown();
       } catch {
         // Ignore shutdown errors
       }

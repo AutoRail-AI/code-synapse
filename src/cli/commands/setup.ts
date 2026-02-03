@@ -139,9 +139,14 @@ export class InteractiveSetup {
       message: "Select your AI provider",
       options: [
         {
+          value: "google",
+          label: "Google (Gemini)",
+          hint: "recommended - requires API key"
+        },
+        {
           value: "local",
           label: "Local Models",
-          hint: "recommended - privacy-first, no API costs"
+          hint: "privacy-first, no API costs"
         },
         {
           value: "anthropic",
@@ -153,35 +158,12 @@ export class InteractiveSetup {
           label: "OpenAI (GPT-4)",
           hint: "requires API key"
         },
-        {
-          value: "google",
-          label: "Google (Gemini)",
-          hint: "requires API key"
-        },
-        {
-          value: "skip",
-          label: "Skip AI features",
-          hint: "use code analysis only"
-        },
       ],
     });
 
     if (p.isCancel(providerResult)) {
       p.cancel("Setup cancelled");
       return null;
-    }
-
-    if (providerResult === "skip") {
-      config.skipLlm = true;
-      config.modelProvider = undefined;
-
-      p.note(
-        "AI features disabled.\nYou can enable them later with: code-synapse config --setup",
-        "Info"
-      );
-
-      p.outro(chalk.green("Setup complete!"));
-      return config;
     }
 
     const provider = providerResult as ModelProvider;

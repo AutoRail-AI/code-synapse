@@ -23,10 +23,9 @@ import type { GraphDatabase } from "../core/graph/index.js";
 import { createLogger } from "../utils/logger.js";
 import { getConfigPath, readJson } from "../utils/index.js";
 import {
-  createInitializedLLMService,
-  createInitializedAPILLMService,
-  type ILLMService,
-} from "../core/llm/index.js";
+  createInitializedModelRouter,
+  type IModelRouter,
+} from "../core/models/index.js";
 import {
   createLLMJustificationService,
   type IJustificationService,
@@ -87,7 +86,7 @@ let indexer: Indexer | null = null;
 let server: Server | null = null;
 let fileWatcher: FileWatcher | null = null;
 let observer: MCPObserverService | null = null;
-let llmService: ILLMService | null = null;
+let modelRouter: IModelRouter | null = null;
 let justificationService: IJustificationService | null = null;
 let changeLedger: IChangeLedger | null = null;
 
@@ -98,6 +97,11 @@ interface CodeSynapseConfig extends ProjectConfig {
   llmModel?: string;
   skipLlm?: boolean;
   modelProvider?: "local" | "openai" | "anthropic" | "google";
+  apiKeys?: {
+    anthropic?: string;
+    openai?: string;
+    google?: string;
+  };
 }
 
 /**
@@ -949,32 +953,33 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const modelProvider = extendedConfig?.modelProvider ?? "local";
   const modelId = extendedConfig?.llmModel ?? "qwen2.5-coder-3b";
 
-  // Initialize LLM service if enabled
+  // Get API key from config if available
+  const apiKey = extendedConfig?.apiKeys?.[modelProvider as keyof typeof extendedConfig.apiKeys];
+    
+  // Set API key in environment for providers
+  if (apiKey) {
+    if (modelProvider === "openai") process.env.OPENAI_API_KEY = apiKey;
+    if (modelProvider === "anthropic") process.env.ANTHROPIC_API_KEY = apiKey;
+    if (modelProvider === "google") process.env.GOOGLE_API_KEY = apiKey;
+  }
+
+  // Initialize Model Router if enabled
   if (!skipLlm) {
     try {
-      if (modelProvider === "local") {
-        logger.info({ modelId }, "Initializing Local LLM service");
-        llmService = await createInitializedLLMService({
-          modelId,
-          store: graphStore as unknown as import("../core/graph/index.js").IGraphStore
-        });
-      } else if (["openai", "anthropic", "google"].includes(modelProvider)) {
-        logger.info({ modelId, provider: modelProvider }, "Initializing API LLM service");
-        llmService = await createInitializedAPILLMService({
-          provider: modelProvider as "openai" | "anthropic" | "google",
-          modelId,
-        });
-      } else {
-        logger.warn({ modelProvider }, "Unknown model provider - skipping LLM initialization");
-      }
+      logger.info({ modelId, provider: modelProvider }, "Initializing model router");
+      
+      modelRouter = await createInitializedModelRouter({
+        enableLocal: modelProvider === "local",
+        enableOpenAI: modelProvider === "openai",
+        enableAnthropic: modelProvider === "anthropic",
+        enableGoogle: modelProvider === "google",
+      });
 
-      if (llmService) {
-        logger.info({ modelId, provider: modelProvider }, "LLM service initialized");
-      }
-    } catch (llmError) {
+      logger.info({ modelId, provider: modelProvider }, "Model router initialized");
+    } catch (err) {
       logger.warn(
-        { error: llmError, modelId },
-        "Failed to initialize LLM service - justifications will use code analysis only"
+        { error: err, modelId },
+        "Failed to initialize model router - justifications will use code analysis only"
       );
     }
   } else {
@@ -985,7 +990,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
   // This works with or without LLM - falls back to code analysis
   justificationService = createLLMJustificationService(
     graphStore as unknown as import("../core/interfaces/IGraphStore.js").IGraphStore,
-    llmService ?? undefined
+    modelRouter ?? undefined
   );
   await justificationService.initialize();
   logger.info("Justification service initialized");
@@ -1120,9 +1125,9 @@ export async function stopServer(): Promise<void> {
     logger.debug("Justification service closed");
   }
 
-  // Note: LLM service doesn't need explicit cleanup
+  // Note: Model router doesn't need explicit cleanup
   // but clear the reference
-  llmService = null;
+  modelRouter = null;
 
   if (server) {
     await server.close();

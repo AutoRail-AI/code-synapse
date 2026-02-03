@@ -48,12 +48,12 @@ import {
   type JustificationProgress,
 } from "../../core/justification/index.js";
 import {
-  createLLMServiceWithPreset,
-  createInitializedAPILLMService,
-  MODEL_PRESETS,
+  createInitializedModelRouter,
+  type IModelRouter,
+} from "../../core/models/index.js";
+import {
   type ModelPreset,
-  type APIProvider,
-  type ILLMService,
+  MODEL_PRESETS,
 } from "../../core/llm/index.js";
 import type { ProjectConfig } from "../../types/index.js";
 import { InteractiveSetup, type CodeSynapseConfig } from "./setup.js";
@@ -266,7 +266,7 @@ async function runJustification(
   modelPreset: ModelPreset | undefined,
   spinner: ReturnType<typeof ora>
 ): Promise<boolean> {
-  let llmService: ILLMService | null = null;
+  let modelRouter: IModelRouter | null = null;
 
   try {
     // Read config to get model provider setting
@@ -277,48 +277,45 @@ async function runJustification(
 
     // Get API key from config if available
     const apiKey = config?.apiKeys?.[modelProvider as keyof typeof config.apiKeys];
+    
+    // Set API key in environment for providers
+    if (apiKey) {
+      if (modelProvider === "openai") process.env.OPENAI_API_KEY = apiKey;
+      if (modelProvider === "anthropic") process.env.ANTHROPIC_API_KEY = apiKey;
+      if (modelProvider === "google") process.env.GOOGLE_API_KEY = apiKey;
+    }
 
-    // Initialize LLM service based on provider
+    // Initialize Model Router based on provider
     const preset = modelPreset || "balanced";
     let actualModelId: string | undefined;
 
     try {
-      if (modelProvider === "anthropic" || modelProvider === "openai" || modelProvider === "google") {
-        // Use API-based LLM service
-        // If saved modelId is a local model (contains "qwen", "llama", "codellama", "deepseek"),
-        // don't pass it - let the API service use its default
-        const isLocalModel = savedModelId &&
-          (savedModelId.includes("qwen") || savedModelId.includes("llama") ||
-            savedModelId.includes("codellama") || savedModelId.includes("deepseek"));
-        const apiModelId = isLocalModel ? undefined : savedModelId;
+      spinner.text = "Initializing model router...";
+      
+      modelRouter = await createInitializedModelRouter({
+        enableLocal: modelProvider === "local",
+        enableOpenAI: modelProvider === "openai",
+        enableAnthropic: modelProvider === "anthropic",
+        enableGoogle: modelProvider === "google",
+      });
 
-        spinner.text = `Connecting to ${modelProvider} API...`;
-        llmService = await createInitializedAPILLMService({
-          provider: modelProvider as APIProvider,
-          modelId: apiModelId,
-          apiKey: apiKey,
-        });
-        spinner.text = `${modelProvider} API connected`;
-        actualModelId = apiModelId || getDefaultApiModel(modelProvider);
-        console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId}) for LLM inference`));
-      } else {
-        // Use local LLM service
-        spinner.text = "Loading LLM model...";
-        const localService = createLLMServiceWithPreset(preset);
-        await localService.initialize();
-        llmService = localService;
+      if (modelProvider === "local") {
         actualModelId = MODEL_PRESETS[preset];
-        spinner.text = `LLM model loaded (${preset})`;
+        spinner.text = `Local model router initialized (${preset})`;
+      } else {
+        actualModelId = savedModelId || getDefaultApiModel(modelProvider);
+        spinner.text = `${modelProvider} API connected`;
+        console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId})`));
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       spinner.warn(chalk.yellow(`LLM not available: ${errorMessage}`));
       console.log(chalk.dim("  Continuing with code analysis only"));
-      llmService = null;
+      modelRouter = null;
     }
 
     // Create justification service
-    const justificationService = createLLMJustificationService(store, llmService ?? undefined);
+    const justificationService = createLLMJustificationService(store, modelRouter ?? undefined);
     await justificationService.initialize();
 
     // Run justification
@@ -326,7 +323,7 @@ async function runJustification(
 
     const result = await justificationService.justifyProject({
       force: false,
-      skipLLM: llmService === null,
+      skipLLM: modelRouter === null,
       modelId: actualModelId,
       onProgress: (progress: JustificationProgress) => {
         spinner.text = `${progress.phase}: ${progress.current}/${progress.total}`;
@@ -370,9 +367,9 @@ async function runJustification(
     logger.error({ err: error }, "Justification failed");
     return false;
   } finally {
-    if (llmService) {
+    if (modelRouter) {
       try {
-        await llmService.shutdown();
+        await modelRouter.shutdown();
       } catch {
         // Ignore shutdown errors
       }
@@ -385,7 +382,7 @@ async function runJustification(
  */
 async function runClassification(
   store: IGraphStore,
-  llmService: ILLMService | null,
+  modelRouter: IModelRouter | null,
   spinner: ReturnType<typeof ora>
 ): Promise<IClassificationEngine | null> {
   try {
@@ -397,7 +394,7 @@ async function runClassification(
     );
     const classificationEngine = await createClassificationEngine(
       classificationStorage,
-      llmService ?? null
+      modelRouter ?? null
     );
 
     // Get all entity IDs that need classification
@@ -635,7 +632,7 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
     }
 
     // Step 4: Run business justification (unless skipped)
-    let llmServiceForClassification: ILLMService | null = null;
+    let modelRouterForClassification: IModelRouter | null = null;
     if (!options.skipJustify) {
       console.log();
       console.log(chalk.cyan.bold("Business Justification Layer"));
@@ -643,6 +640,13 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       console.log();
 
       spinner.start("Running business justification...");
+      // Note: We don't get the router back from runJustification, so we can't reuse it easily here
+      // For now, runClassification will re-initialize or we should refactor runJustification to return it
+      // To keep it simple for this fix, we'll pass null to classification if we can't get it, 
+      // but ideally we should refactor. 
+      // Actually, let's just initialize it again in runClassification if needed, or pass null.
+      // But wait, runJustification initializes it locally.
+      
       const justifySuccess = await runJustification(graphStore, options.model, spinner);
       if (!justifySuccess) {
         spinner.warn(chalk.yellow("Business justification had issues, continuing..."));
@@ -670,7 +674,9 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       console.log();
 
       spinner.start("Running classification...");
-      classificationEngine = await runClassification(graphStore, llmServiceForClassification, spinner);
+      // We pass null for now as we don't have the router instance from runJustification
+      // TODO: Refactor runJustification to return the router or initialize it at top level
+      classificationEngine = await runClassification(graphStore, null, spinner);
 
       // Log classification completion
       if (changeLedger) {

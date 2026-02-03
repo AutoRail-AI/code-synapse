@@ -10,7 +10,7 @@
 
 import { createLogger } from "../../../utils/logger.js";
 import type { IGraphStore } from "../../interfaces/IGraphStore.js";
-import type { ILLMService } from "../../llm/interfaces/ILLMService.js";
+import type { IModelRouter, TaskType } from "../../models/interfaces/IModel.js";
 import type {
   IJustificationService,
   JustifyOptions,
@@ -152,7 +152,7 @@ export class LLMJustificationService implements IJustificationService {
 
   constructor(
     private graphStore: IGraphStore,
-    private llmService?: ILLMService
+    private modelRouter?: IModelRouter
   ) {
     this.storage = createJustificationStorage(graphStore);
     this.propagator = createContextPropagator(graphStore);
@@ -178,8 +178,9 @@ export class LLMJustificationService implements IJustificationService {
     }
 
     // LLM service is optional - we can work without it using defaults
-    if (this.llmService && !this.llmService.isReady) {
-      logger.warn("LLM service not ready - justifications will use fallback inference");
+    if (this.modelRouter) {
+      // Router usually initialized globally, but we can ensure it's ready
+      // or just proceed assuming it is/will be
     }
 
     this.ready = true;
@@ -346,7 +347,7 @@ export class LLMJustificationService implements IJustificationService {
     }
 
     // Step 3: Process non-trivial entities with LLM (batch or single)
-    const useBatchLLM = this.llmService?.isReady && !opts.skipLLM && opts.llmBatchSize! > 1;
+    const useBatchLLM = !!this.modelRouter && !opts.skipLLM && opts.llmBatchSize! > 1;
 
     if (useBatchLLM) {
       // Convert EntityInfo[] to BatchEntityInput[] for dynamic batching
@@ -546,8 +547,8 @@ export class LLMJustificationService implements IJustificationService {
     existingJustifications: Map<string, EntityJustification>,
     options: JustifyOptions
   ): Promise<EntityJustification[]> {
-    if (!this.llmService?.isReady) {
-      throw new Error("LLM service not ready for batch processing");
+    if (!this.modelRouter) {
+      throw new Error("Model router not available for batch processing");
     }
 
     // Build batch input
@@ -587,17 +588,19 @@ export class LLMJustificationService implements IJustificationService {
       "Processing batch with token-based limits"
     );
 
-    const inferenceResult = await this.llmService.infer(
-      `${BATCH_JUSTIFICATION_SYSTEM_PROMPT}\n\n${prompt}`,
-      {
+    const inferenceResult = await this.modelRouter.execute({
+      prompt: prompt,
+      systemPrompt: BATCH_JUSTIFICATION_SYSTEM_PROMPT,
+      taskType: "justification",
+      parameters: {
         maxTokens: estimatedResponseTokens,
         temperature: 0.3,
-        jsonSchema: BATCH_JUSTIFICATION_JSON_SCHEMA,
-      }
-    );
+      },
+      schema: BATCH_JUSTIFICATION_JSON_SCHEMA,
+    });
 
     // Parse batch response
-    const batchResponses = parseBatchResponse(inferenceResult.parsed || inferenceResult.text);
+    const batchResponses = parseBatchResponse(inferenceResult.content);
 
     // Create justifications for each entity
     const justifications: EntityJustification[] = [];
@@ -907,18 +910,20 @@ export class LLMJustificationService implements IJustificationService {
     // Get LLM response
     let llmResponse: LLMJustificationResponse;
 
-    if (this.llmService?.isReady && !options.skipLLM) {
+    if (this.modelRouter && !options.skipLLM) {
       try {
-        const inferenceResult = await this.llmService.infer(
-          `${JUSTIFICATION_SYSTEM_PROMPT}\n\n${prompt}`,
-          {
+        const inferenceResult = await this.modelRouter.execute({
+          prompt: prompt,
+          systemPrompt: JUSTIFICATION_SYSTEM_PROMPT,
+          taskType: "justification",
+          parameters: {
             maxTokens: 1024,
             temperature: 0.3,
-            jsonSchema: JUSTIFICATION_JSON_SCHEMA,
-          }
-        );
+          },
+          schema: JUSTIFICATION_JSON_SCHEMA,
+        });
 
-        const parsed = parseJustificationResponse(inferenceResult.parsed || inferenceResult.text);
+        const parsed = parseJustificationResponse(inferenceResult.content);
         llmResponse = parsed || createDefaultResponse(context.entity);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -952,7 +957,7 @@ export class LLMJustificationService implements IJustificationService {
       featureContext: llmResponse.featureContext,
       detailedDescription: llmResponse.detailedDescription,
       tags: llmResponse.tags,
-      inferredFrom: this.llmService?.isReady ? "llm_inferred" : "file_name",
+      inferredFrom: this.modelRouter ? "llm_inferred" : "file_name",
       confidenceScore: llmResponse.confidenceScore,
       confidenceLevel: scoreToConfidenceLevel(llmResponse.confidenceScore),
       reasoning: llmResponse.reasoning,
@@ -2122,9 +2127,9 @@ export class LLMJustificationService implements IJustificationService {
  */
 export function createLLMJustificationService(
   graphStore: IGraphStore,
-  llmService?: ILLMService
+  modelRouter?: IModelRouter
 ): LLMJustificationService {
-  return new LLMJustificationService(graphStore, llmService);
+  return new LLMJustificationService(graphStore, modelRouter);
 }
 
 /**
@@ -2132,9 +2137,9 @@ export function createLLMJustificationService(
  */
 export async function createInitializedJustificationService(
   graphStore: IGraphStore,
-  llmService?: ILLMService
+  modelRouter?: IModelRouter
 ): Promise<LLMJustificationService> {
-  const service = new LLMJustificationService(graphStore, llmService);
+  const service = new LLMJustificationService(graphStore, modelRouter);
   await service.initialize();
   return service;
 }

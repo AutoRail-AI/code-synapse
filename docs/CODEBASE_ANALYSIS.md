@@ -71,16 +71,37 @@ The Code-Synapse codebase is well-structured and closely adheres to the document
 *   Updated `LLMService` to check this persistent storage on memory cache miss.
 *   Injected the `GraphStore` into `LLMService` via `startServer` commands.
 
-### 2.7 Gemini 3 Integration (Implemented)
+### 2.7 Gemini 3 & Structured Output Integration (Implemented)
 
-The codebase has been updated to fully support Gemini 3 models:
+The codebase has been updated to fully support Gemini 3 models and a "Schema-First" inference architecture, ensuring reliable machine-readable outputs.
 
-- **Default Model**: Updated `APILLMService` to use `gemini-3-pro-preview` as the default model for Google.
-- **Structured Outputs**: Implemented native support for `responseJsonSchema` and `responseMimeType: "application/json"` in `APILLMService.inferGoogle`.
+- **Gemini 3 Support**: Updated `APILLMService` to use `gemini-3-pro-preview` as the default model for Google and implemented native support for `responseJsonSchema` and `responseMimeType: "application/json"`.
 - **Advanced Reasoning**: Added support for the `thinkingLevel` parameter, mapping it to `thinkingConfig` in the Gemini API.
-- **MCP Server Compatibility**: Updated `src/mcp/server.ts` to correctly initialize and use the `APILLMService` for non-local model providers.
-- **Interface Standardization**: Refactored major LLM consumers (`BusinessLogicInferrer`, `GraphRAGSummarizer`, `IntentClassifier`, `NLSearchService`) to use the `ILLMService` interface rather than the concrete `LLMService` class. This enables seamless switching between local and cloud-based Gemini models.
-- **Method Standardization**: Standardized on the `.infer()` method across the codebase to ensure consistent behavior across different LLM implementations.
+- **Structured Output Audit**: Conducted an audit and refactor of LLM calls to eliminate manual regex-based JSON extraction.
+    - **Classification Engine**: Refactored `LLMClassificationEngine` to use `jsonSchema` for domain/infrastructure classification.
+    - **Justification Service**: Updated `LLMJustificationService` and its parsers in `justification-prompts.ts` to favor pre-parsed objects from the LLM service.
+    - **Intent Classifier**: Refactored to use schema-enforced inference for search intent detection.
+- **Interface Standardization**: Refactored all LLM consumers (`BusinessLogicInferrer`, `GraphRAGSummarizer`, `IntentClassifier`, `NLSearchService`, `LLMClassificationEngine`, `LLMJustificationService`) to use the `ILLMService` interface.
+- **Method Standardization**: Standardized on the `.infer()` method across the codebase, ensuring the returned `InferenceResult` contains a typed `parsed` object whenever a schema is provided.
+
+| Component | Previous Parsing | Current Method | Gemini 3 Status |
+| :--- | :--- | :--- | :--- |
+| **Intent Classification** | Regex / Markdown | Native JSON Schema | ✅ Verified |
+| **Entity Classification** | Regex / String Match | Native JSON Schema | ✅ Verified |
+| **Batch Justification** | Regex / Fix-up Logic | Native JSON Array Schema | ✅ Verified |
+| **Logic Summaries** | Regex / Text Cleaning | Native JSON Schema | ✅ Verified |
+
+### 2.8 Performance: Token-Based Dynamic Batching (Implemented)
+
+**Issue**: Large-scale justification (e.g., thousands of entities) previously used static batch sizes, which frequently exceeded LLM context windows or output token limits, leading to truncated responses and high failure rates.
+
+**Fix Implemented**:
+- **Token Batcher**: Integrated a sophisticated `TokenBatcher` into `LLMJustificationService`.
+- **Dual Constraints**: The batcher now calculates optimal batch sizes based on both **Input Tokens** (prompt context) and **Output Tokens** (requested JSON complexity).
+- **Model Awareness**: Supports model-specific budget configurations (e.g., `qwen2.5-coder-3b` vs. `gemini-3-pro`) to maximize throughput without hitting rate limits or context overflows.
+- **Oversized Handling**: Automatically identifies and prioritizes entities that are too large for batching, routing them to single-entity inference paths.
+
+
 
 ---
 
