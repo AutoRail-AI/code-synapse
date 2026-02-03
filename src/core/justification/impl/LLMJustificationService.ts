@@ -10,7 +10,8 @@
 
 import { createLogger } from "../../../utils/logger.js";
 import type { IGraphStore } from "../../interfaces/IGraphStore.js";
-import type { IModelRouter, TaskType } from "../../models/interfaces/IModel.js";
+import type { IModelRouter } from "../../models/interfaces/IModel.js";
+import { getDefaultModelId } from "../../models/Registry.js";
 import type {
   IJustificationService,
   JustifyOptions,
@@ -323,6 +324,7 @@ export class LLMJustificationService implements IJustificationService {
             evidenceSources: [entity.filePath],
             createdAt: now,
             updatedAt: now,
+            ...(await this.calculateDependencyMetrics(entity.id, entityType)),
           });
 
           await this.storage.storeJustification(justification);
@@ -364,7 +366,7 @@ export class LLMJustificationService implements IJustificationService {
 
       // Use token-based batching (always enabled now)
       // Get model ID for token budget calculation
-      const modelId = opts.modelId || "qwen2.5-coder-3b"; // Default model
+      const modelId = opts.modelId || getDefaultModelId("local") || "qwen2.5-coder-3b"; // Registry default
       const batcher = createTokenBatcher(modelId);
       const batchingResult = batcher.createBatches(batchInputs);
       const tokenBudget = batcher.getTokenBudget();
@@ -567,7 +569,7 @@ export class LLMJustificationService implements IJustificationService {
     const prompt = generateBatchPrompt(batchInput);
 
     // Get token configuration for the model
-    const modelId = options.modelId || "qwen2.5-coder-3b";
+    const modelId = options.modelId || getDefaultModelId("local") || "qwen2.5-coder-3b";
     const tokenConfig = getTokenBatchConfig(modelId);
 
     // Calculate output tokens based on entity count
@@ -601,7 +603,11 @@ export class LLMJustificationService implements IJustificationService {
     });
 
     // Use native parsed results if available
-    const batchResponses = (inferenceResult.parsed as Map<string, any>) || parseBatchResponse(inferenceResult.content);
+    // Note: parsed from providers like Gemini is a plain object, not a Map
+    // parseBatchResponse handles both objects and strings, converting to Map<string, BatchEntityResponse>
+    const batchResponses = inferenceResult.parsed instanceof Map
+      ? inferenceResult.parsed as Map<string, any>
+      : parseBatchResponse(inferenceResult.parsed ?? inferenceResult.content);
 
     // Create justifications for each entity
     const justifications: EntityJustification[] = [];
@@ -677,6 +683,7 @@ export class LLMJustificationService implements IJustificationService {
           pendingQuestions: clarificationQuestions,
           createdAt: now,
           updatedAt: now,
+          ...(await this.calculateDependencyMetrics(entity.id, entityType)),
         });
       } else {
         // Fallback to code analysis
@@ -711,6 +718,7 @@ export class LLMJustificationService implements IJustificationService {
           ),
           createdAt: now,
           updatedAt: now,
+          ...(await this.calculateDependencyMetrics(entity.id, entityType)),
         });
       }
 
@@ -971,19 +979,60 @@ export class LLMJustificationService implements IJustificationService {
         createClarificationQuestion({
           id: `q-${entityId}-${i}`,
           question: q,
-          entityId,
+          entityId: entityId,
           category: "purpose",
           priority: i,
         })
       ),
       createdAt: now,
       updatedAt: now,
+      ...(await this.calculateDependencyMetrics(entityId, entityType)),
     });
 
     // Store
     await this.storage.storeJustification(justification);
 
     return justification;
+  }
+
+  /**
+   * Calculate dependency metrics (Phase 2)
+   */
+  private async calculateDependencyMetrics(
+    entityId: string,
+    entityType: JustifiableEntityType
+  ): Promise<{ dependentCount: number; dependencyRisk: "low" | "medium" | "high" | "critical" }> {
+    let count = 0;
+    try {
+      if (entityType === "function" || entityType === "method") {
+        const result = await this.graphStore.query<{ count: number }>(
+          `?[count] := count(*calls{to_id: $entityId})`,
+          { entityId }
+        );
+        count = result.rows[0]?.count || 0;
+      } else if (entityType === "class" || entityType === "interface" || entityType === "type_alias") {
+        const result = await this.graphStore.query<{ count: number }>(
+          `?[count] := count(*uses_type{to_id: $entityId})`,
+          { entityId }
+        );
+        count = result.rows[0]?.count || 0;
+      } else if (entityType === "file" || entityType === "module") {
+        const result = await this.graphStore.query<{ count: number }>(
+          `?[count] := count(*imports{to_id: $entityId})`,
+          { entityId }
+        );
+        count = result.rows[0]?.count || 0;
+      }
+    } catch (error) {
+      count = 0; // Ignore query errors
+    }
+
+    let dependencyRisk: "low" | "medium" | "high" | "critical" = "low";
+    if (count > 50) dependencyRisk = "critical";
+    else if (count > 20) dependencyRisk = "high";
+    else if (count > 5) dependencyRisk = "medium";
+
+    return { dependentCount: count, dependencyRisk };
   }
 
   /**

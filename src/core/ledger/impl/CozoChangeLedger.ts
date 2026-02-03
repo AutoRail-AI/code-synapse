@@ -2,6 +2,7 @@
  * CozoDB Change Ledger Implementation
  *
  * Append-only log of all system events for observability.
+ * Uses IStorageAdapter for database-agnostic storage operations.
  */
 
 import type {
@@ -19,15 +20,18 @@ import type {
   LedgerEventType,
   EventSource,
 } from "../models/ledger-events.js";
-import type { GraphDatabase } from "../../graph/database.js";
+import type { IStorageAdapter } from "../../graph/interfaces/IStorageAdapter.js";
 import { createLogger } from "../../telemetry/logger.js";
 
 const logger = createLogger("change-ledger");
 
-// Row type for ledger queries (matches snake_case schema)
-interface LedgerRow {
+// Table name constant
+const TABLE_NAME = "LedgerEntry";
+
+// Storage record type (snake_case for database)
+interface LedgerRecord {
   id: string;
-  timestamp: number; // Unix timestamp in ms (DB stores as Int)
+  timestamp: number; // Unix timestamp in ms
   sequence: number;
   event_type: string;
   source: string;
@@ -56,10 +60,10 @@ interface LedgerRow {
 // =============================================================================
 
 export class CozoLedgerStorage implements ILedgerStorage {
-  private db: GraphDatabase;
+  private adapter: IStorageAdapter;
 
-  constructor(db: GraphDatabase) {
-    this.db = db;
+  constructor(adapter: IStorageAdapter) {
+    this.adapter = adapter;
   }
 
   async initialize(): Promise<void> {
@@ -67,56 +71,8 @@ export class CozoLedgerStorage implements ILedgerStorage {
   }
 
   async store(entries: LedgerEntry[]): Promise<void> {
-    for (const entry of entries) {
-      const query = `
-        ?[id, timestamp, sequence, event_type, source,
-          impacted_files, impacted_entities, domains_involved, infrastructure_involved,
-          classification_changes, index_graph_diff_summary, confidence_adjustments,
-          user_interaction, mcp_context, metadata, summary, details,
-          error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id] <- [[
-          $id, $timestamp, $sequence, $event_type, $source,
-          $impacted_files, $impacted_entities, $domains_involved, $infrastructure_involved,
-          $classification_changes, $index_graph_diff_summary, $confidence_adjustments,
-          $user_interaction, $mcp_context, $metadata, $summary, $details,
-          $error_code, $error_message, $stack_trace, $correlation_id, $parent_event_id, $session_id
-        ]]
-        :put LedgerEntry {
-          id, timestamp, sequence, event_type, source,
-          impacted_files, impacted_entities, domains_involved, infrastructure_involved,
-          classification_changes, index_graph_diff_summary, confidence_adjustments,
-          user_interaction, mcp_context, metadata, summary, details,
-          error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id
-        }
-      `;
-
-      await this.db.query(query, {
-        id: entry.id,
-        timestamp: new Date(entry.timestamp).getTime(), // Convert ISO string to Unix timestamp
-        sequence: entry.sequence,
-        event_type: entry.eventType,
-        source: entry.source,
-        impacted_files: JSON.stringify(entry.impactedFiles),
-        impacted_entities: JSON.stringify(entry.impactedEntities),
-        domains_involved: JSON.stringify(entry.domainsInvolved),
-        infrastructure_involved: JSON.stringify(entry.infrastructureInvolved),
-        classification_changes: JSON.stringify(entry.classificationChanges),
-        index_graph_diff_summary: entry.indexGraphDiffSummary
-          ? JSON.stringify(entry.indexGraphDiffSummary)
-          : null,
-        confidence_adjustments: JSON.stringify(entry.confidenceAdjustments),
-        user_interaction: entry.userInteraction ? JSON.stringify(entry.userInteraction) : null,
-        mcp_context: entry.mcpContext ? JSON.stringify(entry.mcpContext) : null,
-        metadata: JSON.stringify(entry.metadata),
-        summary: entry.summary,
-        details: entry.details ?? null,
-        error_code: entry.errorCode ?? null,
-        error_message: entry.errorMessage ?? null,
-        stack_trace: entry.stackTrace ?? null,
-        correlation_id: entry.correlationId ?? null,
-        parent_event_id: entry.parentEventId ?? null,
-        session_id: entry.sessionId ?? null,
-      });
-    }
+    const records = entries.map((entry) => this.entryToRecord(entry));
+    await this.adapter.store(TABLE_NAME, records as unknown as Record<string, unknown>[]);
   }
 
   async query(queryParams: LedgerQuery): Promise<LedgerEntry[]> {
@@ -128,11 +84,11 @@ export class CozoLedgerStorage implements ILedgerStorage {
 
     if (queryParams.startTime) {
       conditions.push("timestamp >= $startTime");
-      params.startTime = new Date(queryParams.startTime).getTime(); // Convert to Unix timestamp
+      params.startTime = new Date(queryParams.startTime).getTime();
     }
     if (queryParams.endTime) {
       conditions.push("timestamp <= $endTime");
-      params.endTime = new Date(queryParams.endTime).getTime(); // Convert to Unix timestamp
+      params.endTime = new Date(queryParams.endTime).getTime();
     }
     if (queryParams.correlationId) {
       conditions.push("correlation_id == $correlation_id");
@@ -146,13 +102,14 @@ export class CozoLedgerStorage implements ILedgerStorage {
     const whereClause = conditions.length > 0 ? `, ${conditions.join(", ")}` : "";
     const orderDir = queryParams.orderDirection === "asc" ? "" : "-";
 
+    // Use rawQuery for complex ordering and filtering
     const dbQuery = `
       ?[id, timestamp, sequence, event_type, source,
         impacted_files, impacted_entities, domains_involved, infrastructure_involved,
         classification_changes, index_graph_diff_summary, confidence_adjustments,
         user_interaction, mcp_context, metadata, summary, details,
         error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id] :=
-        *LedgerEntry{
+        *${TABLE_NAME}{
           id, timestamp, sequence, event_type, source,
           impacted_files, impacted_entities, domains_involved, infrastructure_involved,
           classification_changes, index_graph_diff_summary, confidence_adjustments,
@@ -164,30 +121,17 @@ export class CozoLedgerStorage implements ILedgerStorage {
       :offset $offset
     `;
 
-    const rows = await this.db.query<LedgerRow>(dbQuery, params);
-    return rows.map((row) => this.rowToEntry(row));
+    const rows = await this.adapter.rawQuery<LedgerRecord>(dbQuery, params);
+    return rows.map((row) => this.recordToEntry(row));
   }
 
   async getById(id: string): Promise<LedgerEntry | null> {
-    const query = `
-      ?[id, timestamp, sequence, event_type, source,
-        impacted_files, impacted_entities, domains_involved, infrastructure_involved,
-        classification_changes, index_graph_diff_summary, confidence_adjustments,
-        user_interaction, mcp_context, metadata, summary, details,
-        error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id] :=
-        *LedgerEntry{
-          id, timestamp, sequence, event_type, source,
-          impacted_files, impacted_entities, domains_involved, infrastructure_involved,
-          classification_changes, index_graph_diff_summary, confidence_adjustments,
-          user_interaction, mcp_context, metadata, summary, details,
-          error_code, error_message, stack_trace, correlation_id, parent_event_id, session_id
-        },
-        id == $id
-    `;
+    const record = await this.adapter.findOne<LedgerRecord>(TABLE_NAME, [
+      { field: "id", operator: "eq", value: id },
+    ]);
 
-    const rows = await this.db.query<LedgerRow>(query, { id });
-    if (rows.length === 0) return null;
-    return this.rowToEntry(rows[0]!);
+    if (!record) return null;
+    return this.recordToEntry(record);
   }
 
   async getByCorrelation(correlationId: string): Promise<LedgerEntry[]> {
@@ -213,54 +157,59 @@ export class CozoLedgerStorage implements ILedgerStorage {
 
     const whereClause = conditions.length > 0 ? `, ${conditions.join(", ")}` : "";
 
+    // Use rawQuery for aggregation
     const dbQuery = `
-      ?[cnt] := cnt = count(id), *LedgerEntry{id, timestamp}${whereClause}
+      ?[cnt] := cnt = count(id), *${TABLE_NAME}{id, timestamp}${whereClause}
     `;
 
-    const rows = await this.db.query<{ cnt: number }>(dbQuery, params);
+    const rows = await this.adapter.rawQuery<{ cnt: number }>(dbQuery, params);
     return rows[0]?.cnt ?? 0;
   }
 
   async getOldestTimestamp(): Promise<string | null> {
+    // Use rawQuery for min aggregation with ordering
     const query = `
-      ?[ts] := *LedgerEntry{timestamp: ts}
+      ?[ts] := *${TABLE_NAME}{timestamp: ts}
       :order ts
       :limit 1
     `;
 
-    const rows = await this.db.query<{ ts: number }>(query, {});
+    const rows = await this.adapter.rawQuery<{ ts: number }>(query, {});
     if (!rows[0]?.ts) return null;
-    return new Date(rows[0].ts).toISOString(); // Convert Unix timestamp to ISO string
+    return new Date(rows[0].ts).toISOString();
   }
 
   async getNewestTimestamp(): Promise<string | null> {
+    // Use rawQuery for max aggregation with ordering
     const query = `
-      ?[ts] := *LedgerEntry{timestamp: ts}
+      ?[ts] := *${TABLE_NAME}{timestamp: ts}
       :order -ts
       :limit 1
     `;
 
-    const rows = await this.db.query<{ ts: number }>(query, {});
+    const rows = await this.adapter.rawQuery<{ ts: number }>(query, {});
     if (!rows[0]?.ts) return null;
-    return new Date(rows[0].ts).toISOString(); // Convert Unix timestamp to ISO string
+    return new Date(rows[0].ts).toISOString();
   }
 
   async deleteOlderThan(timestamp: string): Promise<number> {
-    const timestampMs = new Date(timestamp).getTime(); // Convert ISO string to Unix timestamp
+    const timestampMs = new Date(timestamp).getTime();
 
-    // First count
+    // First count using rawQuery
     const countQuery = `
-      ?[cnt] := cnt = count(id), *LedgerEntry{id, timestamp: ts}, ts < $timestamp
+      ?[cnt] := cnt = count(id), *${TABLE_NAME}{id, timestamp: ts}, ts < $timestamp
     `;
-    const countRows = await this.db.query<{ cnt: number }>(countQuery, { timestamp: timestampMs });
+    const countRows = await this.adapter.rawQuery<{ cnt: number }>(countQuery, {
+      timestamp: timestampMs,
+    });
     const count = countRows[0]?.cnt ?? 0;
 
-    // Then delete
+    // Then delete using rawExecute
     const deleteQuery = `
-      ?[id] := *LedgerEntry{id, timestamp: ts}, ts < $timestamp
-      :rm LedgerEntry {id}
+      ?[id] := *${TABLE_NAME}{id, timestamp: ts}, ts < $timestamp
+      :rm ${TABLE_NAME} {id}
     `;
-    await this.db.query(deleteQuery, { timestamp: timestampMs });
+    await this.adapter.rawExecute(deleteQuery, { timestamp: timestampMs });
 
     return count;
   }
@@ -318,31 +267,67 @@ export class CozoLedgerStorage implements ILedgerStorage {
     };
   }
 
-  private rowToEntry(row: LedgerRow): LedgerEntry {
+  // ===========================================================================
+  // Conversion Helpers
+  // ===========================================================================
+
+  private entryToRecord(entry: LedgerEntry): LedgerRecord {
     return {
-      id: row.id,
-      timestamp: new Date(row.timestamp).toISOString(), // Convert Unix timestamp to ISO string
-      sequence: row.sequence,
-      eventType: row.event_type as LedgerEventType,
-      source: row.source as EventSource,
-      impactedFiles: JSON.parse(row.impacted_files),
-      impactedEntities: JSON.parse(row.impacted_entities),
-      domainsInvolved: JSON.parse(row.domains_involved),
-      infrastructureInvolved: JSON.parse(row.infrastructure_involved),
-      classificationChanges: JSON.parse(row.classification_changes),
-      indexGraphDiffSummary: row.index_graph_diff_summary ? JSON.parse(row.index_graph_diff_summary) : undefined,
-      confidenceAdjustments: JSON.parse(row.confidence_adjustments),
-      userInteraction: row.user_interaction ? JSON.parse(row.user_interaction) : undefined,
-      mcpContext: row.mcp_context ? JSON.parse(row.mcp_context) : undefined,
-      metadata: JSON.parse(row.metadata),
-      summary: row.summary,
-      details: row.details ?? undefined,
-      errorCode: row.error_code ?? undefined,
-      errorMessage: row.error_message ?? undefined,
-      stackTrace: row.stack_trace ?? undefined,
-      correlationId: row.correlation_id ?? undefined,
-      parentEventId: row.parent_event_id ?? undefined,
-      sessionId: row.session_id ?? undefined,
+      id: entry.id,
+      timestamp: new Date(entry.timestamp).getTime(),
+      sequence: entry.sequence,
+      event_type: entry.eventType,
+      source: entry.source,
+      impacted_files: JSON.stringify(entry.impactedFiles),
+      impacted_entities: JSON.stringify(entry.impactedEntities),
+      domains_involved: JSON.stringify(entry.domainsInvolved),
+      infrastructure_involved: JSON.stringify(entry.infrastructureInvolved),
+      classification_changes: JSON.stringify(entry.classificationChanges),
+      index_graph_diff_summary: entry.indexGraphDiffSummary
+        ? JSON.stringify(entry.indexGraphDiffSummary)
+        : null,
+      confidence_adjustments: JSON.stringify(entry.confidenceAdjustments),
+      user_interaction: entry.userInteraction ? JSON.stringify(entry.userInteraction) : null,
+      mcp_context: entry.mcpContext ? JSON.stringify(entry.mcpContext) : null,
+      metadata: JSON.stringify(entry.metadata),
+      summary: entry.summary,
+      details: entry.details ?? null,
+      error_code: entry.errorCode ?? null,
+      error_message: entry.errorMessage ?? null,
+      stack_trace: entry.stackTrace ?? null,
+      correlation_id: entry.correlationId ?? null,
+      parent_event_id: entry.parentEventId ?? null,
+      session_id: entry.sessionId ?? null,
+    };
+  }
+
+  private recordToEntry(record: LedgerRecord): LedgerEntry {
+    return {
+      id: record.id,
+      timestamp: new Date(record.timestamp).toISOString(),
+      sequence: record.sequence,
+      eventType: record.event_type as LedgerEventType,
+      source: record.source as EventSource,
+      impactedFiles: JSON.parse(record.impacted_files),
+      impactedEntities: JSON.parse(record.impacted_entities),
+      domainsInvolved: JSON.parse(record.domains_involved),
+      infrastructureInvolved: JSON.parse(record.infrastructure_involved),
+      classificationChanges: JSON.parse(record.classification_changes),
+      indexGraphDiffSummary: record.index_graph_diff_summary
+        ? JSON.parse(record.index_graph_diff_summary)
+        : undefined,
+      confidenceAdjustments: JSON.parse(record.confidence_adjustments),
+      userInteraction: record.user_interaction ? JSON.parse(record.user_interaction) : undefined,
+      mcpContext: record.mcp_context ? JSON.parse(record.mcp_context) : undefined,
+      metadata: JSON.parse(record.metadata),
+      summary: record.summary,
+      details: record.details ?? undefined,
+      errorCode: record.error_code ?? undefined,
+      errorMessage: record.error_message ?? undefined,
+      stackTrace: record.stack_trace ?? undefined,
+      correlationId: record.correlation_id ?? undefined,
+      parentEventId: record.parent_event_id ?? undefined,
+      sessionId: record.session_id ?? undefined,
     };
   }
 }
@@ -467,16 +452,12 @@ export class CozoChangeLedger implements IChangeLedger {
 
   async getForEntity(entityId: string, limit = 100): Promise<LedgerEntry[]> {
     const entries = await this.query({ limit: limit * 10, offset: 0, orderDirection: "desc" });
-    return entries
-      .filter((e) => e.impactedEntities.includes(entityId))
-      .slice(0, limit);
+    return entries.filter((e) => e.impactedEntities.includes(entityId)).slice(0, limit);
   }
 
   async getForFile(filePath: string, limit = 100): Promise<LedgerEntry[]> {
     const entries = await this.query({ limit: limit * 10, offset: 0, orderDirection: "desc" });
-    return entries
-      .filter((e) => e.impactedFiles.includes(filePath))
-      .slice(0, limit);
+    return entries.filter((e) => e.impactedFiles.includes(filePath)).slice(0, limit);
   }
 
   subscribe(callback: LedgerSubscriber, filter?: SubscriptionFilter): () => void {
@@ -617,8 +598,8 @@ export class CozoChangeLedger implements IChangeLedger {
 // Factory Functions
 // =============================================================================
 
-export function createLedgerStorage(db: GraphDatabase): ILedgerStorage {
-  return new CozoLedgerStorage(db);
+export function createLedgerStorage(adapter: IStorageAdapter): ILedgerStorage {
+  return new CozoLedgerStorage(adapter);
 }
 
 export function createChangeLedger(

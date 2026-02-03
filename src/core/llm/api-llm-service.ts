@@ -15,11 +15,16 @@ import type {
   LLMStats,
 } from "./interfaces/ILLMService.js";
 import {
-  createInitializedModelRouter,
+  createConfiguredModelRouter,
   type IModelRouter,
   type ModelRequest,
 } from "../models/index.js";
-import { PROVIDER_METADATA } from "../models/Registry.js";
+import {
+  getProviderMetadata,
+  getDefaultModelId,
+  getEnvVarName,
+  getApiKeyFromEnv as getApiKeyFromRegistry,
+} from "../models/Registry.js";
 
 const logger = createLogger("api-llm-service");
 
@@ -63,15 +68,15 @@ export class APILLMService implements ILLMService {
   };
 
   constructor(config: APILLMServiceConfig, router?: IModelRouter) {
-    const metadata = PROVIDER_METADATA[config.provider];
+    const metadata = getProviderMetadata(config.provider);
     if (!metadata) {
       throw new Error(`Unknown provider: ${config.provider}`);
     }
 
     this.config = {
       provider: config.provider,
-      apiKey: config.apiKey || this.getApiKeyFromEnv(config.provider),
-      modelId: config.modelId || metadata.defaultModelId,
+      apiKey: config.apiKey || this.resolveApiKey(config.provider),
+      modelId: config.modelId || getDefaultModelId(config.provider) || metadata.defaultModelId,
       maxRetries: config.maxRetries ?? 3,
     };
 
@@ -87,18 +92,19 @@ export class APILLMService implements ILLMService {
   }
 
   /**
-   * Get API key from environment variables
+   * Resolve API key from environment using Registry helper
    */
-  private getApiKeyFromEnv(provider: APIProvider): string {
-    const metadata = PROVIDER_METADATA[provider];
-    if (!metadata || !metadata.envVar) {
+  private resolveApiKey(provider: APIProvider): string {
+    const envVar = getEnvVarName(provider);
+    if (!envVar) {
       throw new Error(`Provider ${provider} does not support API keys or is unknown.`);
     }
 
-    const key = process.env[metadata.envVar];
+    // Use Registry helper to get API key from environment
+    const key = getApiKeyFromRegistry(provider);
     if (!key) {
       throw new Error(
-        `API key not found. Set ${metadata.envVar} environment variable or provide apiKey in config.`
+        `API key not found. Set ${envVar} environment variable or provide apiKey in config.`
       );
     }
     return key;
@@ -122,22 +128,15 @@ export class APILLMService implements ILLMService {
       return;
     }
 
-    // Set environment variable (ModelRouter reads from env)
-    const metadata = PROVIDER_METADATA[this.config.provider];
-    if (this.config.apiKey && metadata?.envVar) {
-      process.env[metadata.envVar] = this.config.apiKey;
-    }
-
     try {
-      // Create a model router configured for the specific provider
-      // This is the fallback internal creation (Maintained for legacy/standalone capability)
-      this.router = await createInitializedModelRouter({
-        enableAnthropic: this.config.provider === "anthropic",
-        enableOpenAI: this.config.provider === "openai",
-        enableGoogle: this.config.provider === "google",
-        enableLocal: false, // This is explicitly an API service
+      // Use clean public API - handles API key injection and provider setup
+      const result = await createConfiguredModelRouter({
+        provider: this.config.provider,
+        apiKey: this.config.apiKey,
+        modelId: this.config.modelId,
       });
 
+      this.router = result.router;
       this.ready = true;
       logger.debug({ provider: this.config.provider }, "API LLM service initialized");
     } catch (error) {
@@ -195,8 +194,8 @@ export class APILLMService implements ILLMService {
       // OR we can manually pick the provider from the router.
       // The router's execute method doesn't take a specific modelId in signature easily unless via policy.
 
-      // Let's use the router to get the provider model config first.
-      const modelId = this.config.modelId;
+      // Model ID for future reference (routing policy may use this)
+      const _modelId = this.config.modelId;
 
       // Actually, let's use router.execute but force the model via routing policy preference
       // Or better yet, we can access the underlying provider if we really want to force it?

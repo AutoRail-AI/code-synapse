@@ -23,6 +23,23 @@ import {
   getModelById,
   type ModelPreset,
 } from "../../core/llm/index.js";
+import {
+  PROVIDER_METADATA,
+  getModelsByVendor,
+  getDefaultModelId,
+  validateApiKey,
+  requiresApiKey,
+  getAllProviderIds,
+  getEnvVarName,
+} from "../../core/models/Registry.js";
+import type { ModelVendor } from "../../core/models/interfaces/IModel.js";
+import {
+  getProviderDisplay,
+  getProviderSelectOptions,
+  getQuickSelectOptions,
+  formatProviderStatus,
+  type ProviderDisplayInfo,
+} from "../provider-display.js";
 
 const logger = createLogger("setup");
 
@@ -30,7 +47,11 @@ const logger = createLogger("setup");
 // Types
 // =============================================================================
 
-export type ModelProvider = "local" | "openai" | "anthropic" | "google";
+/**
+ * ModelProvider is an alias for ModelVendor from the Registry
+ * Kept for backward compatibility with existing code
+ */
+export type ModelProvider = ModelVendor;
 
 export interface ModelProviderConfig {
   provider: ModelProvider;
@@ -50,67 +71,70 @@ export interface CodeSynapseConfig extends ProjectConfig {
   };
 }
 
-// =============================================================================
-// Provider Definitions
-// =============================================================================
+/**
+ * Model descriptions for UI display (supplements Registry data)
+ */
+const MODEL_DESCRIPTIONS: Record<string, string> = {
+  // Local models
+  "qwen2.5-coder-0.5b": "Ultra-fast, 1GB RAM",
+  "qwen2.5-coder-1.5b": "Low memory, 2GB RAM",
+  "qwen2.5-coder-3b": "Balanced (recommended), 4GB RAM",
+  "qwen2.5-coder-7b": "High quality, 8GB RAM",
+  "qwen2.5-coder-14b": "Maximum quality, 16GB RAM",
+  // OpenAI
+  "gpt-4o": "Most capable, higher cost",
+  "gpt-4o-mini": "Fast and affordable",
+  "o3": "Reasoning model, highest quality",
+  // Anthropic
+  "claude-sonnet-4-20250514": "Best for code (recommended)",
+  "claude-sonnet-4-5-20250929": "Latest Claude Sonnet",
+  "claude-3-5-sonnet": "Fast and capable",
+  "claude-3-haiku": "Fast and affordable",
+  // Google
+  "gemini-3-pro-preview": "Self-reasoning, 1M context",
+  "gemini-3-flash-preview": "Ultra-fast, 1M context",
+  "gemini-1.5-pro": "Large context, high quality",
+  "gemini-1.5-flash": "Fast, 1M context",
+};
 
-const PROVIDERS: Record<ModelProvider, {
+/**
+ * Build provider info from Registry dynamically
+ */
+function buildProviderInfo(provider: ModelProvider): {
   name: string;
   description: string;
   requiresApiKey: boolean;
   envVar?: string;
   defaultModel: string;
   models: Array<{ id: string; name: string; description: string }>;
-}> = {
-  local: {
-    name: "Local Models",
-    description: "Run models locally. Privacy-first, no API costs.",
-    requiresApiKey: false,
-    defaultModel: "qwen2.5-coder-3b",
-    models: [
-      { id: "qwen2.5-coder-0.5b", name: "Qwen 2.5 Coder 0.5B", description: "Ultra-fast, 1GB RAM" },
-      { id: "qwen2.5-coder-1.5b", name: "Qwen 2.5 Coder 1.5B", description: "Low memory, 2GB RAM" },
-      { id: "qwen2.5-coder-3b", name: "Qwen 2.5 Coder 3B", description: "Balanced (recommended), 4GB RAM" },
-      { id: "qwen2.5-coder-7b", name: "Qwen 2.5 Coder 7B", description: "High quality, 8GB RAM" },
-      { id: "qwen2.5-coder-14b", name: "Qwen 2.5 Coder 14B", description: "Maximum quality, 16GB RAM" },
-    ],
-  },
-  openai: {
-    name: "OpenAI",
-    description: "GPT-4o models. Requires API key.",
-    requiresApiKey: true,
-    envVar: "OPENAI_API_KEY",
-    defaultModel: "gpt-4o",
-    models: [
-      { id: "gpt-4o", name: "GPT-4o", description: "Most capable, higher cost" },
-      { id: "gpt-4o-mini", name: "GPT-4o Mini", description: "Fast and affordable" },
-    ],
-  },
-  anthropic: {
-    name: "Anthropic",
-    description: "Claude models. Requires API key.",
-    requiresApiKey: true,
-    envVar: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-4-20250514",
-    models: [
-      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", description: "Best for code (recommended)" },
-      { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", description: "Fast and capable" },
-      { id: "claude-3-haiku-20240307", name: "Claude 3 Haiku", description: "Fast and affordable" },
-    ],
-  },
-  google: {
-    name: "Google AI",
-    description: "Gemini models. Requires API key.",
-    requiresApiKey: true,
-    envVar: "GOOGLE_API_KEY",
-    defaultModel: "gemini-3-pro-preview",
-    models: [
-      { id: "gemini-3-pro-preview", name: "Gemini 3 Pro", description: "Self-reasoning, 1M context" },
-      { id: "gemini-3-flash-preview", name: "Gemini 3 Flash", description: "Ultra-fast, 1M context" },
-      { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", description: "Large context, high quality" },
-    ],
-  },
-};
+} {
+  const metadata = PROVIDER_METADATA[provider];
+  const models = getModelsByVendor(provider);
+
+  // Get display info from centralized provider-display module
+  const displayInfo = getProviderDisplay(provider);
+
+  return {
+    name: metadata?.name ?? provider,
+    description: displayInfo.description,
+    requiresApiKey: requiresApiKey(provider),
+    envVar: getEnvVarName(provider) ?? undefined,
+    defaultModel: getDefaultModelId(provider) ?? models[0]?.id ?? "",
+    models: models.map((m) => ({
+      id: m.id,
+      name: m.name,
+      description: MODEL_DESCRIPTIONS[m.id] ?? "",
+    })),
+  };
+}
+
+/**
+ * PROVIDERS object - dynamically built from Registry
+ * Adding a new provider to Registry automatically includes it here
+ */
+const PROVIDERS: Record<ModelProvider, ReturnType<typeof buildProviderInfo>> = Object.fromEntries(
+  getAllProviderIds().map((id) => [id, buildProviderInfo(id as ModelProvider)])
+) as Record<ModelProvider, ReturnType<typeof buildProviderInfo>>;
 
 // =============================================================================
 // Interactive Setup
@@ -127,7 +151,7 @@ export class InteractiveSetup {
 
     // Load existing config
     const configPath = getConfigPath();
-    let config: CodeSynapseConfig = fileExists(configPath)
+    const config: CodeSynapseConfig = fileExists(configPath)
       ? (readJson<CodeSynapseConfig>(configPath) ?? {} as CodeSynapseConfig)
       : {} as CodeSynapseConfig;
 
@@ -135,31 +159,11 @@ export class InteractiveSetup {
       config.apiKeys = {};
     }
 
-    // Step 1: Choose model provider
+    // Step 1: Choose model provider (options auto-generated from Registry)
+    const providerOptions = getProviderSelectOptions();
     const providerResult = await p.select({
       message: "Select your AI provider",
-      options: [
-        {
-          value: "google",
-          label: "Google (Gemini)",
-          hint: "recommended - requires API key"
-        },
-        {
-          value: "local",
-          label: "Local Models",
-          hint: "privacy-first, no API costs"
-        },
-        {
-          value: "anthropic",
-          label: "Anthropic (Claude)",
-          hint: "requires API key"
-        },
-        {
-          value: "openai",
-          label: "OpenAI (GPT-4)",
-          hint: "requires API key"
-        },
-      ],
+      options: providerOptions,
     });
 
     if (p.isCancel(providerResult)) {
@@ -168,6 +172,7 @@ export class InteractiveSetup {
     }
 
     const provider = providerResult as ModelProvider;
+    const providerDisplay = getProviderDisplay(provider);
     const providerInfo = PROVIDERS[provider];
     config.modelProvider = provider;
     config.skipLlm = false;
@@ -198,14 +203,9 @@ export class InteractiveSetup {
         const apiKey = await p.password({
           message: `Enter your ${providerInfo.name} API key`,
           validate: (value) => {
-            if (!value || value.trim().length === 0) {
-              return "API key is required";
-            }
-            if (provider === "anthropic" && !value.startsWith("sk-ant-")) {
-              return "Anthropic API keys start with 'sk-ant-'";
-            }
-            if (provider === "openai" && !value.startsWith("sk-")) {
-              return "OpenAI API keys start with 'sk-'";
+            const result = validateApiKey(provider, value);
+            if (!result.valid) {
+              return result.message;
             }
           },
         });
@@ -243,11 +243,11 @@ export class InteractiveSetup {
 
     // Step 4: Summary and confirmation
     const summary = [
-      `Provider: ${chalk.cyan(providerInfo.name)}`,
+      `Provider: ${providerDisplay.color(providerDisplay.name)}`,
       `Model: ${chalk.cyan(selectedModel?.name || modelResult)}`,
     ];
 
-    if (provider === "local" && selectedModel) {
+    if (providerDisplay.isLocal && selectedModel) {
       const model = getModelById(selectedModel.id);
       if (model) {
         summary.push(`RAM needed: ${chalk.yellow(model.minRamGb + "GB")}`);
@@ -271,14 +271,11 @@ export class InteractiveSetup {
    * Quick setup - minimal prompts for experienced users
    */
   async quickSetup(): Promise<ModelProviderConfig | null> {
+    // Options auto-generated from Registry
+    const quickOptions = getQuickSelectOptions();
     const providerResult = await p.select({
       message: "Select provider",
-      options: [
-        { value: "local", label: "Local", hint: "free, private" },
-        { value: "anthropic", label: "Anthropic", hint: "Claude models" },
-        { value: "openai", label: "OpenAI", hint: "GPT models" },
-        { value: "google", label: "Google", hint: "Gemini models" },
-      ],
+      options: quickOptions,
     });
 
     if (p.isCancel(providerResult)) {
@@ -286,10 +283,11 @@ export class InteractiveSetup {
     }
 
     const provider = providerResult as ModelProvider;
+    const providerDisplay = getProviderDisplay(provider);
     const providerInfo = PROVIDERS[provider];
     const result: ModelProviderConfig = { provider };
 
-    if (providerInfo.requiresApiKey) {
+    if (providerDisplay.requiresApiKey) {
       const apiKey = await p.password({
         message: "API key",
       });
@@ -297,7 +295,7 @@ export class InteractiveSetup {
       result.apiKey = apiKey;
     }
 
-    if (provider === "local") {
+    if (providerDisplay.isLocal) {
       const presetResult = await p.select({
         message: "Model size",
         options: [

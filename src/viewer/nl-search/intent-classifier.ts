@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { ILLMService } from "../../core/llm/interfaces/ILLMService.js";
+import type { IModelRouter } from "../../core/models/interfaces/IModel.js";
 import {
   type SearchIntent,
   type IntentClassification,
@@ -22,11 +22,11 @@ import {
 // =============================================================================
 
 export class IntentClassifier {
-  private llmService?: ILLMService;
+  private modelRouter?: IModelRouter;
   private synonyms: Record<string, string[]>;
 
-  constructor(llmService?: ILLMService, synonyms?: Record<string, string[]>) {
-    this.llmService = llmService;
+  constructor(modelRouter?: IModelRouter, synonyms?: Record<string, string[]>) {
+    this.modelRouter = modelRouter;
     this.synonyms = synonyms ?? DEFAULT_NL_SEARCH_CONFIG.synonyms;
   }
 
@@ -46,12 +46,12 @@ export class IntentClassifier {
       };
     }
 
-    // Step 3: Try LLM classification for complex queries (if available)
-    if (this.llmService) {
+    // Step 3: Try model-based classification for complex queries (if available)
+    if (this.modelRouter) {
       try {
-        const llmClassification = await this.classifyWithLLM(query, tokens);
-        if (llmClassification.confidence >= 0.6) {
-          return llmClassification;
+        const modelClassification = await this.classifyWithModel(query, tokens);
+        if (modelClassification.confidence >= 0.6) {
+          return modelClassification;
         }
       } catch {
         // Fall through to heuristic classification
@@ -136,14 +136,14 @@ export class IntentClassifier {
   }
 
   /**
-   * Classify using LLM
+   * Classify using model router
    */
-  private async classifyWithLLM(
+  private async classifyWithModel(
     query: string,
     tokens: QueryTokens
   ): Promise<IntentClassification> {
-    if (!this.llmService) {
-      throw new Error("LLM service not available");
+    if (!this.modelRouter) {
+      throw new Error("Model router not available");
     }
 
     const prompt = `Analyze this code search query and classify the user's intent.
@@ -179,10 +179,13 @@ Respond with JSON only:
   "entityType": "<function|class|interface|file|all>"
 }`;
 
-    const result = await this.llmService.infer(prompt, {
-      maxTokens: 150,
-      temperature: 0.1,
-      jsonSchema: {
+    const response = await this.modelRouter.execute({
+      prompt,
+      parameters: {
+        maxTokens: 150,
+        temperature: 0.1,
+      },
+      schema: {
         type: "object",
         properties: {
           intent: { type: "string" },
@@ -194,7 +197,7 @@ Respond with JSON only:
       },
     });
 
-    const parsed = result.parsed as {
+    const parsed = response.parsed as {
       intent: string;
       confidence: number;
       target?: string;
@@ -404,8 +407,8 @@ Respond with JSON only:
  * Create an intent classifier
  */
 export function createIntentClassifier(
-  llmService?: ILLMService,
+  modelRouter?: IModelRouter,
   synonyms?: Record<string, string[]>
 ): IntentClassifier {
-  return new IntentClassifier(llmService, synonyms);
+  return new IntentClassifier(modelRouter, synonyms);
 }

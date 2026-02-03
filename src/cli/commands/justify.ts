@@ -21,17 +21,18 @@ import { createGraphStore } from "../../core/graph/index.js";
 import {
   createLLMJustificationService,
   type JustificationProgress,
-  type ClarificationBatch,
 } from "../../core/justification/index.js";
 import {
-  createInitializedModelRouter,
+  createConfiguredModelRouter,
   type IModelRouter,
+  type ModelVendor,
 } from "../../core/models/index.js";
-import { PROVIDER_METADATA } from "../../core/models/Registry.js";
+import { getDefaultModelId } from "../../core/models/Registry.js";
 import {
   type ModelPreset,
   MODEL_PRESETS,
 } from "../../core/llm/index.js";
+import { getProviderDisplay } from "../provider-display.js";
 
 const logger = createLogger("justify");
 
@@ -41,7 +42,7 @@ const logger = createLogger("justify");
 interface CodeSynapseConfig extends ProjectConfig {
   llmModel?: string;
   skipLlm?: boolean;
-  modelProvider?: "local" | "openai" | "anthropic" | "google";
+  modelProvider?: ModelVendor;
   apiKeys?: {
     anthropic?: string;
     openai?: string;
@@ -152,19 +153,11 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
     const extendedConfig = readJson<CodeSynapseConfig>(configPath);
 
     // Command-line options override config settings
-    const modelProvider = (options.provider as "local" | "openai" | "anthropic" | "google") ?? extendedConfig?.modelProvider ?? "local";
+    const modelProvider = (options.provider as ModelVendor) ?? extendedConfig?.modelProvider ?? "local";
     const savedModelId = options.modelId ?? extendedConfig?.llmModel;
 
     // Get API key from config if available
     const apiKey = extendedConfig?.apiKeys?.[modelProvider as keyof typeof extendedConfig.apiKeys];
-
-    // Set API key in environment for providers
-    if (apiKey) {
-      const envVar = PROVIDER_METADATA[modelProvider]?.envVar;
-      if (envVar) {
-        process.env[envVar] = apiKey;
-      }
-    }
 
     // Initialize Model Router if not skipping
     let actualModelId: string | undefined;
@@ -175,20 +168,28 @@ export async function justifyCommand(options: JustifyOptions): Promise<void> {
       try {
         spinner.text = "Initializing model router...";
 
-        modelRouter = await createInitializedModelRouter({
-          enableLocal: modelProvider === "local",
-          enableOpenAI: modelProvider === "openai",
-          enableAnthropic: modelProvider === "anthropic",
-          enableGoogle: modelProvider === "google",
+        // Determine model ID based on provider type
+        const providerDisplay = getProviderDisplay(modelProvider);
+        if (providerDisplay.isLocal) {
+          actualModelId = MODEL_PRESETS[preset];
+        } else {
+          actualModelId = savedModelId || getDefaultModelId(modelProvider);
+        }
+
+        // Use clean public API - handles API key injection and provider setup
+        const result = await createConfiguredModelRouter({
+          provider: modelProvider,
+          apiKey,
+          modelId: actualModelId,
         });
 
-        if (modelProvider === "local") {
-          actualModelId = MODEL_PRESETS[preset];
+        modelRouter = result.router;
+
+        if (providerDisplay.isLocal) {
           spinner.text = `Local model router initialized (${preset})`;
         } else {
-          actualModelId = savedModelId || PROVIDER_METADATA[modelProvider]?.defaultModelId || "claude-sonnet-4-20250514";
-          spinner.text = `${modelProvider} API connected`;
-          console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId})`));
+          spinner.text = `${result.providerDisplayName} API connected`;
+          console.log(chalk.dim(`  Using ${result.providerDisplayName} API (${result.modelId})`));
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);

@@ -23,7 +23,7 @@ import {
 import { findAvailablePort, isPortAvailable } from "../../utils/port.js";
 import { initCommand } from "./init.js";
 import { startCommand } from "./start.js";
-import { createGraphStore, type IGraphStore } from "../../core/graph/index.js";
+import { createGraphStore, createStorageAdapter, type IGraphStore } from "../../core/graph/index.js";
 import { createGraphViewer, startViewerServer } from "../../viewer/index.js";
 import type { ViewerServerOptions } from "../../viewer/ui/server.js";
 import { createIParser } from "../../core/parser/index.js";
@@ -48,7 +48,7 @@ import {
   type JustificationProgress,
 } from "../../core/justification/index.js";
 import {
-  createInitializedModelRouter,
+  createConfiguredModelRouter,
   type IModelRouter,
 } from "../../core/models/index.js";
 import {
@@ -59,6 +59,7 @@ import {
 import type { ProjectConfig } from "../../types/index.js";
 import { InteractiveSetup, type CodeSynapseConfig } from "./setup.js";
 import { runInteractiveClarification, createReadlineInterface, askQuestion } from "../interactive.js";
+import { getProviderDisplay } from "../provider-display.js";
 
 
 const logger = createLogger("default");
@@ -274,13 +275,6 @@ async function runJustification(
     // Get API key from config if available
     const apiKey = config?.apiKeys?.[modelProvider as keyof typeof config.apiKeys];
 
-    // Set API key in environment for providers
-    if (apiKey) {
-      if (modelProvider === "openai") process.env.OPENAI_API_KEY = apiKey;
-      if (modelProvider === "anthropic") process.env.ANTHROPIC_API_KEY = apiKey;
-      if (modelProvider === "google") process.env.GOOGLE_API_KEY = apiKey;
-    }
-
     // Initialize Model Router based on provider
     const preset = modelPreset || "balanced";
     let actualModelId: string | undefined;
@@ -288,20 +282,28 @@ async function runJustification(
     try {
       spinner.text = "Initializing model router...";
 
-      modelRouter = await createInitializedModelRouter({
-        enableLocal: modelProvider === "local",
-        enableOpenAI: modelProvider === "openai",
-        enableAnthropic: modelProvider === "anthropic",
-        enableGoogle: modelProvider === "google",
-      });
-
-      if (modelProvider === "local") {
+      // Determine model ID based on provider type
+      const providerDisplay = getProviderDisplay(modelProvider);
+      if (providerDisplay.isLocal) {
         actualModelId = MODEL_PRESETS[preset];
-        spinner.text = `Local model router initialized (${preset})`;
       } else {
         actualModelId = savedModelId || getDefaultModelForProvider(modelProvider);
-        spinner.text = `${modelProvider} API connected`;
-        console.log(chalk.dim(`  Using ${modelProvider} API (${actualModelId})`));
+      }
+
+      // Use clean public API - handles API key injection and provider setup
+      const result = await createConfiguredModelRouter({
+        provider: modelProvider,
+        apiKey,
+        modelId: actualModelId,
+      });
+
+      modelRouter = result.router;
+
+      if (providerDisplay.isLocal) {
+        spinner.text = `Local model router initialized (${preset})`;
+      } else {
+        spinner.text = `${result.providerDisplayName} API connected`;
+        console.log(chalk.dim(`  Using ${result.providerDisplayName} API (${result.modelId})`));
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -385,9 +387,8 @@ async function runClassification(
     spinner.text = "Initializing classification engine...";
 
     // Create classification storage and engine
-    const classificationStorage = createClassificationStorage(
-      store as unknown as import("../../core/graph/database.js").GraphDatabase
-    );
+    const adapter = createStorageAdapter(store);
+    const classificationStorage = createClassificationStorage(adapter);
     const classificationEngine = await createClassificationEngine(
       classificationStorage,
       modelRouter ?? null
@@ -578,9 +579,8 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
 
     // Create change ledger for observability
     spinner.start("Initializing change ledger...");
-    const ledgerStorage = createLedgerStorage(
-      graphStore as unknown as import("../../core/graph/database.js").GraphDatabase
-    );
+    const ledgerAdapter = createStorageAdapter(graphStore);
+    const ledgerStorage = createLedgerStorage(ledgerAdapter);
     changeLedger = createChangeLedger(ledgerStorage, {
       memoryCacheSize: 10000,
       persistToDisk: true,
@@ -763,9 +763,8 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       const stats = await viewer.getOverviewStats();
 
       // Create classification storage for viewer
-      const classificationStorage = createClassificationStorage(
-        graphStore as unknown as import("../../core/graph/database.js").GraphDatabase
-      );
+      const viewerAdapter = createStorageAdapter(graphStore);
+      const classificationStorage = createClassificationStorage(viewerAdapter);
 
       // Start viewer server with classification and ledger
       const viewerOptions: ViewerServerOptions = {

@@ -8,6 +8,8 @@
  * - Storage usage
  */
 
+import { ALL_MODELS } from "../../models/Registry.js";
+
 // =============================================================================
 // Cost Attribution Types
 // =============================================================================
@@ -70,23 +72,22 @@ export interface CostAttributionConfig {
   maxHistorySize: number;
 }
 
+/**
+ * Build model costs from the central Registry
+ * This ensures costs stay in sync with Registry definitions
+ */
+function buildModelCostsFromRegistry(): ModelCostConfig[] {
+  return ALL_MODELS.map((model) => ({
+    modelId: model.id,
+    inputTokenCost: model.costPer1kInputTokens,
+    outputTokenCost: model.costPer1kOutputTokens,
+    // Embedding cost is typically lower; use 1/10th of input cost for models that support it
+    embeddingCost: model.capabilities.includes("embedding") ? model.costPer1kInputTokens / 10 : 0,
+  }));
+}
+
 export const DEFAULT_COST_CONFIG: CostAttributionConfig = {
-  modelCosts: [
-    // Local models (no direct cost, just compute)
-    { modelId: "qwen2.5-coder-0.5b", inputTokenCost: 0, outputTokenCost: 0, embeddingCost: 0 },
-    { modelId: "qwen2.5-coder-1.5b", inputTokenCost: 0, outputTokenCost: 0, embeddingCost: 0 },
-    { modelId: "qwen2.5-coder-3b", inputTokenCost: 0, outputTokenCost: 0, embeddingCost: 0 },
-    { modelId: "qwen2.5-coder-7b", inputTokenCost: 0, outputTokenCost: 0, embeddingCost: 0 },
-    // Cloud models (example pricing)
-    { modelId: "gpt-4o", inputTokenCost: 0.005, outputTokenCost: 0.015, embeddingCost: 0.0001 },
-    { modelId: "gpt-4o-mini", inputTokenCost: 0.00015, outputTokenCost: 0.0006, embeddingCost: 0.00002 },
-    { modelId: "claude-3-5-sonnet", inputTokenCost: 0.003, outputTokenCost: 0.015, embeddingCost: 0 },
-    { modelId: "claude-3-haiku", inputTokenCost: 0.00025, outputTokenCost: 0.00125, embeddingCost: 0 },
-    { modelId: "gemini-3-pro-preview", inputTokenCost: 0.002, outputTokenCost: 0.012, embeddingCost: 0.00001 },
-    { modelId: "gemini-3-flash-preview", inputTokenCost: 0.0005, outputTokenCost: 0.003, embeddingCost: 0.00001 },
-    { modelId: "gemini-1.5-pro", inputTokenCost: 0.00125, outputTokenCost: 0.005, embeddingCost: 0.00001 },
-    { modelId: "gemini-1.5-flash", inputTokenCost: 0.000075, outputTokenCost: 0.0003, embeddingCost: 0.00001 },
-  ],
+  modelCosts: buildModelCostsFromRegistry(),
   computeCostPerMinute: 0.001, // $0.001 per minute for local compute
   storageCostPerGb: 0.02, // $0.02 per GB per month
   maxHistorySize: 50000,

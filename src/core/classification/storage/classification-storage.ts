@@ -1,7 +1,8 @@
 /**
  * Classification Storage Implementation
  *
- * CozoDB-backed storage for entity classifications.
+ * Storage adapter-backed storage for entity classifications.
+ * Uses IStorageAdapter for database-agnostic CRUD operations.
  */
 
 import type {
@@ -16,40 +17,43 @@ import type {
   QueryOptions,
   SearchOptions,
 } from "../interfaces/IClassificationEngine.js";
-import type { GraphDatabase } from "../../graph/database.js";
+import type { IStorageAdapter, QueryCondition } from "../../graph/interfaces/IStorageAdapter.js";
 
-// Row type for classification queries
-interface ClassificationRow {
+// Table name constant
+const TABLE_NAME = "EntityClassification";
+
+// Storage record type (snake_case for database)
+interface ClassificationRecord {
   id: string;
-  entityId: string;
-  entityType: string;
-  entityName: string;
-  filePath: string;
+  entity_id: string;
+  entity_type: string;
+  entity_name: string;
+  file_path: string;
   category: string;
-  domainMetadata: string | null;
-  infrastructureMetadata: string | null;
+  domain_metadata: string | null;
+  infrastructure_metadata: string | null;
   confidence: number;
-  classificationMethod: string;
+  classification_method: string;
   reasoning: string;
   indicators: string;
-  relatedEntities: string;
-  dependsOn: string;
-  usedBy: string;
-  classifiedAt: number; // Stored as epoch
-  classifiedBy: string;
-  lastUpdated: number | null; // Stored as epoch
+  related_entities: string;
+  depends_on: string;
+  used_by: string;
+  classified_at: number;
+  classified_by: string;
+  last_updated: number | null;
   version: number;
 }
 
 /**
- * CozoDB-backed classification storage
+ * Storage adapter-backed classification storage
  */
 export class CozoClassificationStorage implements IClassificationStorage {
-  private db: GraphDatabase;
+  private adapter: IStorageAdapter;
   private initialized = false;
 
-  constructor(db: GraphDatabase) {
-    this.db = db;
+  constructor(adapter: IStorageAdapter) {
+    this.adapter = adapter;
   }
 
   async initialize(): Promise<void> {
@@ -59,109 +63,26 @@ export class CozoClassificationStorage implements IClassificationStorage {
   }
 
   async store(classification: EntityClassification): Promise<void> {
-    const query = `
-      ?[id, entity_id, entity_type, entity_name, file_path, category,
-        domain_metadata, infrastructure_metadata, confidence, classification_method,
-        reasoning, indicators, related_entities, depends_on, used_by,
-        classified_at, classified_by, last_updated, version] <- [[
-        $id, $entityId, $entityType, $entityName, $filePath, $category,
-        $domainMetadata, $infrastructureMetadata, $confidence, $classificationMethod,
-        $reasoning, $indicators, $relatedEntities, $dependsOn, $usedBy,
-        $classifiedAt, $classifiedBy, $lastUpdated, $version
-      ]]
-      :put EntityClassification {
-        id,
-        entity_id,
-        entity_type,
-        entity_name,
-        file_path,
-        category,
-        domain_metadata,
-        infrastructure_metadata,
-        confidence,
-        classification_method,
-        reasoning,
-        indicators,
-        related_entities,
-        depends_on,
-        used_by,
-        classified_at,
-        classified_by,
-        last_updated,
-        version
-      }
-    `;
-
-    await this.db.query(query, {
-      id: classification.entityId, // Use entityId as primary key
-      entityId: classification.entityId,
-      entityType: classification.entityType,
-      entityName: classification.entityName,
-      filePath: classification.filePath,
-      category: classification.category,
-      domainMetadata: classification.domainMetadata
-        ? JSON.stringify(classification.domainMetadata)
-        : null,
-      infrastructureMetadata: classification.infrastructureMetadata
-        ? JSON.stringify(classification.infrastructureMetadata)
-        : null,
-      confidence: classification.confidence,
-      classificationMethod: classification.classificationMethod,
-      reasoning: classification.reasoning,
-      indicators: JSON.stringify(classification.indicators),
-      relatedEntities: JSON.stringify(classification.relatedEntities),
-      dependsOn: JSON.stringify(classification.dependsOn),
-      usedBy: JSON.stringify(classification.usedBy),
-      classifiedAt: classification.classifiedAt,
-      classifiedBy: classification.classifiedBy,
-      lastUpdated: classification.lastUpdated ?? null,
-      version: classification.version,
-    });
+    const record = this.classificationToRecord(classification);
+    await this.adapter.storeOne(TABLE_NAME, record as unknown as Record<string, unknown>);
   }
 
   async storeBatch(classifications: EntityClassification[]): Promise<void> {
-    // Use transaction for batch operations
-    for (const classification of classifications) {
-      await this.store(classification);
-    }
+    const records = classifications.map((c) => this.classificationToRecord(c));
+    await this.adapter.store(TABLE_NAME, records as unknown as Record<string, unknown>[]);
   }
 
   async get(entityId: string): Promise<EntityClassification | null> {
-    const query = `
-      ?[id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version] :=
-        *EntityClassification{
-          id,
-          entity_id: entityId,
-          entity_type: entityType,
-          entity_name: entityName,
-          file_path: filePath,
-          category,
-          domain_metadata: domainMetadata,
-          infrastructure_metadata: infrastructureMetadata,
-          confidence,
-          classification_method: classificationMethod,
-          reasoning,
-          indicators,
-          related_entities: relatedEntities,
-          depends_on: dependsOn,
-          used_by: usedBy,
-          classified_at: classifiedAt,
-          classified_by: classifiedBy,
-          last_updated: lastUpdated,
-          version
-        },
-        entityId == $entityId
-    `;
+    const record = await this.adapter.findOne<ClassificationRecord>(
+      TABLE_NAME,
+      [{ field: "entity_id", operator: "eq", value: entityId }]
+    );
 
-    const rows = await this.db.query<ClassificationRow>(query, { entityId });
-    if (rows.length === 0) {
+    if (!record) {
       return null;
     }
 
-    return this.rowToClassification(rows[0]!);
+    return this.recordToClassification(record);
   }
 
   async update(
@@ -183,135 +104,80 @@ export class CozoClassificationStorage implements IClassificationStorage {
   }
 
   async delete(entityId: string): Promise<boolean> {
-    const query = `
-      ?[id] := *EntityClassification{id, entity_id: entityId}, entityId == $entityId
-      :rm EntityClassification {id}
-    `;
+    // Find the record first to get its ID
+    const record = await this.adapter.findOne<ClassificationRecord>(
+      TABLE_NAME,
+      [{ field: "entity_id", operator: "eq", value: entityId }]
+    );
 
-    try {
-      await this.db.query(query, { entityId });
-      return true;
-    } catch {
+    if (!record) {
       return false;
     }
+
+    return this.adapter.delete(TABLE_NAME, record.id);
   }
 
   async deleteForFile(filePath: string): Promise<number> {
-    // First count the existing entries
-    const countQuery = `
-      ?[count(id)] := *EntityClassification{id, file_path: fp}, fp == $filePath
-    `;
-    const countRows = await this.db.query<any>(countQuery, { filePath });
-    // Aggregation result key is usually 'count(id)' or similar
-    const firstRow = countRows[0];
-    const count = firstRow ? (Object.values(firstRow)[0] as number) : 0;
-
-    // Then delete them
-    const deleteQuery = `
-      ?[id] := *EntityClassification{id, file_path: fp}, fp == $filePath
-      :rm EntityClassification {id}
-    `;
-    await this.db.query(deleteQuery, { filePath });
-
-    return count;
+    return this.adapter.deleteWhere(TABLE_NAME, [
+      { field: "file_path", operator: "eq", value: filePath },
+    ]);
   }
 
   async queryByCategory(
     category: ClassificationCategory,
     options?: QueryOptions
   ): Promise<EntityClassification[]> {
-    const limit = options?.limit ?? 100;
-    const offset = options?.offset ?? 0;
-    const orderBy = options?.orderBy ?? "classifiedAt";
-    const orderDirection = options?.orderDirection ?? "desc";
+    const conditions: QueryCondition[] = [
+      { field: "category", operator: "eq", value: category },
+    ];
 
-    const query = `
-      ?[id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version] :=
-        *EntityClassification{
-          id,
-          entity_id: entityId,
-          entity_type: entityType,
-          entity_name: entityName,
-          file_path: filePath,
-          category,
-          domain_metadata: domainMetadata,
-          infrastructure_metadata: infrastructureMetadata,
-          confidence,
-          classification_method: classificationMethod,
-          reasoning,
-          indicators,
-          related_entities: relatedEntities,
-          depends_on: dependsOn,
-          used_by: usedBy,
-          classified_at: classifiedAt,
-          classified_by: classifiedBy,
-          last_updated: lastUpdated,
-          version
-        },
-        category == $category
-        ${options?.minConfidence ? `, confidence >= $minConfidence` : ""}
-      :order ${orderDirection === "desc" ? "-" : ""}${orderBy}
-      :limit $limit
-      :offset $offset
-    `;
+    if (options?.minConfidence) {
+      conditions.push({
+        field: "confidence",
+        operator: "gte",
+        value: options.minConfidence,
+      });
+    }
 
-    const rows = await this.db.query<ClassificationRow>(query, {
-      category,
-      limit,
-      offset,
-      minConfidence: options?.minConfidence,
-    });
+    const records = await this.adapter.query<ClassificationRecord>(
+      TABLE_NAME,
+      conditions,
+      {
+        limit: options?.limit ?? 100,
+        offset: options?.offset ?? 0,
+        orderBy: [
+          {
+            field: options?.orderBy ?? "classified_at",
+            direction: options?.orderDirection ?? "desc",
+          },
+        ],
+      }
+    );
 
-    return rows.map((row) => this.rowToClassification(row));
+    return records.map((r) => this.recordToClassification(r));
   }
 
   async queryDomainByArea(
     area: DomainArea,
     options?: QueryOptions
   ): Promise<EntityClassification[]> {
-    const limit = options?.limit ?? 100;
-    const offset = options?.offset ?? 0;
+    const conditions: QueryCondition[] = [
+      { field: "category", operator: "eq", value: "domain" },
+      { field: "domain_metadata", operator: "isNotNull", value: null },
+    ];
 
-    const query = `
-      ?[id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version] :=
-        *EntityClassification{
-          id,
-          entity_id: entityId,
-          entity_type: entityType,
-          entity_name: entityName,
-          file_path: filePath,
-          category,
-          domain_metadata: domainMetadata,
-          infrastructure_metadata: infrastructureMetadata,
-          confidence,
-          classification_method: classificationMethod,
-          reasoning,
-          indicators,
-          related_entities: relatedEntities,
-          depends_on: dependsOn,
-          used_by: usedBy,
-          classified_at: classifiedAt,
-          classified_by: classifiedBy,
-          last_updated: lastUpdated,
-          version
-        },
-        category == "domain",
-        domainMetadata != null
-      :limit $limit
-      :offset $offset
-    `;
-
-    const rows = await this.db.query<ClassificationRow>(query, { area, limit, offset });
+    const records = await this.adapter.query<ClassificationRecord>(
+      TABLE_NAME,
+      conditions,
+      {
+        limit: options?.limit ?? 100,
+        offset: options?.offset ?? 0,
+      }
+    );
 
     // Filter by area in application layer (JSON field)
-    return rows
-      .map((row) => this.rowToClassification(row))
+    return records
+      .map((r) => this.recordToClassification(r))
       .filter((c) => c.domainMetadata?.area === area);
   }
 
@@ -319,170 +185,101 @@ export class CozoClassificationStorage implements IClassificationStorage {
     layer: InfrastructureLayer,
     options?: QueryOptions
   ): Promise<EntityClassification[]> {
-    const limit = options?.limit ?? 100;
-    const offset = options?.offset ?? 0;
+    const conditions: QueryCondition[] = [
+      { field: "category", operator: "eq", value: "infrastructure" },
+      { field: "infrastructure_metadata", operator: "isNotNull", value: null },
+    ];
 
-    const query = `
-      ?[id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version] :=
-        *EntityClassification{
-          id,
-          entity_id: entityId,
-          entity_type: entityType,
-          entity_name: entityName,
-          file_path: filePath,
-          category,
-          domain_metadata: domainMetadata,
-          infrastructure_metadata: infrastructureMetadata,
-          confidence,
-          classification_method: classificationMethod,
-          reasoning,
-          indicators,
-          related_entities: relatedEntities,
-          depends_on: dependsOn,
-          used_by: usedBy,
-          classified_at: classifiedAt,
-          classified_by: classifiedBy,
-          last_updated: lastUpdated,
-          version
-        },
-        category == "infrastructure",
-        infrastructureMetadata != null
-      :limit $limit
-      :offset $offset
-    `;
-
-    const rows = await this.db.query<ClassificationRow>(query, { layer, limit, offset });
+    const records = await this.adapter.query<ClassificationRecord>(
+      TABLE_NAME,
+      conditions,
+      {
+        limit: options?.limit ?? 100,
+        offset: options?.offset ?? 0,
+      }
+    );
 
     // Filter by layer in application layer (JSON field)
-    return rows
-      .map((row) => this.rowToClassification(row))
+    return records
+      .map((r) => this.recordToClassification(r))
       .filter((c) => c.infrastructureMetadata?.layer === layer);
   }
 
-  async search(searchQuery: string, options?: SearchOptions): Promise<EntityClassification[]> {
-    const limit = options?.limit ?? 100;
-    const offset = options?.offset ?? 0;
-
-    // Use full-text search on reasoning field
+  async search(
+    searchQuery: string,
+    options?: SearchOptions
+  ): Promise<EntityClassification[]> {
+    // Use rawQuery for complex text search with OR conditions
+    // This is a database-specific operation that requires the escape hatch
     const dbQuery = `
-      ?[id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version] :=
+      ?[id, entity_id, entity_type, entity_name, file_path, category,
+        domain_metadata, infrastructure_metadata, confidence, classification_method,
+        reasoning, indicators, related_entities, depends_on, used_by,
+        classified_at, classified_by, last_updated, version] :=
         *EntityClassification{
           id,
-          entity_id: entityId,
-          entity_type: entityType,
-          entity_name: entityName,
-          file_path: filePath,
+          entity_id,
+          entity_type,
+          entity_name,
+          file_path,
           category,
-          domain_metadata: domainMetadata,
-          infrastructure_metadata: infrastructureMetadata,
+          domain_metadata,
+          infrastructure_metadata,
           confidence,
-          classification_method: classificationMethod,
+          classification_method,
           reasoning,
           indicators,
-          related_entities: relatedEntities,
-          depends_on: dependsOn,
-          used_by: usedBy,
-          classified_at: classifiedAt,
-          classified_by: classifiedBy,
-          last_updated: lastUpdated,
+          related_entities,
+          depends_on,
+          used_by,
+          classified_at,
+          classified_by,
+          last_updated,
           version
         },
-        (contains(entityName, $searchQuery) || contains(reasoning, $searchQuery) || contains(filePath, $searchQuery))
+        (contains(entity_name, $searchQuery) || contains(reasoning, $searchQuery) || contains(file_path, $searchQuery))
         ${options?.category ? `, category == $category` : ""}
       :limit $limit
       :offset $offset
     `;
 
-    const rows = await this.db.query<ClassificationRow>(dbQuery, {
+    const rows = await this.adapter.rawQuery<ClassificationRecord>(dbQuery, {
       searchQuery,
-      limit,
-      offset,
+      limit: options?.limit ?? 100,
+      offset: options?.offset ?? 0,
       category: options?.category,
     });
 
-    return rows.map((row) => this.rowToClassification(row));
+    return rows.map((row) => this.recordToClassification(row));
   }
 
   async getByFile(filePath: string): Promise<EntityClassification[]> {
-    const query = `
-      ?[id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version] :=
-        *EntityClassification{
-          id,
-          entity_id: entityId,
-          entity_type: entityType,
-          entity_name: entityName,
-          file_path: filePath,
-          category,
-          domain_metadata: domainMetadata,
-          infrastructure_metadata: infrastructureMetadata,
-          confidence,
-          classification_method: classificationMethod,
-          reasoning,
-          indicators,
-          related_entities: relatedEntities,
-          depends_on: dependsOn,
-          used_by: usedBy,
-          classified_at: classifiedAt,
-          classified_by: classifiedBy,
-          last_updated: lastUpdated,
-          version
-        },
-        filePath == $filePath
-    `;
+    const records = await this.adapter.query<ClassificationRecord>(TABLE_NAME, [
+      { field: "file_path", operator: "eq", value: filePath },
+    ]);
 
-    const rows = await this.db.query<ClassificationRow>(query, { filePath });
-    return rows.map((row) => this.rowToClassification(row));
+    return records.map((r) => this.recordToClassification(r));
   }
 
   async getByLibrary(library: string): Promise<EntityClassification[]> {
-    const query = `
-      ?[id, entityId, entityType, entityName, filePath, category,
-        domainMetadata, infrastructureMetadata, confidence, classificationMethod,
-        reasoning, indicators, relatedEntities, dependsOn, usedBy,
-        classifiedAt, classifiedBy, lastUpdated, version] :=
-        *EntityClassification{
-          id,
-          entity_id: entityId,
-          entity_type: entityType,
-          entity_name: entityName,
-          file_path: filePath,
-          category,
-          domain_metadata: domainMetadata,
-          infrastructure_metadata: infrastructureMetadata,
-          confidence,
-          classification_method: classificationMethod,
-          reasoning,
-          indicators,
-          related_entities: relatedEntities,
-          depends_on: dependsOn,
-          used_by: usedBy,
-          classified_at: classifiedAt,
-          classified_by: classifiedBy,
-          last_updated: lastUpdated,
-          version
-        },
-        category == "infrastructure",
-        infrastructureMetadata != null
-    `;
+    const conditions: QueryCondition[] = [
+      { field: "category", operator: "eq", value: "infrastructure" },
+      { field: "infrastructure_metadata", operator: "isNotNull", value: null },
+    ];
 
-    const rows = await this.db.query<ClassificationRow>(query, {});
+    const records = await this.adapter.query<ClassificationRecord>(
+      TABLE_NAME,
+      conditions
+    );
 
     // Filter by library in application layer (JSON field)
-    return rows
-      .map((row) => this.rowToClassification(row))
+    return records
+      .map((r) => this.recordToClassification(r))
       .filter((c) => c.infrastructureMetadata?.library === library);
   }
 
   async getStats(): Promise<ClassificationStats> {
+    // Use rawQuery for complex aggregations
     const countQuery = `
       ?[category, count(id)] :=
         *EntityClassification{id, category}
@@ -494,17 +291,17 @@ export class CozoClassificationStorage implements IClassificationStorage {
     `;
 
     const [countRows, confRows] = await Promise.all([
-      this.db.query<any>(countQuery, {}),
-      this.db.query<any>(confidenceQuery, {}),
+      this.adapter.rawQuery<Record<string, unknown>>(countQuery, {}),
+      this.adapter.rawQuery<Record<string, unknown>>(confidenceQuery, {}),
     ]);
 
     const counts: Record<string, number> = {};
     if (Array.isArray(countRows)) {
       for (const row of countRows) {
-        // Row is like { category: 'domain', "count(id)": 5 }
-        // We extract the count value safely
         const category = row.category as string;
-        const cnt = (Object.values(row).find((v) => typeof v === "number") as number) || 0;
+        const cnt =
+          (Object.values(row).find((v) => typeof v === "number") as number) ||
+          0;
         counts[category] = cnt;
       }
     }
@@ -533,35 +330,72 @@ export class CozoClassificationStorage implements IClassificationStorage {
   }
 
   async exists(entityId: string): Promise<boolean> {
-    const query = `
-      ?[id] := *EntityClassification{id, entity_id: entityId}, entityId == $entityId
-      :limit 1
-    `;
-
-    const rows = await this.db.query<{ id: string }>(query, { entityId });
-    return rows.length > 0;
+    return this.adapter.exists(TABLE_NAME, [
+      { field: "entity_id", operator: "eq", value: entityId },
+    ]);
   }
 
-  private rowToClassification(row: ClassificationRow): EntityClassification {
+  // ===========================================================================
+  // Conversion Helpers
+  // ===========================================================================
+
+  private classificationToRecord(
+    classification: EntityClassification
+  ): ClassificationRecord {
     return {
-      entityId: row.entityId,
-      entityType: row.entityType as EntityClassification["entityType"],
-      entityName: row.entityName,
-      filePath: row.filePath,
-      category: row.category as ClassificationCategory,
-      domainMetadata: row.domainMetadata ? JSON.parse(row.domainMetadata) : undefined,
-      infrastructureMetadata: row.infrastructureMetadata ? JSON.parse(row.infrastructureMetadata) : undefined,
-      confidence: row.confidence,
-      classificationMethod: row.classificationMethod as EntityClassification["classificationMethod"],
-      reasoning: row.reasoning,
-      indicators: JSON.parse(row.indicators),
-      relatedEntities: JSON.parse(row.relatedEntities),
-      dependsOn: JSON.parse(row.dependsOn),
-      usedBy: JSON.parse(row.usedBy),
-      classifiedAt: row.classifiedAt,
-      classifiedBy: row.classifiedBy,
-      lastUpdated: row.lastUpdated ?? undefined,
-      version: row.version,
+      id: classification.entityId, // Use entityId as primary key
+      entity_id: classification.entityId,
+      entity_type: classification.entityType,
+      entity_name: classification.entityName,
+      file_path: classification.filePath,
+      category: classification.category,
+      domain_metadata: classification.domainMetadata
+        ? JSON.stringify(classification.domainMetadata)
+        : null,
+      infrastructure_metadata: classification.infrastructureMetadata
+        ? JSON.stringify(classification.infrastructureMetadata)
+        : null,
+      confidence: classification.confidence,
+      classification_method: classification.classificationMethod,
+      reasoning: classification.reasoning,
+      indicators: JSON.stringify(classification.indicators),
+      related_entities: JSON.stringify(classification.relatedEntities),
+      depends_on: JSON.stringify(classification.dependsOn),
+      used_by: JSON.stringify(classification.usedBy),
+      classified_at: classification.classifiedAt,
+      classified_by: classification.classifiedBy,
+      last_updated: classification.lastUpdated ?? null,
+      version: classification.version,
+    };
+  }
+
+  private recordToClassification(
+    record: ClassificationRecord
+  ): EntityClassification {
+    return {
+      entityId: record.entity_id,
+      entityType: record.entity_type as EntityClassification["entityType"],
+      entityName: record.entity_name,
+      filePath: record.file_path,
+      category: record.category as ClassificationCategory,
+      domainMetadata: record.domain_metadata
+        ? JSON.parse(record.domain_metadata)
+        : undefined,
+      infrastructureMetadata: record.infrastructure_metadata
+        ? JSON.parse(record.infrastructure_metadata)
+        : undefined,
+      confidence: record.confidence,
+      classificationMethod:
+        record.classification_method as EntityClassification["classificationMethod"],
+      reasoning: record.reasoning,
+      indicators: JSON.parse(record.indicators),
+      relatedEntities: JSON.parse(record.related_entities),
+      dependsOn: JSON.parse(record.depends_on),
+      usedBy: JSON.parse(record.used_by),
+      classifiedAt: record.classified_at,
+      classifiedBy: record.classified_by,
+      lastUpdated: record.last_updated ?? undefined,
+      version: record.version,
     };
   }
 }
@@ -569,6 +403,8 @@ export class CozoClassificationStorage implements IClassificationStorage {
 /**
  * Factory function
  */
-export function createClassificationStorage(db: GraphDatabase): IClassificationStorage {
-  return new CozoClassificationStorage(db);
+export function createClassificationStorage(
+  adapter: IStorageAdapter
+): IClassificationStorage {
+  return new CozoClassificationStorage(adapter);
 }

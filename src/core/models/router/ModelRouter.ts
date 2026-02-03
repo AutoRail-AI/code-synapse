@@ -21,7 +21,7 @@ import type {
   RouterStats,
   ModelVendor,
 } from "../interfaces/IModel.js";
-import { ALL_MODELS } from "../Registry.js";
+import { ALL_MODELS, getAllProviderIds } from "../Registry.js";
 import type { IFeedbackLoop, ModelOutcome } from "../../feedback/interfaces/IFeedback.js";
 import { createLogger } from "../../telemetry/logger.js";
 import * as crypto from "node:crypto";
@@ -32,12 +32,24 @@ const logger = createLogger("model-router");
 // Default Routing Policy
 // =============================================================================
 
+/**
+ * Get default fallback order from Registry
+ * Prefers: google (best quality), local (always available), then others
+ */
+function getDefaultFallbackOrder(): ModelVendor[] {
+  const allProviders = getAllProviderIds();
+  // Preferred order: google first (high quality), local (always available), then alphabetical rest
+  const preferred: ModelVendor[] = ["google", "local"];
+  const rest = allProviders.filter((p) => !preferred.includes(p as ModelVendor)) as ModelVendor[];
+  return [...preferred, ...rest.sort()];
+}
+
 export const DEFAULT_ROUTING_POLICY: RoutingPolicy = {
   preferLocal: false,
   maxLatencyMs: 20000,
   maxCostPerRequest: 0.20,
   qualityThreshold: 0.8,
-  fallbackOrder: ["google", "local", "anthropic", "openai"],
+  fallbackOrder: getDefaultFallbackOrder(),
 };
 
 // =============================================================================

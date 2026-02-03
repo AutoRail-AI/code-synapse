@@ -126,10 +126,19 @@ export interface EntityJustification {
   createdAt: number;
 
   /** When justification was last updated */
+  /** Timestamp when justification was last updated */
   updatedAt: number;
 
   /** Version for optimistic locking */
   version: number;
+
+  // === Dependency Analysis (Phase 2) ===
+
+  /** Number of other entities that depend on this one */
+  dependentCount?: number;
+
+  /** Assessed risk of changing this entity based on dependencies */
+  dependencyRisk?: "low" | "medium" | "high" | "critical";
 }
 
 // =============================================================================
@@ -385,6 +394,8 @@ export function createEntityJustification(
     createdAt: now,
     updatedAt: now,
     version: 1,
+    dependentCount: 0,
+    dependencyRisk: "low",
     ...partial,
   };
 }

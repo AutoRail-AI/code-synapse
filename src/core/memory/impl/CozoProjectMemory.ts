@@ -25,7 +25,7 @@ import type {
 } from "../models/memory-models.js";
 import { createMemoryRule, createMemoryRuleRef } from "../models/memory-models.js";
 import { DEFAULT_MEMORY_CONFIG } from "../interfaces/IProjectMemory.js";
-import type { GraphDatabase } from "../../graph/database.js";
+import type { IStorageAdapter } from "../../graph/interfaces/IStorageAdapter.js";
 import type { IChangeLedger } from "../../ledger/interfaces/IChangeLedger.js";
 import { createLedgerEntry } from "../../ledger/models/ledger-events.js";
 import type { EmbeddingService } from "../../embeddings/index.js";
@@ -64,11 +64,14 @@ interface MemoryRuleRow {
   deprecatedReason: string | null;
 }
 
-export class CozoMemoryStorage implements IMemoryStorage {
-  private db: GraphDatabase;
+// Table name constant
+const TABLE_NAME = "ProjectMemoryRule";
 
-  constructor(db: GraphDatabase) {
-    this.db = db;
+export class CozoMemoryStorage implements IMemoryStorage {
+  private adapter: IStorageAdapter;
+
+  constructor(adapter: IStorageAdapter) {
+    this.adapter = adapter;
   }
 
   async initialize(): Promise<void> {
@@ -77,59 +80,13 @@ export class CozoMemoryStorage implements IMemoryStorage {
   }
 
   async store(rule: ProjectMemoryRule): Promise<void> {
-    const query = `
-      ?[id, createdAt, updatedAt, scope, scopeTarget, category,
-        triggerType, triggerPattern, triggerDescription, ruleText, ruleExplanation,
-        examples, source, sourceEventId, sourceSessionId, confidence,
-        validationCount, violationCount, lastValidatedAt, lastViolatedAt,
-        embedding, isActive, deprecatedAt, deprecatedReason] <- [[
-        $id, $createdAt, $updatedAt, $scope, $scopeTarget, $category,
-        $triggerType, $triggerPattern, $triggerDescription, $ruleText, $ruleExplanation,
-        $examples, $source, $sourceEventId, $sourceSessionId, $confidence,
-        $validationCount, $violationCount, $lastValidatedAt, $lastViolatedAt,
-        $embedding, $isActive, $deprecatedAt, $deprecatedReason
-      ]]
-      :put ProjectMemoryRule {
-        id, createdAt, updatedAt, scope, scopeTarget, category,
-        triggerType, triggerPattern, triggerDescription, ruleText, ruleExplanation,
-        examples, source, sourceEventId, sourceSessionId, confidence,
-        validationCount, violationCount, lastValidatedAt, lastViolatedAt,
-        embedding, isActive, deprecatedAt, deprecatedReason
-      }
-    `;
-
-    await this.db.query(query, {
-      id: rule.id,
-      createdAt: rule.createdAt,
-      updatedAt: rule.updatedAt,
-      scope: rule.scope,
-      scopeTarget: rule.scopeTarget ?? null,
-      category: rule.category,
-      triggerType: rule.triggerType,
-      triggerPattern: rule.triggerPattern,
-      triggerDescription: rule.triggerDescription ?? null,
-      ruleText: rule.ruleText,
-      ruleExplanation: rule.ruleExplanation ?? null,
-      examples: JSON.stringify(rule.examples),
-      source: rule.source,
-      sourceEventId: rule.sourceEventId ?? null,
-      sourceSessionId: rule.sourceSessionId ?? null,
-      confidence: rule.confidence,
-      validationCount: rule.validationCount,
-      violationCount: rule.violationCount,
-      lastValidatedAt: rule.lastValidatedAt ?? null,
-      lastViolatedAt: rule.lastViolatedAt ?? null,
-      embedding: rule.embedding ? JSON.stringify(rule.embedding) : null,
-      isActive: rule.isActive ? 1 : 0,
-      deprecatedAt: rule.deprecatedAt ?? null,
-      deprecatedReason: rule.deprecatedReason ?? null,
-    });
+    const record = this.ruleToRecord(rule);
+    await this.adapter.storeOne(TABLE_NAME, record as unknown as Record<string, unknown>);
   }
 
   async storeBatch(rules: ProjectMemoryRule[]): Promise<void> {
-    for (const rule of rules) {
-      await this.store(rule);
-    }
+    const records = rules.map((rule) => this.ruleToRecord(rule));
+    await this.adapter.store(TABLE_NAME, records as unknown as Record<string, unknown>[]);
   }
 
   async update(rule: ProjectMemoryRule): Promise<void> {
@@ -137,25 +94,12 @@ export class CozoMemoryStorage implements IMemoryStorage {
   }
 
   async getById(id: string): Promise<ProjectMemoryRule | null> {
-    const query = `
-      ?[id, createdAt, updatedAt, scope, scopeTarget, category,
-        triggerType, triggerPattern, triggerDescription, ruleText, ruleExplanation,
-        examples, source, sourceEventId, sourceSessionId, confidence,
-        validationCount, violationCount, lastValidatedAt, lastViolatedAt,
-        embedding, isActive, deprecatedAt, deprecatedReason] :=
-        *ProjectMemoryRule{
-          id, createdAt, updatedAt, scope, scopeTarget, category,
-          triggerType, triggerPattern, triggerDescription, ruleText, ruleExplanation,
-          examples, source, sourceEventId, sourceSessionId, confidence,
-          validationCount, violationCount, lastValidatedAt, lastViolatedAt,
-          embedding, isActive, deprecatedAt, deprecatedReason
-        },
-        id == $id
-    `;
+    const record = await this.adapter.findOne<MemoryRuleRow>(TABLE_NAME, [
+      { field: "id", operator: "eq", value: id },
+    ]);
 
-    const rows = await this.db.query<MemoryRuleRow>(query, { id });
-    if (rows.length === 0) return null;
-    return this.rowToRule(rows[0]!);
+    if (!record) return null;
+    return this.rowToRule(record);
   }
 
   async query(queryParams: MemoryQuery): Promise<ProjectMemoryRule[]> {
@@ -192,13 +136,14 @@ export class CozoMemoryStorage implements IMemoryStorage {
 
     const whereClause = conditions.length > 0 ? `, ${conditions.join(", ")}` : "";
 
+    // Use rawQuery for complex ordering
     const dbQuery = `
       ?[id, createdAt, updatedAt, scope, scopeTarget, category,
         triggerType, triggerPattern, triggerDescription, ruleText, ruleExplanation,
         examples, source, sourceEventId, sourceSessionId, confidence,
         validationCount, violationCount, lastValidatedAt, lastViolatedAt,
         embedding, isActive, deprecatedAt, deprecatedReason] :=
-        *ProjectMemoryRule{
+        *${TABLE_NAME}{
           id, createdAt, updatedAt, scope, scopeTarget, category,
           triggerType, triggerPattern, triggerDescription, ruleText, ruleExplanation,
           examples, source, sourceEventId, sourceSessionId, confidence,
@@ -210,7 +155,7 @@ export class CozoMemoryStorage implements IMemoryStorage {
       :offset $offset
     `;
 
-    const rows = await this.db.query<MemoryRuleRow>(dbQuery, params);
+    const rows = await this.adapter.rawQuery<MemoryRuleRow>(dbQuery, params);
     return rows.map((row) => this.rowToRule(row));
   }
 
@@ -249,17 +194,7 @@ export class CozoMemoryStorage implements IMemoryStorage {
   }
 
   async delete(id: string): Promise<boolean> {
-    const query = `
-      ?[id] <- [[$id]]
-      :rm ProjectMemoryRule {id}
-    `;
-
-    try {
-      await this.db.query(query, { id });
-      return true;
-    } catch {
-      return false;
-    }
+    return this.adapter.delete(TABLE_NAME, id);
   }
 
   async getStats(): Promise<MemoryStats> {
@@ -337,6 +272,39 @@ export class CozoMemoryStorage implements IMemoryStorage {
     }
 
     return updated;
+  }
+
+  // ===========================================================================
+  // Conversion Helpers
+  // ===========================================================================
+
+  private ruleToRecord(rule: ProjectMemoryRule): MemoryRuleRow {
+    return {
+      id: rule.id,
+      createdAt: rule.createdAt,
+      updatedAt: rule.updatedAt,
+      scope: rule.scope,
+      scopeTarget: rule.scopeTarget ?? null,
+      category: rule.category,
+      triggerType: rule.triggerType,
+      triggerPattern: rule.triggerPattern,
+      triggerDescription: rule.triggerDescription ?? null,
+      ruleText: rule.ruleText,
+      ruleExplanation: rule.ruleExplanation ?? null,
+      examples: JSON.stringify(rule.examples),
+      source: rule.source,
+      sourceEventId: rule.sourceEventId ?? null,
+      sourceSessionId: rule.sourceSessionId ?? null,
+      confidence: rule.confidence,
+      validationCount: rule.validationCount,
+      violationCount: rule.violationCount,
+      lastValidatedAt: rule.lastValidatedAt ?? null,
+      lastViolatedAt: rule.lastViolatedAt ?? null,
+      embedding: rule.embedding ? JSON.stringify(rule.embedding) : null,
+      isActive: rule.isActive ? 1 : 0,
+      deprecatedAt: rule.deprecatedAt ?? null,
+      deprecatedReason: rule.deprecatedReason ?? null,
+    };
   }
 
   private rowToRule(row: MemoryRuleRow): ProjectMemoryRule {
@@ -815,12 +783,12 @@ export class CozoProjectMemory implements IProjectMemory {
   private decayTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    db: GraphDatabase,
+    adapter: IStorageAdapter,
     config: ProjectMemoryConfig,
     ledger?: IChangeLedger,
     embeddings?: EmbeddingService
   ) {
-    this.storage = new CozoMemoryStorage(db);
+    this.storage = new CozoMemoryStorage(adapter);
     this.learner = new SimpleMemoryLearner(this.storage, embeddings);
     this.retriever = new SimpleMemoryRetriever(this.storage, config, embeddings);
     this.ledger = ledger ?? null;
@@ -1111,18 +1079,18 @@ export class CozoProjectMemory implements IProjectMemory {
 // Factory Functions
 // =============================================================================
 
-export function createMemoryStorage(db: GraphDatabase): IMemoryStorage {
-  return new CozoMemoryStorage(db);
+export function createMemoryStorage(adapter: IStorageAdapter): IMemoryStorage {
+  return new CozoMemoryStorage(adapter);
 }
 
 export function createProjectMemory(
-  db: GraphDatabase,
+  adapter: IStorageAdapter,
   config?: Partial<ProjectMemoryConfig>,
   ledger?: IChangeLedger,
   embeddings?: EmbeddingService
 ): IProjectMemory {
   return new CozoProjectMemory(
-    db,
+    adapter,
     { ...DEFAULT_MEMORY_CONFIG, ...config },
     ledger,
     embeddings

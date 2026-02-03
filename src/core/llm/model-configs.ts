@@ -7,17 +7,14 @@
  * @module
  */
 
-import { createLogger } from "../../utils/logger.js";
 import {
-  ALL_MODELS as REGISTRY_ALL_MODELS,
   LOCAL_MODELS as REGISTRY_LOCAL_MODELS,
   OPENAI_MODELS as REGISTRY_OPENAI_MODELS,
   ANTHROPIC_MODELS as REGISTRY_ANTHROPIC_MODELS,
   GOOGLE_MODELS as REGISTRY_GOOGLE_MODELS,
+  getDefaultModelId,
 } from "../models/Registry.js";
-import type { ModelConfig as RegistryConfig, ModelVendor } from "../models/interfaces/IModel.js";
-
-const logger = createLogger("model-configs");
+import type { ModelConfig as RegistryConfig } from "../models/interfaces/IModel.js";
 
 // =============================================================================
 // Types (Legacy)
@@ -169,14 +166,16 @@ export function getModelsByProvider(provider: "anthropic" | "openai" | "google" 
   return Object.values(ALL_MODELS).filter((m) => m.provider === provider);
 }
 
+/**
+ * Get the default model ID for a provider
+ * Delegates to the central Registry
+ */
 export function getDefaultModelForProvider(provider: string): string {
-  const defaults: Record<string, string> = {
-    anthropic: "claude-sonnet-4-20250514",
-    openai: "gpt-4o",
-    google: "gemini-3-pro-preview",
-    local: "qwen2.5-coder-3b",
-  };
-  return defaults[provider] ?? "qwen2.5-coder-3b";
+  const defaultModel = getDefaultModelId(provider);
+  if (!defaultModel) {
+    throw new Error(`No default model configured for provider: ${provider}`);
+  }
+  return defaultModel;
 }
 
 export function calculateOptimalBatchSize(

@@ -12,16 +12,14 @@ import {
   writeJson,
   createLogger,
 } from "../../utils/index.js";
-import type { ProjectConfig } from "../../types/index.js";
+// Note: ProjectConfig is in types but CodeSynapseConfig from setup.ts is used instead
 import {
   MODEL_PRESETS,
   getModelById,
   getAvailableModels,
   getModelSelectionGuide,
   listDownloadedModels,
-  ANTHROPIC_MODELS,
-  OPENAI_MODELS,
-  GOOGLE_MODELS,
+  getModelsByProvider,
   LOCAL_MODELS,
   type ModelPreset,
   type ModelConfig,
@@ -30,10 +28,17 @@ import {
   InteractiveSetup,
   PROVIDERS,
   getApiKey,
-  getConfiguredProvider,
   type ModelProvider,
   type CodeSynapseConfig,
 } from "./setup.js";
+import {
+  getAllProviderIds,
+} from "../../core/models/Registry.js";
+import type { ModelVendor } from "../../core/models/interfaces/IModel.js";
+import {
+  getProviderDisplay,
+  formatProviderName,
+} from "../provider-display.js";
 
 const logger = createLogger("config");
 
@@ -153,7 +158,7 @@ async function setProvider(
       config.llmModel = providerInfo.models[0]?.id;
       console.log(chalk.green(`✓ Default model set to: ${providerInfo.models[0]?.name}`));
     }
-  } else if (provider === "local") {
+  } else if (getProviderDisplay(provider).isLocal) {
     // Interactive model selection for local provider
     const selectedModel = await selectLocalModel();
     if (selectedModel) {
@@ -306,7 +311,7 @@ function showCurrentConfig(config: CodeSynapseConfig): void {
       console.log(`  RAM:        ${modelSpec.minRamGb}GB minimum`);
       console.log(`  Quality:    ${"★".repeat(Math.floor(modelSpec.codeQuality / 2))}${"☆".repeat(5 - Math.floor(modelSpec.codeQuality / 2))} (${modelSpec.codeQuality}/10)`);
       console.log(`  Speed:      ${"★".repeat(Math.floor(modelSpec.speed / 2))}${"☆".repeat(5 - Math.floor(modelSpec.speed / 2))} (${modelSpec.speed}/10)`);
-    } else if (provider !== "local") {
+    } else if (!getProviderDisplay(provider).isLocal) {
       // Cloud model
       const cloudModel = providerInfo?.models.find(m => m.id === modelId);
       if (cloudModel) {
@@ -321,7 +326,8 @@ function showCurrentConfig(config: CodeSynapseConfig): void {
   }
 
   // Show downloaded models (only for local provider)
-  if (config.modelProvider === "local" || !config.modelProvider) {
+  const currentProvider = config.modelProvider ?? "local";
+  if (getProviderDisplay(currentProvider).isLocal) {
     const downloaded = listDownloadedModels();
     if (downloaded.length > 0) {
       console.log();
@@ -449,23 +455,22 @@ function showAvailableModels(): void {
   console.log(chalk.dim("Set with: code-synapse config --provider <anthropic|openai|google>"));
   console.log();
 
-  // Anthropic Models
-  console.log(chalk.magenta.bold("ANTHROPIC (Claude)"));
-  console.log(chalk.dim("  Set ANTHROPIC_API_KEY environment variable"));
-  console.log();
-  showModelTable(Object.values(ANTHROPIC_MODELS));
+  // Cloud providers - iterate dynamically using provider-display utilities
+  // All UI presentation (colors, aliases) comes from centralized provider-display
+  const cloudProviders = getAllProviderIds()
+    .filter((id) => !getProviderDisplay(id).isLocal)
+    .map((vendor) => getProviderDisplay(vendor));
 
-  // OpenAI Models
-  console.log(chalk.green.bold("OPENAI (GPT)"));
-  console.log(chalk.dim("  Set OPENAI_API_KEY environment variable"));
-  console.log();
-  showModelTable(Object.values(OPENAI_MODELS));
-
-  // Google Models
-  console.log(chalk.blue.bold("GOOGLE (Gemini)"));
-  console.log(chalk.dim("  Set GOOGLE_API_KEY environment variable"));
-  console.log();
-  showModelTable(Object.values(GOOGLE_MODELS));
+  for (const display of cloudProviders) {
+    const { id, name: displayName, alias, color, envVar } = display;
+    console.log(color.bold(`${displayName.toUpperCase()} (${alias})`));
+    if (envVar) {
+      console.log(chalk.dim(`  Set ${envVar} environment variable`));
+    }
+    console.log();
+    // Use the adapted ModelConfig from llm/model-configs.ts
+    showModelTable(getModelsByProvider(id));
+  }
 
   // Local Models
   console.log(chalk.dim("─".repeat(90)));

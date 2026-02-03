@@ -8,7 +8,7 @@
  */
 
 import type { IGraphStore } from "../../core/interfaces/IGraphStore.js";
-import type { ILLMService } from "../../core/llm/interfaces/ILLMService.js";
+import type { IModelRouter } from "../../core/models/interfaces/IModel.js";
 import { IntentClassifier, createIntentClassifier } from "./intent-classifier.js";
 import { QueryBuilder, createQueryBuilder, type GeneratedQuery } from "./query-builder.js";
 import type {
@@ -28,13 +28,13 @@ export class NaturalLanguageSearchService {
   private classifier: IntentClassifier;
   private queryBuilder: QueryBuilder;
   private config: Required<NLSearchConfig>;
-  private llmService?: ILLMService;
+  private modelRouter?: IModelRouter;
 
-  constructor(store: IGraphStore, config?: NLSearchConfig, llmService?: ILLMService) {
+  constructor(store: IGraphStore, config?: NLSearchConfig, modelRouter?: IModelRouter) {
     this.store = store;
     this.config = { ...DEFAULT_NL_SEARCH_CONFIG, ...config };
-    this.llmService = llmService;
-    this.classifier = createIntentClassifier(llmService, this.config.synonyms);
+    this.modelRouter = modelRouter;
+    this.classifier = createIntentClassifier(modelRouter, this.config.synonyms);
     this.queryBuilder = createQueryBuilder(this.config);
   }
 
@@ -376,8 +376,8 @@ export class NaturalLanguageSearchService {
    * Close the service and release resources
    */
   async close(): Promise<void> {
-    if (this.llmService) {
-      await this.llmService.shutdown();
+    if (this.modelRouter) {
+      await this.modelRouter.shutdown();
     }
   }
 }
@@ -392,23 +392,25 @@ export class NaturalLanguageSearchService {
 export function createNLSearchService(
   store: IGraphStore,
   config?: NLSearchConfig,
-  llmService?: ILLMService
+  modelRouter?: IModelRouter
 ): NaturalLanguageSearchService {
-  return new NaturalLanguageSearchService(store, config, llmService);
+  return new NaturalLanguageSearchService(store, config, modelRouter);
 }
 
 /**
- * Create a natural language search service with LLM support
+ * Create a natural language search service with model router support
  */
 export async function createNLSearchServiceWithLLM(
   store: IGraphStore,
   config?: NLSearchConfig
 ): Promise<NaturalLanguageSearchService> {
-  // Dynamically import LLM to avoid loading if not needed
-  const { createInitializedLLMServiceWithPreset } = await import("../../core/llm/index.js");
+  // Use the clean public API from models layer
+  const { createConfiguredModelRouter } = await import("../../core/models/index.js");
 
-  const preset = config?.llmModelPreset || "fastest";
-  const llmService = await createInitializedLLMServiceWithPreset(preset);
+  // Default to local provider with fastest model for NL search
+  const { router } = await createConfiguredModelRouter({
+    provider: "local",
+  });
 
-  return new NaturalLanguageSearchService(store, config, llmService);
+  return new NaturalLanguageSearchService(store, config, router);
 }

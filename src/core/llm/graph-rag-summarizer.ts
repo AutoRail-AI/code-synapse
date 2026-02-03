@@ -13,7 +13,7 @@
 import { createLogger } from "../../utils/logger.js";
 import type { JsonSchema } from "./llm-service.js";
 import type { ILLMService } from "./interfaces/ILLMService.js";
-import type { GraphDatabase } from "../graph/database.js";
+import type { IStorageAdapter } from "../graph/interfaces/IStorageAdapter.js";
 
 const logger = createLogger("graph-rag-summarizer");
 
@@ -120,7 +120,7 @@ const SYSTEM_SUMMARY_SCHEMA: JsonSchema = {
 
 export class GraphRAGSummarizer {
   private llmService: ILLMService;
-  private graphDb: GraphDatabase;
+  private adapter: IStorageAdapter;
   private config: Required<GraphRAGConfig>;
   private hierarchy: SummaryHierarchy = {
     system: null,
@@ -131,11 +131,11 @@ export class GraphRAGSummarizer {
 
   constructor(
     llmService: ILLMService,
-    graphDb: GraphDatabase,
+    adapter: IStorageAdapter,
     config: GraphRAGConfig = {}
   ) {
     this.llmService = llmService;
-    this.graphDb = graphDb;
+    this.adapter = adapter;
     this.config = {
       minFunctionsPerFile: config.minFunctionsPerFile ?? 2,
       minFilesPerModule: config.minFilesPerModule ?? 3,
@@ -206,7 +206,7 @@ export class GraphRAGSummarizer {
     }
 
     try {
-      const results = await this.graphDb.query<FunctionRow>(query);
+      const results = await this.adapter.rawQuery<FunctionRow>(query);
 
       for (const row of results) {
         // Parse business logic JSON to extract summary and tags
@@ -262,7 +262,7 @@ export class GraphRAGSummarizer {
     }
 
     try {
-      const files = await this.graphDb.query<FileRow>(fileQuery);
+      const files = await this.adapter.rawQuery<FileRow>(fileQuery);
       const eligibleFiles = files.filter(
         (f) => f.func_count >= this.config.minFunctionsPerFile
       );
@@ -519,7 +519,7 @@ Provide a JSON summary with: summary, responsibilities, tags, confidence`;
       `;
 
       try {
-        const results = await this.graphDb.query<{ imported_path: string }>(
+        const results = await this.adapter.rawQuery<{ imported_path: string }>(
           query,
           { filePath }
         );
@@ -686,8 +686,8 @@ Provide a JSON summary with: summary, architecture, keyFeatures, techStack, conf
  */
 export function createGraphRAGSummarizer(
   llmService: ILLMService,
-  graphDb: GraphDatabase,
+  adapter: IStorageAdapter,
   config?: GraphRAGConfig
 ): GraphRAGSummarizer {
-  return new GraphRAGSummarizer(llmService, graphDb, config);
+  return new GraphRAGSummarizer(llmService, adapter, config);
 }

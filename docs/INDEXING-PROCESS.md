@@ -446,34 +446,34 @@ For each entity, provide:
 ### JSON Schema for Structured Output
 ```typescript
 {
-  type: "object",
-  properties: {
-    entities: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          entityId: { type: "string" },
-          purposeSummary: { type: "string" },
-          businessValue: { type: "string" },
-          featureContext: { type: "string" },
-          tags: { type: "array", items: { type: "string" } },
-          confidenceScore: { type: "number" }
+  "type": "object",
+  "properties": {
+    "justifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "purposeSummary": { "type": "string" },
+          "businessValue": { "type": "string" },
+          "featureContext": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "confidenceScore": { "type": "number" }
         },
-        required: ["entityId", "purposeSummary", "businessValue", "confidenceScore"]
+        "required": ["id", "purposeSummary", "businessValue", "confidenceScore"]
       }
     }
   },
-  required: ["entities"]
+  "required": ["justifications"]
 }
 ```
 
 ### Example LLM Response (`response.parsed`)
 ```json
 {
-  "entities": [
+  "justifications": [
     {
-      "entityId": "fn-getUserProfile-abc123",
+      "id": "fn-getUserProfile-abc123",
       "purposeSummary": "Fetches complete user profile data including preferences and settings",
       "businessValue": "Core API for user profile display across dashboard and settings pages",
       "featureContext": "User Management",
@@ -481,7 +481,7 @@ For each entity, provide:
       "confidenceScore": 0.85
     },
     {
-      "entityId": "class-AuthService-def456",
+      "id": "class-AuthService-def456",
       "purposeSummary": "Centralized authentication service handling login, logout, and token management",
       "businessValue": "Single source of truth for auth state, enables secure session handling",
       "featureContext": "Authentication",
@@ -503,12 +503,15 @@ For each entity, provide:
 ### The Solution: Dual Constraint Batching
 
 ```
+### The Solution: Dual Constraint Batching
+
+```
 ┌─────────────────────────────────────────────────────────────┐
 │                    TOKEN BUDGET CALCULATOR                  │
 │  ─────────────────────────────────────────────────────────  │
-│  Model: gemini-3-pro-preview                                │
-│  Context Window: 1,000,000 tokens                           │
-│  Max Output: 64,000 tokens                                  │
+│  Model: Configured via Registry.ts (e.g., Gemini 3 Pro)     │
+│  Context Window: Defined in Registry.ProviderMetadata       │
+│  Max Output: Defined in Registry.ProviderMetadata           │
 │  Reserve Buffer: 15%                                        │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -516,28 +519,30 @@ For each entity, provide:
          ┌─────────────────────────────────────────┐
          │         CONSTRAINT CALCULATION          │
          │  ─────────────────────────────────────  │
-         │  Input limit:  850K tokens              │
-         │  Output limit: 64K tokens               │
+         │  Input limit:  (Window * 0.85) tokens   │
+         │  Output limit: (MaxOutput * 0.85) tokens│
          │                                         │
          │  Avg input per entity:  ~300 tokens     │
          │  Avg output per entity: ~150 tokens     │
          │                                         │
-         │  Max by input:  850K / 300 = 2833       │
-         │  Max by output: 64K / 150 = 426         │
+         │  Max by input:  InputLimit / 300        │
+         │  Max by output: OutputLimit / 150       │
          │                                         │
-         │  ✓ Batch size = min(2833, 426) = 426    │
+         │  ✓ Batch size = min(ByInput, ByOutput)  │
          │  → Typically ~50-100 for safety margin  │
          └─────────────────────────────────────────┘
 ```
 
 ### Batch Configuration
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `contextWindow` | 1,000,000 | Gemini 3 context limit |
-| `maxOutputTokens` | 64,000 | Max response size |
-| `outputTokensPerEntity` | ~150 | Estimated JSON per entity |
-| `avgInputTokensPerEntity` | ~200-500 | Code + metadata |
-| `reserveBuffer` | 15% | Safety margin |
+Configuration is sourced dynamically from `src/core/models/Registry.ts`.
+Values adapt to the selected provider (OpenAI, Anthropic, Google, Local).
+
+| Parameter | Source | Description |
+|-----------|--------|-------------|
+| `contextWindow` | `Registry.ts` | Model-specific context limit |
+| `maxOutputTokens` | `Registry.ts` | Max response size |
+| `outputTokensPerEntity` | 500 | Estimated JSON per entity |
+| `safetyMargin` | 0.20 | 20% buffer for uncertainty |
 
 ---
 
@@ -677,34 +682,449 @@ Output:
 
 ---
 
-# Part 3: Future Enhancements (To Be Implemented)
+# Part 3: Improvement Plan
 
-## Enhanced Justification Fields
+This section outlines a phased approach to enhance Code-Synapse's indexing pipeline, entity extraction, and business justification capabilities. The goal is to transform Code-Synapse into a more complete "second brain" that captures not just structural code relationships, but also semantic intent, data flow, behavioral patterns, and architectural insights.
+
+---
+
+## Current State Analysis
+
+### What We Have (Strengths)
+
+| Capability | Implementation | Quality |
+|------------|----------------|---------|
+| **Structural Extraction** | 7 entity types (File, Function, Class, Interface, Import, Export, Symbol) | ✅ Solid |
+| **Relationship Mapping** | 9 relationship types (defines, imports, exports, extends, implements, etc.) | ✅ Good |
+| **Semantic Analysis** | TypeScript Compiler API for type resolution | ✅ Good for TS/JS |
+| **Business Justification** | LLM-powered intent inference with confidence scoring | ✅ Functional |
+| **Incremental Indexing** | Hash-based change detection, file watching | ✅ Efficient |
+| **Vector Embeddings** | Chunk-based embeddings for similarity search | ✅ Basic |
+
+### What's Missing (Critical Gaps)
+
+| Gap | Impact | Priority |
+|-----|--------|----------|
+| **No Data Flow Analysis** | Can't trace how data moves through the system | 🔴 HIGH |
+| **No Control Flow Analysis** | Can't understand execution paths, branching | 🔴 HIGH |
+| **Limited Parameter Semantics** | Parameters extracted but not analyzed for purpose | 🟡 MEDIUM |
+| **No Design Pattern Detection** | Missing architectural insights (Factory, Observer, etc.) | 🟡 MEDIUM |
+| **No Side-Effect Tracking** | Can't identify I/O, mutations, external calls | 🔴 HIGH |
+| **No API Contract Extraction** | Missing input/output schemas, error contracts | 🟡 MEDIUM |
+| **No Error Handling Tracking** | Can't map error propagation paths | 🟡 MEDIUM |
+| **No Semantic Similarity** | Vector embeddings not used for related code discovery | 🟢 LOW |
+| **No Cross-File Data Dependencies** | Can't trace data structures across modules | 🔴 HIGH |
+
+---
+
+## Phased Implementation Plan
+
+### Phase 1: Enhanced Entity Semantics (Foundation)
+
+**Goal:** Enrich existing entities with deeper semantic information without changing the extraction architecture.
+
+#### 1.1 Parameter Semantic Analysis
+
+**Current State:** Parameters are extracted with name/type but no semantic meaning.
+
+**Enhancement:**
+```typescript
+// NEW: Add to src/core/extraction/analyzers/parameter-analyzer.ts
+interface ParameterSemantics {
+  name: string;
+  type: string;
+  // NEW fields
+  purpose: 'input' | 'output' | 'config' | 'callback' | 'context';
+  isOptional: boolean;
+  defaultValue?: string;
+  validationRules?: string[];  // e.g., "non-null", "positive integer"
+  derivedFrom?: string;        // Parameter origin tracing
+  usedIn: string[];            // Where this param is used in body
+}
+```
+
+**Implementation Steps:**
+1. Create `src/core/extraction/analyzers/parameter-analyzer.ts`
+2. Analyze function body to trace parameter usage
+3. Infer purpose from naming conventions and usage patterns
+4. Store enhanced semantics in `function_parameters` relation
+
+**Schema Addition:**
+```datalog
+:create function_parameter_semantics {
+  function_id: String,
+  param_name: String,
+  param_index: Int,
+  purpose: String,        # input|output|config|callback|context
+  is_optional: Bool,
+  default_value: String?,
+  validation_rules: [String]?,
+  used_in_expressions: [String]?,
+  =>
+  analyzed_at: Int
+}
+```
+
+#### 1.2 Return Value Analysis
+
+**Current State:** Return types extracted but not analyzed for semantic meaning.
+
+**Enhancement:**
+```typescript
+// NEW: Add to src/core/extraction/analyzers/return-analyzer.ts
+interface ReturnSemantics {
+  type: string;
+  // NEW fields
+  possibleValues: string[];      // For unions, enums
+  errorConditions: string[];     // When it throws/returns error
+  nullConditions: string[];      // When it returns null/undefined
+  derivedFrom: string[];         // Data sources for return value
+  transformations: string[];     // Operations applied before return
+}
+```
+
+**Implementation Steps:**
+1. Create `src/core/extraction/analyzers/return-analyzer.ts`
+2. Trace all return statements in function body
+3. Identify conditional returns and their conditions
+4. Map data flow from parameters to return value
+
+#### 1.3 Error Path Extraction
+
+**Current State:** No tracking of error handling or propagation.
+
+**Enhancement:**
+```typescript
+// NEW: src/core/extraction/analyzers/error-analyzer.ts
+interface ErrorPath {
+  functionId: string;
+  errorType: string;           // Error class/type thrown
+  condition: string;           // When this error occurs
+  isHandled: boolean;          // Caught within function?
+  propagatesTo: string[];      // Functions that receive this error
+  recoveryStrategy?: string;   // How it's handled if caught
+}
+```
+
+**Schema Addition:**
+```datalog
+:create error_paths {
+  function_id: String,
+  error_type: String,
+  condition: String?,
+  is_handled: Bool,
+  propagates_to: [String]?,
+  recovery_strategy: String?,
+  =>
+  source_location: String
+}
+```
+
+---
+
+### Phase 2: Data Flow Analysis (Core Enhancement)
+
+**Goal:** Track how data moves through the codebase to answer questions like "Where does user input go?" or "What affects this calculation?"
+
+#### 2.1 Intra-Function Data Flow
+
+**New Module:** `src/core/analysis/data-flow/`
+
+```typescript
+// src/core/analysis/data-flow/interfaces.ts
+interface DataFlowNode {
+  id: string;
+  kind: 'parameter' | 'variable' | 'return' | 'property' | 'call-result';
+  name: string;
+  scope: string;  // Function/block scope
+}
+
+interface DataFlowEdge {
+  source: DataFlowNode;
+  target: DataFlowNode;
+  operation: 'assign' | 'transform' | 'pass' | 'spread' | 'destructure';
+  transformDescription?: string;  // e.g., "map", "filter", "JSON.parse"
+}
+
+interface FunctionDataFlow {
+  functionId: string;
+  nodes: DataFlowNode[];
+  edges: DataFlowEdge[];
+  sources: DataFlowNode[];   // Entry points (params, globals)
+  sinks: DataFlowNode[];     // Exit points (returns, mutations)
+}
+```
+
+**Implementation Approach:**
+1. Build SSA (Static Single Assignment) form from AST
+2. Track assignments and transformations
+3. Connect parameter inputs to return outputs
+4. Store as graph in CozoDB
+
+**Schema Addition:**
+```datalog
+:create data_flow_nodes {
+  node_id: String,
+  function_id: String,
+  kind: String,
+  name: String,
+  scope: String,
+  =>
+  source_location: String
+}
+
+:create data_flow_edges {
+  source_node: String,
+  target_node: String,
+  operation: String,
+  transform_description: String?,
+  =>
+  function_id: String
+}
+```
+
+#### 2.2 Inter-Function Data Flow
+
+**Goal:** Track data across function boundaries.
+
+```typescript
+// src/core/analysis/data-flow/cross-function.ts
+interface CrossFunctionFlow {
+  sourceFunction: string;
+  sourceOutput: string;      // Which return/mutation
+  targetFunction: string;
+  targetInput: string;       // Which parameter
+  callSite: string;          // Where the call happens
+  transformations: string[]; // Any transformations between
+}
+```
+
+**Implementation:**
+1. At each call site, map arguments to parameters
+2. Track return value usage
+3. Build cross-function data flow graph
+
+#### 2.3 Data Flow Queries
+
+**New MCP Tools:**
+```typescript
+// "trace_data" tool
+interface TraceDataRequest {
+  startPoint: string;  // e.g., "UserController.createUser.req.body"
+  direction: 'forward' | 'backward' | 'both';
+  maxDepth?: number;
+}
+
+// Returns all data flow paths from/to the start point
+```
+
+---
+
+### Phase 3: Side-Effect Analysis (Critical for Understanding)
+
+**Goal:** Identify and categorize side effects to understand what code actually *does* beyond its return value.
+
+#### 3.1 Side-Effect Categories
+
+```typescript
+// src/core/analysis/side-effects/interfaces.ts
+type SideEffectCategory =
+  | 'io-file'           // File system operations
+  | 'io-network'        // HTTP, WebSocket, etc.
+  | 'io-database'       // DB queries
+  | 'io-console'        // Logging, console output
+  | 'mutation-param'    // Mutates input parameter
+  | 'mutation-global'   // Mutates global/module state
+  | 'mutation-this'     // Mutates object state
+  | 'async-spawn'       // Spawns async operations
+  | 'external-service'; // Calls external APIs
+
+interface SideEffect {
+  functionId: string;
+  category: SideEffectCategory;
+  description: string;
+  target?: string;        // What is affected
+  isConditional: boolean; // Only happens under certain conditions
+  condition?: string;     // The condition
+}
+```
+
+#### 3.2 Detection Strategies
+
+| Category | Detection Method |
+|----------|------------------|
+| `io-file` | Detect `fs.*`, `readFile`, `writeFile`, `path.*` calls |
+| `io-network` | Detect `fetch`, `axios`, `http.*`, WebSocket usage |
+| `io-database` | Detect ORM calls, raw SQL, MongoDB operations |
+| `mutation-param` | Track parameter modifications in body |
+| `mutation-global` | Track assignments to module-level variables |
+| `mutation-this` | Track `this.*` assignments in methods |
+
+**Implementation:**
+1. Create pattern matchers for each category
+2. Analyze call expressions against known side-effect APIs
+3. Track mutations through data flow analysis
+4. Store categorized side effects
+
+**Schema Addition:**
+```datalog
+:create side_effects {
+  function_id: String,
+  category: String,
+  description: String,
+  target: String?,
+  is_conditional: Bool,
+  condition: String?,
+  =>
+  confidence: Float,
+  source_location: String
+}
+```
+
+---
+
+### Phase 4: Design Pattern Detection (Architectural Insights)
+
+**Goal:** Automatically detect common design patterns to provide architectural context.
+
+#### 4.1 Detectable Patterns
+
+| Pattern | Detection Heuristics |
+|---------|---------------------|
+| **Factory** | Function returning new instances, multiple concrete types |
+| **Singleton** | Private constructor, static getInstance, module-level instance |
+| **Observer** | subscribe/unsubscribe methods, event emitter patterns |
+| **Repository** | CRUD methods, entity type parameter, storage abstraction |
+| **Service** | Stateless class, injected dependencies, business methods |
+| **Adapter** | Implements interface, wraps another type, method delegation |
+| **Builder** | Method chaining, build() method, partial construction |
+| **Strategy** | Interface with single method, multiple implementations |
+| **Decorator** | Wraps same interface, delegates with additions |
+
+#### 4.2 Implementation
+
+```typescript
+// src/core/analysis/patterns/interfaces.ts
+interface DetectedPattern {
+  patternType: string;
+  confidence: number;
+  participants: {
+    role: string;          // e.g., "factory", "product", "client"
+    entityId: string;
+    entityType: string;
+  }[];
+  evidence: string[];      // Why we think it's this pattern
+}
+
+// src/core/analysis/patterns/detectors/
+// - factory-detector.ts
+// - singleton-detector.ts
+// - observer-detector.ts
+// - repository-detector.ts
+// etc.
+```
+
+**Schema Addition:**
+```datalog
+:create design_patterns {
+  pattern_id: String,
+  pattern_type: String,
+  confidence: Float,
+  evidence: [String],
+  =>
+  detected_at: Int
+}
+
+:create pattern_participants {
+  pattern_id: String,
+  entity_id: String,
+  role: String,
+  =>
+  entity_type: String
+}
+```
+
+---
+
+### Phase 5: Enhanced Business Justification (LLM Improvements)
+
+**Goal:** Improve justification quality through better context and more focused prompts.
+
+#### 5.1 Context Enhancement
+
+**Current:** Justification uses function signature + body + call graph.
+
+**Enhanced Context:**
+```typescript
+interface EnhancedJustificationContext {
+  // Existing
+  functionSignature: string;
+  functionBody: string;
+  callGraph: string[];
+
+  // NEW: Add these
+  dataFlowSummary: string;      // "Receives user input, transforms to DTO, stores in DB"
+  sideEffects: string[];        // ["Writes to database", "Sends HTTP request"]
+  errorBehavior: string;        // "Throws ValidationError on invalid input"
+  relatedPatterns: string[];    // ["Part of Repository pattern", "Uses Factory"]
+  domainContext: string;        // Inferred domain (auth, payments, etc.)
+  callerIntents: string[];      // Why callers use this function
+}
+```
+
+#### 5.2 Specialized Prompts
+
+Create domain-specific justification prompts:
+
+```typescript
+// src/core/justification/prompts/domain-prompts.ts
+const DOMAIN_PROMPTS = {
+  authentication: `Analyze this authentication-related code...`,
+  dataAccess: `Analyze this data access code...`,
+  apiEndpoint: `Analyze this API endpoint...`,
+  validation: `Analyze this validation logic...`,
+  transformation: `Analyze this data transformation...`,
+};
+```
+
+#### 5.3 Confidence Calibration
+
+Improve confidence scoring:
+
+```typescript
+interface JustificationConfidence {
+  overall: number;
+  factors: {
+    codeClarity: number;      // How clear is the code itself?
+    contextRichness: number;  // How much context did we have?
+    patternMatch: number;     // Does it match known patterns?
+    nameQuality: number;      // How descriptive are names?
+  };
+  uncertainties: string[];    // What we're unsure about
+}
+```
+
+#### 5.4 Enhanced Justification Fields
 
 The current schema captures *what* an entity does and *why* it exists. Future versions will add deeper business context:
-
-### Proposed Additional Fields
 
 ```typescript
 interface EnhancedEntityJustification extends EntityJustification {
   // User Impact
   userImpact?: string;           // Who benefits from this entity?
-                                  // e.g., "Enables end-users to securely access accounts"
-  
-  // Dependency Analysis  
+
+  // Dependency Analysis
   dependencyRisk?: "low" | "medium" | "high" | "critical";
   dependentCount?: number;        // Number of entities that depend on this
   breakageImpact?: string[];      // Features that would break if removed
-                                  // e.g., ["login-flow", "session-management", "api-auth"]
-  
+
   // Business Metrics
   usageFrequency?: "rare" | "occasional" | "frequent" | "critical-path";
   businessCriticality?: number;   // 0.0 - 1.0 score
-  
+
   // Design Rationale
   alternativesConsidered?: string; // Why this approach over others?
-                                   // e.g., "Chosen over OAuth-only for enterprise SSO flexibility"
-  
+
   // Change Risk Assessment
   changeRiskLevel?: "low" | "medium" | "high" | "requires-review";
   securityBoundary?: boolean;     // Does this touch security-sensitive code?
@@ -712,78 +1132,186 @@ interface EnhancedEntityJustification extends EntityJustification {
 }
 ```
 
-### Current vs. Future Comparison
+---
 
-| Dimension | Current (v1) | Future (v2) |
-|-----------|--------------|-------------|
-| **What it does** | ✅ `purposeSummary` | ✅ Same |
-| **Why it exists** | ✅ `businessValue` | ✅ Enhanced with metrics |
-| **Who benefits** | ❌ Not captured | ✅ `userImpact` |
-| **What breaks if removed** | ❌ Not captured | ✅ `breakageImpact`, `dependentCount` |
-| **How risky to change** | ❌ Not captured | ✅ `changeRiskLevel`, `securityBoundary` |
-| **Why this design** | ❌ Not captured | ✅ `alternativesConsidered` |
-| **Business criticality** | Implicit via confidence | ✅ Explicit `businessCriticality` |
+### Phase 6: Semantic Similarity & Related Code Discovery
 
-### Example Enhanced Justification
+**Goal:** Use vector embeddings to find semantically related code.
 
-```json
-{
-  "entityId": "class-AuthService-def456",
-  "name": "AuthService",
-  
-  // Current fields
-  "purposeSummary": "Centralized authentication service handling login, logout, and token management",
-  "businessValue": "Single source of truth for auth state, enables secure session handling",
-  "featureContext": "Authentication",
-  "tags": ["auth", "security", "session-management"],
-  "confidenceScore": 0.92,
-  
-  // Future fields (v2)
-  "userImpact": "Enables all users to securely access their accounts and maintain sessions",
-  "dependencyRisk": "critical",
-  "dependentCount": 47,
-  "breakageImpact": ["login-flow", "session-refresh", "api-authentication", "admin-panel"],
-  "usageFrequency": "critical-path",
-  "businessCriticality": 0.95,
-  "alternativesConsidered": "OAuth-only rejected for enterprise SSO requirements; Firebase Auth rejected for data sovereignty",
-  "changeRiskLevel": "requires-review",
-  "securityBoundary": true,
-  "complianceRelevant": true
+#### 6.1 Embedding Strategy
+
+**Current:** Chunks are embedded but not used for similarity.
+
+**Enhanced:**
+```typescript
+// src/core/embeddings/similarity-service.ts
+interface SimilarityService {
+  // Find functions with similar purpose
+  findSimilarFunctions(functionId: string, limit: number): Promise<SimilarFunction[]>;
+
+  // Find code that handles similar data
+  findSimilarDataHandlers(dataType: string, limit: number): Promise<Function[]>;
+
+  // Find code with similar business justification
+  findSimilarBusinessLogic(justification: string, limit: number): Promise<Function[]>;
+
+  // Cluster related code by semantic similarity
+  clusterRelatedCode(threshold: number): Promise<CodeCluster[]>;
 }
 ```
 
-### Implementation Considerations
+#### 6.2 Multi-Vector Approach
 
-| Enhancement | Source | LLM Cost Impact |
-|-------------|--------|-----------------|
-| `userImpact` | LLM inference | +15 tokens/entity |
-| `dependencyRisk` | Static graph analysis | None (computed) |
-| `dependentCount` | Static graph query | None (computed) |
-| `breakageImpact` | Graph traversal + LLM | +30 tokens/entity |
-| `usageFrequency` | Runtime telemetry | None (external data) |
-| `businessCriticality` | LLM + usage data | +10 tokens/entity |
-| `alternativesConsidered` | LLM + doc comments | +40 tokens/entity |
-| `changeRiskLevel` | LLM + dependency analysis | +15 tokens/entity |
-| `securityBoundary` | Static pattern matching | None (computed) |
+Store multiple embeddings per entity:
 
-### Phased Rollout Plan
+```typescript
+interface EntityEmbeddings {
+  entityId: string;
+  vectors: {
+    structural: number[];    // Based on AST structure
+    semantic: number[];      // Based on code meaning
+    justification: number[]; // Based on business purpose
+    signature: number[];     // Based on interface/API
+  };
+}
+```
 
-**Phase 1 (Current)**: Basic justification with `purposeSummary`, `businessValue`, `featureContext`
+---
 
-**Phase 2**: Add dependency-based fields (computed from graph):
-- `dependentCount`
-- `dependencyRisk`
-- `breakageImpact`
+## Implementation Priority & Timeline
 
-**Phase 3**: Add LLM-inferred business context:
-- `userImpact`
-- `businessCriticality`
-- `alternativesConsidered`
+### Immediate (Weeks 1-2): Foundation Enhancements
 
-**Phase 4**: Add change risk assessment:
-- `changeRiskLevel`
-- `securityBoundary`
-- `complianceRelevant`
+| Task | Effort | Impact |
+|------|--------|--------|
+| Parameter semantic analysis | 3 days | High |
+| Return value analysis | 2 days | Medium |
+| Error path extraction | 3 days | High |
+| Schema migrations | 1 day | Required |
+
+### Short-Term (Weeks 3-4): Data Flow
+
+| Task | Effort | Impact |
+|------|--------|--------|
+| Intra-function data flow | 5 days | Critical |
+| Cross-function data flow | 4 days | Critical |
+| Data flow MCP tools | 2 days | High |
+
+### Medium-Term (Weeks 5-6): Side Effects & Patterns
+
+| Task | Effort | Impact |
+|------|--------|--------|
+| Side-effect detection | 4 days | High |
+| Pattern detection (core 5) | 5 days | Medium |
+| Pattern detection (extended) | 3 days | Medium |
+
+### Long-Term (Weeks 7-8): Justification & Similarity
+
+| Task | Effort | Impact |
+|------|--------|--------|
+| Enhanced justification context | 3 days | High |
+| Domain-specific prompts | 2 days | Medium |
+| Semantic similarity service | 4 days | Medium |
+| Multi-vector embeddings | 3 days | Medium |
+
+---
+
+## New MCP Tools (Post-Implementation)
+
+After implementation, expose these new capabilities:
+
+| Tool | Purpose |
+|------|---------|
+| `trace_data_flow` | Trace data from source to sink |
+| `get_side_effects` | List side effects of a function |
+| `find_patterns` | Find design patterns in code |
+| `get_error_paths` | Get error propagation paths |
+| `find_similar_code` | Find semantically similar functions |
+| `get_data_dependencies` | Get all data dependencies for a function |
+| `explain_function_behavior` | Rich explanation with all analyses |
+
+---
+
+## Success Metrics
+
+### Quality Metrics
+
+| Metric | Current | Target |
+|--------|---------|--------|
+| Entities extracted per file | ~5 | ~12 (with params, errors, etc.) |
+| Relationships per entity | ~2 | ~5 (with data flow, patterns) |
+| Justification confidence avg | ~0.6 | ~0.8 |
+| Questions answerable by graph | ~40% | ~80% |
+
+### Completeness Metrics
+
+| Capability | Current | Target |
+|------------|---------|--------|
+| "What does this function do?" | ✅ Basic | ✅ Rich with data flow |
+| "Where does this data go?" | ❌ No | ✅ Full trace |
+| "What side effects does this have?" | ❌ No | ✅ Categorized |
+| "What pattern is this?" | ❌ No | ✅ Detected |
+| "What similar code exists?" | ❌ No | ✅ Semantic search |
+| "What errors can this throw?" | ❌ No | ✅ Full paths |
+
+---
+
+## File Structure After Implementation
+
+```
+src/core/
+├── analysis/                    # NEW: Analysis modules
+│   ├── data-flow/
+│   │   ├── interfaces.ts
+│   │   ├── intra-function.ts
+│   │   ├── cross-function.ts
+│   │   └── index.ts
+│   ├── side-effects/
+│   │   ├── interfaces.ts
+│   │   ├── detector.ts
+│   │   ├── categorizer.ts
+│   │   └── index.ts
+│   └── patterns/
+│       ├── interfaces.ts
+│       ├── detectors/
+│       │   ├── factory-detector.ts
+│       │   ├── singleton-detector.ts
+│       │   ├── observer-detector.ts
+│       │   ├── repository-detector.ts
+│       │   └── index.ts
+│       └── index.ts
+├── extraction/
+│   ├── analyzers/              # NEW: Enhanced analyzers
+│   │   ├── parameter-analyzer.ts
+│   │   ├── return-analyzer.ts
+│   │   └── error-analyzer.ts
+│   └── ... (existing)
+├── embeddings/
+│   ├── similarity-service.ts   # NEW
+│   └── ... (existing)
+├── justification/
+│   ├── prompts/
+│   │   ├── domain-prompts.ts   # NEW
+│   │   └── ... (existing)
+│   ├── context-builder.ts      # NEW: Enhanced context
+│   └── ... (existing)
+└── ... (existing)
+```
+
+---
+
+## Conclusion
+
+This plan transforms Code-Synapse from a structural code index into a comprehensive "second brain" that understands:
+
+1. **Structure** (existing) - What code exists and how it's organized
+2. **Behavior** (new) - What code does, including side effects
+3. **Data Flow** (new) - How data moves through the system
+4. **Patterns** (new) - What architectural patterns are used
+5. **Intent** (enhanced) - Why code exists and its business purpose
+6. **Relationships** (enhanced) - How code relates semantically
+
+The phased approach allows incremental delivery of value while building toward the complete vision.
 
 ---
 

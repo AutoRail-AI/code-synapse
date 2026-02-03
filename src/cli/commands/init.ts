@@ -19,22 +19,24 @@ import {
 import {
   MODEL_PRESETS,
   getModelById,
-
   type ModelPreset,
 } from "../../core/llm/index.js";
+import { getDefaultModelId } from "../../core/models/Registry.js";
+import type { ModelVendor } from "../../core/models/interfaces/IModel.js";
+import { getProviderDisplay } from "../provider-display.js";
 
 const logger = createLogger("init");
 
 /**
  * Get default model ID for an API provider
+ * Uses the central Registry as source of truth
  */
-function getDefaultApiModel(provider: "openai" | "anthropic" | "google"): string {
-  const defaults: Record<string, string> = {
-    anthropic: "claude-sonnet-4-20250514",
-    openai: "gpt-4o",
-    google: "gemini-3-pro-preview",
-  };
-  return defaults[provider] || "claude-sonnet-4-20250514";
+function getDefaultApiModel(provider: ModelVendor): string {
+  const defaultModel = getDefaultModelId(provider);
+  if (!defaultModel) {
+    throw new Error(`No default model configured for provider: ${provider}`);
+  }
+  return defaultModel;
 }
 
 export interface InitOptions {
@@ -42,7 +44,7 @@ export interface InitOptions {
   skipLlm?: boolean;
   model?: string;
   /** Model provider (local, openai, anthropic, google) */
-  modelProvider?: "local" | "openai" | "anthropic" | "google";
+  modelProvider?: ModelVendor;
   /** API keys for cloud providers */
   apiKeys?: {
     openai?: string;
@@ -259,7 +261,7 @@ async function detectProjectConfig(options: InitOptions): Promise<ProjectConfig>
   const extendedConfig = config as ProjectConfig & {
     skipLlm?: boolean;
     llmModel?: string;
-    modelProvider?: "local" | "openai" | "anthropic" | "google";
+    modelProvider?: ModelVendor;
     apiKeys?: {
       openai?: string;
       anthropic?: string;
@@ -273,7 +275,7 @@ async function detectProjectConfig(options: InitOptions): Promise<ProjectConfig>
     // Set model based on provider type
     let modelId: string;
 
-    if (options.modelProvider && options.modelProvider !== "local") {
+    if (options.modelProvider && !getProviderDisplay(options.modelProvider).isLocal) {
       // For API providers, use the model name directly (e.g., "claude-3-5-sonnet", "gpt-4o")
       // Don't validate against local model list
       modelId = options.model || getDefaultApiModel(options.modelProvider);

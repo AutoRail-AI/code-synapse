@@ -299,3 +299,121 @@ export const ALL_MODELS: ModelConfig[] = [
     ...ANTHROPIC_MODELS,
     ...GOOGLE_MODELS,
 ];
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Get provider metadata by vendor ID
+ */
+export function getProviderMetadata(vendorId: string): ProviderMetadata | undefined {
+    return PROVIDER_METADATA[vendorId];
+}
+
+/**
+ * Get all registered provider IDs
+ */
+export function getAllProviderIds(): string[] {
+    return Object.keys(PROVIDER_METADATA);
+}
+
+/**
+ * Get the default model ID for a provider
+ */
+export function getDefaultModelId(vendorId: string): string | undefined {
+    return PROVIDER_METADATA[vendorId]?.defaultModelId;
+}
+
+/**
+ * Get the environment variable name for a provider's API key
+ */
+export function getEnvVarName(vendorId: string): string | null {
+    return PROVIDER_METADATA[vendorId]?.envVar ?? null;
+}
+
+/**
+ * Validate an API key for a specific provider
+ */
+export function validateApiKey(vendorId: string, apiKey: string): { valid: boolean; message?: string } {
+    if (!apiKey || apiKey.trim().length === 0) {
+        return { valid: false, message: "API key is required" };
+    }
+
+    // Provider-specific validation patterns
+    switch (vendorId) {
+        case "anthropic":
+            if (!apiKey.startsWith("sk-ant-")) {
+                return { valid: false, message: "Anthropic API keys start with 'sk-ant-'" };
+            }
+            break;
+        case "openai":
+            if (!apiKey.startsWith("sk-")) {
+                return { valid: false, message: "OpenAI API keys start with 'sk-'" };
+            }
+            break;
+        case "google":
+            // Google API keys don't have a specific prefix pattern
+            break;
+        case "local":
+            // Local models don't require API keys
+            return { valid: true };
+    }
+
+    return { valid: true };
+}
+
+/**
+ * Check if a provider requires an API key
+ */
+export function requiresApiKey(vendorId: string): boolean {
+    const metadata = PROVIDER_METADATA[vendorId];
+    return metadata !== undefined && metadata.envVar !== null;
+}
+
+/**
+ * Get a model configuration by ID
+ */
+export function getModelById(modelId: string): ModelConfig | undefined {
+    return ALL_MODELS.find((m) => m.id === modelId);
+}
+
+/**
+ * Get all models for a specific vendor
+ */
+export function getModelsByVendor(vendorId: string): ModelConfig[] {
+    return ALL_MODELS.filter((m) => m.vendor === vendorId);
+}
+
+/**
+ * Get cost information for a model
+ */
+export function getModelCost(modelId: string): { inputCost: number; outputCost: number } | undefined {
+    const model = getModelById(modelId);
+    if (!model) return undefined;
+    return {
+        inputCost: model.costPer1kInputTokens,
+        outputCost: model.costPer1kOutputTokens,
+    };
+}
+
+/**
+ * Get API key from environment for a provider
+ */
+export function getApiKeyFromEnv(vendorId: string): string | undefined {
+    const envVar = getEnvVarName(vendorId);
+    if (envVar) {
+        return process.env[envVar];
+    }
+    return undefined;
+}
+
+/**
+ * Get provider display name
+ */
+export function getProviderDisplayName(vendorId: string): string {
+    return PROVIDER_METADATA[vendorId]?.name ?? vendorId;
+}
+
+// Note: setApiKeyInEnv and createProviderEnableMap have been moved to
+// internal/index.ts. Use createConfiguredModelRouter from the public API instead.

@@ -130,6 +130,15 @@ export class CozoGraphStore implements IGraphStore {
     return this.initialized && this.db.isReady;
   }
 
+  /**
+   * Get the underlying database instance.
+   * Used by storage adapter factory to create adapters.
+   * @internal
+   */
+  get database(): GraphDatabase {
+    return this.db;
+  }
+
   // ===========================================================================
   // Write Operations
   // ===========================================================================

@@ -1,8 +1,8 @@
 /**
  * Local Model Provider
  *
- * Wraps the existing node-llama-cpp based LLM service to provide
- * a unified interface for local model inference.
+ * Provides a unified interface for local model inference via node-llama-cpp.
+ * Uses dependency injection for the LLM service factory to avoid circular dependencies.
  */
 
 import type {
@@ -13,10 +13,30 @@ import type {
   StreamChunk,
   ModelVendor,
 } from "../interfaces/IModel.js";
-import { LOCAL_MODELS } from "../Registry.js";
+import { LOCAL_MODELS, getDefaultModelId } from "../Registry.js";
 import { createLogger } from "../../telemetry/logger.js";
+import type { ILocalLLMService, LocalLLMServiceFactory } from "../internal/index.js";
+import { createDefaultLocalLLMService } from "../internal/index.js";
 
 const logger = createLogger("local-provider");
+
+// =============================================================================
+// Local Provider Configuration
+// =============================================================================
+
+export interface LocalProviderConfig {
+  /**
+   * Factory function to create LLM services
+   * If not provided, uses the default node-llama-cpp based service
+   */
+  llmServiceFactory?: LocalLLMServiceFactory;
+
+  /**
+   * Default model ID to initialize with
+   * If not provided, uses Registry default
+   */
+  defaultModelId?: string;
+}
 
 // =============================================================================
 // Local Provider Implementation
@@ -25,10 +45,22 @@ const logger = createLogger("local-provider");
 export class LocalModelProvider implements IModelProvider {
   readonly vendorId: ModelVendor = "local";
 
-  private llmService: unknown = null;
+  private llmService: ILocalLLMService | null = null;
+  private llmServiceFactory: LocalLLMServiceFactory;
+  private defaultModelId: string;
   private _isAvailable = false;
   private _isReady = false;
   private currentModelId: string | null = null;
+
+  constructor(config?: LocalProviderConfig) {
+    // Use injected factory or default
+    this.llmServiceFactory = config?.llmServiceFactory ?? createDefaultLocalLLMService;
+    const registryDefault = getDefaultModelId("local");
+    if (!config?.defaultModelId && !registryDefault) {
+      throw new Error("No default model configured for local provider in Registry");
+    }
+    this.defaultModelId = config?.defaultModelId ?? registryDefault!;
+  }
 
   get isAvailable(): boolean {
     return this._isAvailable;
@@ -38,15 +70,12 @@ export class LocalModelProvider implements IModelProvider {
     logger.debug("Initializing local model provider");
 
     try {
-      // Check if node-llama-cpp is available by trying to import and initialize
-      const { createInitializedLLMService } = await import("../../llm/index.js");
-
-      // Try to initialize with default model
-      this.llmService = await createInitializedLLMService({ modelId: "qwen2.5-coder-3b" });
-      this.currentModelId = "qwen2.5-coder-3b";
+      // Initialize with default model using injected factory
+      this.llmService = await this.llmServiceFactory(this.defaultModelId);
+      this.currentModelId = this.defaultModelId;
       this._isAvailable = true;
       this._isReady = true;
-      logger.info("Local model provider initialized");
+      logger.info({ modelId: this.defaultModelId }, "Local model provider initialized");
     } catch (error) {
       logger.warn({ error }, "Failed to initialize local model provider - local models unavailable");
       this._isAvailable = false;
@@ -80,11 +109,7 @@ export class LocalModelProvider implements IModelProvider {
     }
 
     try {
-      const llm = this.llmService as {
-        generateText: (prompt: string, options?: { maxTokens?: number; temperature?: number }) => Promise<string>;
-      };
-
-      const result = await llm.generateText(this.formatPrompt(request), {
+      const result = await this.llmService.generateText(this.formatPrompt(request), {
         maxTokens: request.parameters?.maxTokens ?? 2048,
         temperature: request.parameters?.temperature ?? 0.7,
       });
@@ -122,18 +147,9 @@ export class LocalModelProvider implements IModelProvider {
       await this.switchModel(modelId);
     }
 
-    // Check if streaming is supported
-    const llm = this.llmService as {
-      streamText?: (
-        prompt: string,
-        options?: { maxTokens?: number; temperature?: number }
-      ) => AsyncIterable<string>;
-      generateText: (prompt: string, options?: { maxTokens?: number; temperature?: number }) => Promise<string>;
-    };
-
-    if (llm.streamText) {
+    if (this.llmService.streamText) {
       let totalContent = "";
-      for await (const chunk of llm.streamText(this.formatPrompt(request), {
+      for await (const chunk of this.llmService.streamText(this.formatPrompt(request), {
         maxTokens: request.parameters?.maxTokens ?? 2048,
         temperature: request.parameters?.temperature ?? 0.7,
       })) {
@@ -156,7 +172,7 @@ export class LocalModelProvider implements IModelProvider {
       };
     } else {
       // Fallback to non-streaming
-      const result = await llm.generateText(this.formatPrompt(request), {
+      const result = await this.llmService.generateText(this.formatPrompt(request), {
         maxTokens: request.parameters?.maxTokens ?? 2048,
         temperature: request.parameters?.temperature ?? 0.7,
       });
@@ -209,13 +225,10 @@ export class LocalModelProvider implements IModelProvider {
   }
 
   async shutdown(): Promise<void> {
-    if (this.llmService) {
-      const llm = this.llmService as { shutdown?: () => Promise<void> };
-      if (llm.shutdown) {
-        await llm.shutdown();
-      }
-      this.llmService = null;
+    if (this.llmService?.shutdown) {
+      await this.llmService.shutdown();
     }
+    this.llmService = null;
     this._isReady = false;
     logger.info("Local model provider shutdown");
   }
@@ -240,18 +253,13 @@ export class LocalModelProvider implements IModelProvider {
     logger.debug({ from: this.currentModelId, to: modelId }, "Switching local model");
 
     try {
-      const { createInitializedLLMService } = await import("../../llm/index.js");
-
       // Shutdown current model
-      if (this.llmService) {
-        const llm = this.llmService as { shutdown?: () => Promise<void> };
-        if (llm.shutdown) {
-          await llm.shutdown();
-        }
+      if (this.llmService?.shutdown) {
+        await this.llmService.shutdown();
       }
 
-      // Initialize new model
-      this.llmService = await createInitializedLLMService({ modelId });
+      // Initialize new model using injected factory
+      this.llmService = await this.llmServiceFactory(modelId);
       this.currentModelId = modelId;
 
       logger.info({ modelId }, "Switched to local model");
@@ -266,6 +274,10 @@ export class LocalModelProvider implements IModelProvider {
 // Factory Function
 // =============================================================================
 
-export function createLocalProvider(): LocalModelProvider {
-  return new LocalModelProvider();
+/**
+ * Create a local model provider
+ * @param config Optional configuration including custom LLM service factory
+ */
+export function createLocalProvider(config?: LocalProviderConfig): LocalModelProvider {
+  return new LocalModelProvider(config);
 }

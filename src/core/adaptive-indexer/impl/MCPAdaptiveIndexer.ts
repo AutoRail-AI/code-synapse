@@ -31,7 +31,7 @@ import {
   createAdaptiveReindexRequest,
   DEFAULT_ADAPTIVE_CONFIG,
 } from "../models/indexing-context.js";
-import type { GraphDatabase } from "../../graph/database.js";
+import type { IStorageAdapter } from "../../graph/interfaces/IStorageAdapter.js";
 import type { IChangeLedger } from "../../ledger/interfaces/IChangeLedger.js";
 import { createAdaptiveIndexingEvent } from "../../ledger/models/ledger-events.js";
 import { createLogger } from "../../telemetry/logger.js";
@@ -43,7 +43,7 @@ const logger = createLogger("adaptive-indexer");
 // =============================================================================
 
 export class MCPAdaptiveIndexer implements IAdaptiveIndexer, IMCPObserver {
-  private db: GraphDatabase;
+  private adapter: IStorageAdapter;
   private ledger: IChangeLedger | null;
   private config: AdaptiveIndexerConfig;
   private reindexTrigger: ReindexTrigger | null = null;
@@ -64,11 +64,11 @@ export class MCPAdaptiveIndexer implements IAdaptiveIndexer, IMCPObserver {
   private reindexDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    db: GraphDatabase,
+    adapter: IStorageAdapter,
     ledger: IChangeLedger | null,
     config: AdaptiveIndexerConfig
   ) {
-    this.db = db;
+    this.adapter = adapter;
     this.ledger = ledger;
     this.config = config;
   }
@@ -808,22 +808,7 @@ export class MCPAdaptiveIndexer implements IAdaptiveIndexer, IMCPObserver {
 
   private async persistSession(session: AdaptiveSession): Promise<void> {
     try {
-      const query = `
-        ?[id, startedAt, lastActivityAt, endedAt, queryCount, changeCount,
-          correlationCount, activeFiles, activeEntities, activeDomains,
-          triggeredReindexCount, entitiesReindexed] <- [[
-          $id, $startedAt, $lastActivityAt, $endedAt, $queryCount, $changeCount,
-          $correlationCount, $activeFiles, $activeEntities, $activeDomains,
-          $triggeredReindexCount, $entitiesReindexed
-        ]]
-        :put AdaptiveSession {
-          id, startedAt, lastActivityAt, endedAt, queryCount, changeCount,
-          correlationCount, activeFiles, activeEntities, activeDomains,
-          triggeredReindexCount, entitiesReindexed
-        }
-      `;
-
-      await this.db.query(query, {
+      const record = {
         id: session.id,
         startedAt: session.startedAt,
         lastActivityAt: session.lastActivityAt,
@@ -836,7 +821,9 @@ export class MCPAdaptiveIndexer implements IAdaptiveIndexer, IMCPObserver {
         activeDomains: JSON.stringify(session.activeDomains),
         triggeredReindexCount: session.triggeredReindexCount,
         entitiesReindexed: session.entitiesReindexed,
-      });
+      };
+
+      await this.adapter.storeOne("AdaptiveSession", record);
     } catch (error) {
       logger.error({ error, sessionId: session.id }, "Failed to persist session");
     }
@@ -848,11 +835,11 @@ export class MCPAdaptiveIndexer implements IAdaptiveIndexer, IMCPObserver {
 // =============================================================================
 
 export async function createAdaptiveIndexer(
-  db: GraphDatabase,
+  adapter: IStorageAdapter,
   ledger: IChangeLedger | null,
   config?: Partial<AdaptiveIndexerConfig>
 ): Promise<IAdaptiveIndexer> {
-  const indexer = new MCPAdaptiveIndexer(db, ledger, {
+  const indexer = new MCPAdaptiveIndexer(adapter, ledger, {
     ...DEFAULT_ADAPTIVE_CONFIG,
     ...config,
   });

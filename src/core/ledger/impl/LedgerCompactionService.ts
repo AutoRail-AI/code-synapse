@@ -24,7 +24,7 @@ import type {
   MCPQueryTrace,
 } from "../models/compacted-entry.js";
 import { createCompactedEntry, DEFAULT_COMPACTION_CONFIG } from "../models/compacted-entry.js";
-import type { GraphDatabase } from "../../graph/database.js";
+import type { IStorageAdapter } from "../../graph/interfaces/IStorageAdapter.js";
 import { createLogger } from "../../telemetry/logger.js";
 
 const logger = createLogger("ledger-compaction");
@@ -61,11 +61,14 @@ interface CompactedEntryRow {
   content_hash: string | null;
 }
 
-export class CozoCompactionStorage implements ICompactionStorage {
-  private db: GraphDatabase;
+// Table name constant
+const TABLE_NAME = "CompactedLedgerEntry";
 
-  constructor(db: GraphDatabase) {
-    this.db = db;
+export class CozoCompactionStorage implements ICompactionStorage {
+  private adapter: IStorageAdapter;
+
+  constructor(adapter: IStorageAdapter) {
+    this.adapter = adapter;
   }
 
   async initialize(): Promise<void> {
@@ -74,104 +77,31 @@ export class CozoCompactionStorage implements ICompactionStorage {
   }
 
   async store(entry: CompactedLedgerEntry): Promise<void> {
-    const query = `
-      ?[id, session_id, timestamp_start, timestamp_end, source,
-        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
-        unique_tools_used, code_accessed, code_changes, semantic_impact,
-        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
-        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash] <- [[
-        $id, $sessionId, $timestampStart, $timestampEnd, $source,
-        $intentSummary, $intentCategory, $userPrompts, $mcpQueries, $totalMcpQueries,
-        $uniqueToolsUsed, $codeAccessed, $codeChanges, $semanticImpact,
-        $indexUpdates, $memoryUpdates, $memoryRulesApplied, $rawEventIds, $rawEventCount,
-        $confidenceScore, $completeness, $correlatedSessions, $gitCommitSha, $gitBranch, $contentHash
-      ]]
-      :put CompactedLedgerEntry {
-        id, session_id, timestamp_start, timestamp_end, source,
-        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
-        unique_tools_used, code_accessed, code_changes, semantic_impact,
-        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
-        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash
-      }
-    `;
-
-    await this.db.query(query, {
-      id: entry.id,
-      sessionId: entry.sessionId,
-      timestampStart: entry.timestampStart,
-      timestampEnd: entry.timestampEnd,
-      source: entry.source,
-      intentSummary: entry.intentSummary,
-      intentCategory: entry.intentCategory,
-      userPrompts: JSON.stringify(entry.userPrompts),
-      mcpQueries: JSON.stringify(entry.mcpQueries),
-      totalMcpQueries: entry.totalMcpQueries,
-      uniqueToolsUsed: JSON.stringify(entry.uniqueToolsUsed),
-      codeAccessed: JSON.stringify(entry.codeAccessed),
-      codeChanges: JSON.stringify(entry.codeChanges),
-      semanticImpact: JSON.stringify(entry.semanticImpact),
-      indexUpdates: JSON.stringify(entry.indexUpdates),
-      memoryUpdates: JSON.stringify(entry.memoryUpdates),
-      memoryRulesApplied: JSON.stringify(entry.memoryRulesApplied),
-      rawEventIds: JSON.stringify(entry.rawEventIds),
-      rawEventCount: entry.rawEventCount,
-      confidenceScore: entry.confidenceScore,
-      completeness: entry.completeness,
-      correlatedSessions: JSON.stringify(entry.correlatedSessions),
-      gitCommitSha: entry.gitCommitSha ?? null,
-      gitBranch: entry.gitBranch ?? null,
-      contentHash: entry.contentHash ?? null,
-    });
+    const record = this.entryToRecord(entry);
+    await this.adapter.storeOne(TABLE_NAME, record as unknown as Record<string, unknown>);
   }
 
   async storeBatch(entries: CompactedLedgerEntry[]): Promise<void> {
-    for (const entry of entries) {
-      await this.store(entry);
-    }
+    const records = entries.map((entry) => this.entryToRecord(entry));
+    await this.adapter.store(TABLE_NAME, records as unknown as Record<string, unknown>[]);
   }
 
   async getById(id: string): Promise<CompactedLedgerEntry | null> {
-    const query = `
-      ?[id, session_id, timestamp_start, timestamp_end, source,
-        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
-        unique_tools_used, code_accessed, code_changes, semantic_impact,
-        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
-        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash] :=
-        *CompactedLedgerEntry{
-          id, session_id, timestamp_start, timestamp_end, source,
-          intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
-          unique_tools_used, code_accessed, code_changes, semantic_impact,
-          index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
-          confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash
-        },
-        id == $id
-    `;
+    const record = await this.adapter.findOne<CompactedEntryRow>(TABLE_NAME, [
+      { field: "id", operator: "eq", value: id },
+    ]);
 
-    const rows = await this.db.query<CompactedEntryRow>(query, { id });
-    if (rows.length === 0) return null;
-    return this.rowToEntry(rows[0]!);
+    if (!record) return null;
+    return this.rowToEntry(record);
   }
 
   async getBySessionId(sessionId: string): Promise<CompactedLedgerEntry | null> {
-    const query = `
-      ?[id, session_id, timestamp_start, timestamp_end, source,
-        intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
-        unique_tools_used, code_accessed, code_changes, semantic_impact,
-        index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
-        confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash] :=
-        *CompactedLedgerEntry{
-          id, session_id, timestamp_start, timestamp_end, source,
-          intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
-          unique_tools_used, code_accessed, code_changes, semantic_impact,
-          index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
-          confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash
-        },
-        session_id == $sessionId
-    `;
+    const record = await this.adapter.findOne<CompactedEntryRow>(TABLE_NAME, [
+      { field: "session_id", operator: "eq", value: sessionId },
+    ]);
 
-    const rows = await this.db.query<CompactedEntryRow>(query, { sessionId });
-    if (rows.length === 0) return null;
-    return this.rowToEntry(rows[0]!);
+    if (!record) return null;
+    return this.rowToEntry(record);
   }
 
   async query(queryParams: CompactedEntryQuery): Promise<CompactedLedgerEntry[]> {
@@ -200,13 +130,14 @@ export class CozoCompactionStorage implements ICompactionStorage {
 
     const whereClause = conditions.length > 0 ? `, ${conditions.join(", ")}` : "";
 
+    // Use rawQuery for complex ordering
     const dbQuery = `
       ?[id, session_id, timestamp_start, timestamp_end, source,
         intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
         unique_tools_used, code_accessed, code_changes, semantic_impact,
         index_updates, memory_updates, memory_rules_applied, raw_event_ids, raw_event_count,
         confidence_score, completeness, correlated_sessions, git_commit_sha, git_branch, content_hash] :=
-        *CompactedLedgerEntry{
+        *${TABLE_NAME}{
           id, session_id, timestamp_start, timestamp_end, source,
           intent_summary, intent_category, user_prompts, mcp_queries, total_mcp_queries,
           unique_tools_used, code_accessed, code_changes, semantic_impact,
@@ -218,7 +149,7 @@ export class CozoCompactionStorage implements ICompactionStorage {
       :offset $offset
     `;
 
-    const rows = await this.db.query<CompactedEntryRow>(dbQuery, params);
+    const rows = await this.adapter.rawQuery<CompactedEntryRow>(dbQuery, params);
     return rows.map((row) => this.rowToEntry(row));
   }
 
@@ -247,17 +178,19 @@ export class CozoCompactionStorage implements ICompactionStorage {
   }
 
   async deleteOlderThan(timestamp: string): Promise<number> {
+    // Use rawQuery for aggregation
     const countQuery = `
-      ?[cnt] := cnt = count(id), *CompactedLedgerEntry{id, timestamp_end: ts}, ts < $timestamp
+      ?[cnt] := cnt = count(id), *${TABLE_NAME}{id, timestamp_end: ts}, ts < $timestamp
     `;
-    const countRows = await this.db.query<{ cnt: number }>(countQuery, { timestamp });
+    const countRows = await this.adapter.rawQuery<{ cnt: number }>(countQuery, { timestamp });
     const count = countRows[0]?.cnt ?? 0;
 
+    // Use rawExecute for delete
     const deleteQuery = `
-      ?[id] := *CompactedLedgerEntry{id, timestamp_end: ts}, ts < $timestamp
-      :rm CompactedLedgerEntry {id}
+      ?[id] := *${TABLE_NAME}{id, timestamp_end: ts}, ts < $timestamp
+      :rm ${TABLE_NAME} {id}
     `;
-    await this.db.query(deleteQuery, { timestamp });
+    await this.adapter.rawExecute(deleteQuery, { timestamp });
 
     return count;
   }
@@ -289,6 +222,39 @@ export class CozoCompactionStorage implements ICompactionStorage {
     };
   }
 
+  // ===========================================================================
+  // Conversion Helpers
+  // ===========================================================================
+
+  private entryToRecord(entry: CompactedLedgerEntry): CompactedEntryRow {
+    return {
+      id: entry.id,
+      session_id: entry.sessionId,
+      timestamp_start: entry.timestampStart,
+      timestamp_end: entry.timestampEnd,
+      source: entry.source,
+      intent_summary: entry.intentSummary,
+      intent_category: entry.intentCategory,
+      user_prompts: JSON.stringify(entry.userPrompts),
+      mcp_queries: JSON.stringify(entry.mcpQueries),
+      total_mcp_queries: entry.totalMcpQueries,
+      unique_tools_used: JSON.stringify(entry.uniqueToolsUsed),
+      code_accessed: JSON.stringify(entry.codeAccessed),
+      code_changes: JSON.stringify(entry.codeChanges),
+      semantic_impact: JSON.stringify(entry.semanticImpact),
+      index_updates: JSON.stringify(entry.indexUpdates),
+      memory_updates: JSON.stringify(entry.memoryUpdates),
+      memory_rules_applied: JSON.stringify(entry.memoryRulesApplied),
+      raw_event_ids: JSON.stringify(entry.rawEventIds),
+      raw_event_count: entry.rawEventCount,
+      confidence_score: entry.confidenceScore,
+      completeness: entry.completeness,
+      correlated_sessions: JSON.stringify(entry.correlatedSessions),
+      git_commit_sha: entry.gitCommitSha ?? null,
+      git_branch: entry.gitBranch ?? null,
+      content_hash: entry.contentHash ?? null,
+    };
+  }
 
   private rowToEntry(row: CompactedEntryRow): CompactedLedgerEntry {
     return {
@@ -996,8 +962,8 @@ export class LedgerCompactionService implements ILedgerCompaction {
 // Factory Functions
 // =============================================================================
 
-export function createCompactionStorage(db: GraphDatabase): ICompactionStorage {
-  return new CozoCompactionStorage(db);
+export function createCompactionStorage(adapter: IStorageAdapter): ICompactionStorage {
+  return new CozoCompactionStorage(adapter);
 }
 
 export function createIntentAnalyzer(): IIntentAnalyzer {
@@ -1005,11 +971,11 @@ export function createIntentAnalyzer(): IIntentAnalyzer {
 }
 
 export function createLedgerCompaction(
-  db: GraphDatabase,
+  adapter: IStorageAdapter,
   ledger: IChangeLedger,
   config?: Partial<CompactionConfig>
 ): ILedgerCompaction {
-  const storage = createCompactionStorage(db);
+  const storage = createCompactionStorage(adapter);
   const analyzer = createIntentAnalyzer();
   return new LedgerCompactionService(storage, ledger, analyzer, config);
 }

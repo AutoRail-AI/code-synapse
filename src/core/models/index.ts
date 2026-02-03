@@ -40,7 +40,153 @@ import { createLocalProvider } from "./providers/LocalProvider.js";
 import { createOpenAIProvider } from "./providers/OpenAIProvider.js";
 import { createGoogleProvider } from "./providers/GoogleProvider.js";
 import { createAnthropicProvider } from "./providers/AnthropicProvider.js";
-import type { RoutingPolicy } from "./interfaces/IModel.js";
+import type { RoutingPolicy, IModelRouter, ModelVendor } from "./interfaces/IModel.js";
+import {
+  getDefaultModelId,
+  getApiKeyFromEnv,
+  requiresApiKey,
+  validateApiKey,
+  getProviderDisplayName,
+} from "./Registry.js";
+// Internal utility - not part of public API
+import { setApiKeyInEnv } from "./internal/index.js";
+
+// =============================================================================
+// High-Level Public API - createConfiguredModelRouter
+// =============================================================================
+
+/**
+ * Configuration for creating a model router
+ * This is the ONLY configuration consumers need to provide
+ */
+export interface ModelRouterConfig {
+  /**
+   * The provider to use: "local", "openai", "anthropic", "google"
+   * Default: "local"
+   */
+  provider?: ModelVendor | string;
+
+  /**
+   * API key for cloud providers
+   * If not provided, reads from environment variable
+   * Not required for "local" provider
+   */
+  apiKey?: string;
+
+  /**
+   * Specific model ID to use
+   * If not provided, uses the provider's default model
+   */
+  modelId?: string;
+
+  /**
+   * Custom routing policy
+   * If not provided, uses a sensible default based on provider
+   */
+  routingPolicy?: RoutingPolicy;
+}
+
+/**
+ * Result from creating a configured model router
+ */
+export interface ConfiguredModelRouterResult {
+  /** The initialized model router */
+  router: IModelRouter;
+  /** The provider that was configured */
+  provider: string;
+  /** The model ID that will be used (default or specified) */
+  modelId: string;
+  /** Whether the provider requires an API key */
+  requiresApiKey: boolean;
+  /** Human-readable provider name */
+  providerDisplayName: string;
+}
+
+/**
+ * Create a fully configured and initialized model router
+ *
+ * This is the PRIMARY public API for obtaining a model router.
+ * It handles all internal setup including:
+ * - API key injection into environment
+ * - Provider selection and initialization
+ * - Default model selection
+ * - Routing policy configuration
+ *
+ * @example
+ * ```typescript
+ * // Local models (no API key needed)
+ * const { router } = await createConfiguredModelRouter({ provider: "local" });
+ *
+ * // Cloud provider with API key
+ * const { router } = await createConfiguredModelRouter({
+ *   provider: "anthropic",
+ *   apiKey: "sk-ant-xxx"
+ * });
+ *
+ * // Specific model
+ * const { router } = await createConfiguredModelRouter({
+ *   provider: "openai",
+ *   apiKey: process.env.OPENAI_API_KEY,
+ *   modelId: "gpt-4o-mini"
+ * });
+ * ```
+ */
+export async function createConfiguredModelRouter(
+  config: ModelRouterConfig = {}
+): Promise<ConfiguredModelRouterResult> {
+  const provider = config.provider ?? "local";
+
+  // Handle API key: use provided key, or check environment
+  let apiKey = config.apiKey;
+  const needsApiKey = requiresApiKey(provider);
+
+  if (needsApiKey) {
+    // Try to get from environment if not provided
+    if (!apiKey) {
+      apiKey = getApiKeyFromEnv(provider);
+    }
+
+    // Set in environment for providers that read from env
+    if (apiKey) {
+      setApiKeyInEnv(provider, apiKey);
+    }
+
+    // Validate if we have a key
+    if (apiKey) {
+      const validation = validateApiKey(provider, apiKey);
+      if (!validation.valid) {
+        throw new Error(`Invalid API key for ${getProviderDisplayName(provider)}: ${validation.message}`);
+      }
+    }
+  }
+
+  // Get model ID: use provided, or get default
+  // Use provided model ID, or get default from Registry
+  const defaultModel = getDefaultModelId(provider);
+  if (!config.modelId && !defaultModel) {
+    throw new Error(`No default model configured for provider: ${provider}`);
+  }
+  const modelId = config.modelId ?? defaultModel!;
+
+  // Create enable map for just this provider
+  const enableMap = {
+    enableLocal: provider === "local",
+    enableOpenAI: provider === "openai",
+    enableAnthropic: provider === "anthropic",
+    enableGoogle: provider === "google",
+  };
+
+  // Create and initialize the router
+  const router = await createInitializedModelRouter(enableMap);
+
+  return {
+    router,
+    provider,
+    modelId,
+    requiresApiKey: needsApiKey,
+    providerDisplayName: getProviderDisplayName(provider),
+  };
+}
 
 /**
  * Create a fully initialized model router with all available providers

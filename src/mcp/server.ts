@@ -19,11 +19,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { ProjectConfig } from "../types/index.js";
 import { createIndexer, type Indexer } from "../core/index.js";
-import type { GraphDatabase } from "../core/graph/index.js";
+import { createStorageAdapter, type GraphDatabase } from "../core/graph/index.js";
 import { createLogger } from "../utils/logger.js";
 import { getConfigPath, readJson } from "../utils/index.js";
 import {
-  createInitializedModelRouter,
+  createConfiguredModelRouter,
+  getDefaultModelId,
   type IModelRouter,
 } from "../core/models/index.js";
 import {
@@ -951,31 +952,26 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const extendedConfig = readJson<CodeSynapseConfig>(configPath);
   const skipLlm = extendedConfig?.skipLlm ?? false;
   const modelProvider = extendedConfig?.modelProvider ?? "local";
-  const modelId = extendedConfig?.llmModel ?? "qwen2.5-coder-3b";
+  const modelId = extendedConfig?.llmModel ?? getDefaultModelId(modelProvider);
 
   // Get API key from config if available
   const apiKey = extendedConfig?.apiKeys?.[modelProvider as keyof typeof extendedConfig.apiKeys];
-    
-  // Set API key in environment for providers
-  if (apiKey) {
-    if (modelProvider === "openai") process.env.OPENAI_API_KEY = apiKey;
-    if (modelProvider === "anthropic") process.env.ANTHROPIC_API_KEY = apiKey;
-    if (modelProvider === "google") process.env.GOOGLE_API_KEY = apiKey;
-  }
 
   // Initialize Model Router if enabled
   if (!skipLlm) {
     try {
       logger.info({ modelId, provider: modelProvider }, "Initializing model router");
-      
-      modelRouter = await createInitializedModelRouter({
-        enableLocal: modelProvider === "local",
-        enableOpenAI: modelProvider === "openai",
-        enableAnthropic: modelProvider === "anthropic",
-        enableGoogle: modelProvider === "google",
+
+      // Use clean public API - handles API key injection and provider setup
+      const result = await createConfiguredModelRouter({
+        provider: modelProvider,
+        apiKey,
+        modelId,
       });
 
-      logger.info({ modelId, provider: modelProvider }, "Model router initialized");
+      modelRouter = result.router;
+
+      logger.info({ modelId: result.modelId, provider: result.provider }, "Model router initialized");
     } catch (err) {
       logger.warn(
         { error: err, modelId },
@@ -1001,7 +997,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
 
   // Initialize change ledger (non-fatal - system works without it)
   try {
-    const ledgerStorage = createLedgerStorage(graphStore);
+    const ledgerAdapter = createStorageAdapter(graphStore);
+    const ledgerStorage = createLedgerStorage(ledgerAdapter);
     changeLedger = createChangeLedger(ledgerStorage, {
       memoryCacheSize: 10000,
       persistToDisk: true,
