@@ -16,7 +16,6 @@ import type { IGraphViewer } from "../interfaces/IGraphViewer.js";
 
 const logger = createLogger("viewer-server");
 import type { CozoGraphViewer } from "../impl/CozoGraphViewer.js";
-import type { IClassificationStorage } from "../../core/classification/interfaces/IClassificationEngine.js";
 import type { IChangeLedger, LedgerQuery } from "../../core/ledger/interfaces/IChangeLedger.js";
 import type { IAdaptiveIndexer } from "../../core/adaptive-indexer/interfaces/IAdaptiveIndexer.js";
 import type { IProjectMemory } from "../../core/memory/interfaces/IProjectMemory.js";
@@ -24,7 +23,7 @@ import type { MemoryQuery } from "../../core/memory/models/memory-models.js";
 import type { ILedgerCompaction } from "../../core/ledger/interfaces/ILedgerCompaction.js";
 import type { CompactedEntryQuery } from "../../core/ledger/models/compacted-entry.js";
 import type { IReconciliationWorker } from "../../core/reconciliation/interfaces/IReconciliation.js";
-import type { ClassificationCategory, DomainArea, InfrastructureLayer } from "../../core/classification/models/classification.js";
+
 import type { LedgerEventType, EventSource } from "../../core/ledger/models/ledger-events.js";
 import type { MemoryRuleScope, MemoryRuleCategory } from "../../core/memory/models/memory-models.js";
 
@@ -38,7 +37,6 @@ interface ServerConfig {
 }
 
 interface ViewerServerOptions {
-  classificationStorage?: IClassificationStorage;
   changeLedger?: IChangeLedger;
   adaptiveIndexer?: IAdaptiveIndexer;
   projectMemory?: IProjectMemory;
@@ -87,7 +85,6 @@ export class ViewerServer {
   private server: http.Server | null = null;
   private routes: Route[] = [];
   private staticDir: string;
-  private classificationStorage?: IClassificationStorage;
   private changeLedger?: IChangeLedger;
   private adaptiveIndexer?: IAdaptiveIndexer;
   private projectMemory?: IProjectMemory;
@@ -96,7 +93,6 @@ export class ViewerServer {
 
   constructor(viewer: IGraphViewer, options?: ViewerServerOptions) {
     this.viewer = viewer;
-    this.classificationStorage = options?.classificationStorage;
     this.changeLedger = options?.changeLedger;
     this.adaptiveIndexer = options?.adaptiveIndexer;
     this.projectMemory = options?.projectMemory;
@@ -183,12 +179,13 @@ export class ViewerServer {
     this.addRoute("GET", "/api/justifications/:entityId/ancestors", this.handleGetJustificationAncestors.bind(this));
     this.addRoute("GET", "/api/justifications/:entityId", this.handleGetJustification.bind(this));
 
-    // Classification (Domain/Infrastructure)
+    // Classification (Unified Justification now handles this)
     this.addRoute("GET", "/api/classifications/stats", this.handleClassificationStats.bind(this));
     this.addRoute("GET", "/api/classifications", this.handleListClassifications.bind(this));
     this.addRoute("GET", "/api/classifications/search", this.handleSearchClassifications.bind(this));
-    this.addRoute("GET", "/api/classifications/domain/:area", this.handleClassificationsByDomain.bind(this));
-    this.addRoute("GET", "/api/classifications/infrastructure/:layer", this.handleClassificationsByInfrastructure.bind(this));
+    // Deprecated specialized routes redirected or removed in future
+    // this.addRoute("GET", "/api/classifications/domain/:area", this.handleClassificationsByDomain.bind(this));
+    // this.addRoute("GET", "/api/classifications/infrastructure/:layer", this.handleClassificationsByInfrastructure.bind(this));
     this.addRoute("GET", "/api/classifications/:entityId", this.handleGetClassification.bind(this));
 
     // Change Ledger (Observability)
@@ -232,7 +229,6 @@ export class ViewerServer {
     // Operations (POST endpoints for triggering actions)
     this.addRoute("POST", "/api/operations/reindex", this.handleOperationReindex.bind(this));
     this.addRoute("POST", "/api/operations/justify", this.handleOperationJustify.bind(this));
-    this.addRoute("POST", "/api/operations/classify", this.handleOperationClassify.bind(this));
 
     // Health
     this.addRoute("GET", "/api/health", this.handleHealth.bind(this));
@@ -710,29 +706,23 @@ export class ViewerServer {
 
     const functions = await this.viewer.listFunctions({ limit, offset, orderBy, orderDirection });
 
-    // Enhance with justification and classification data
+    // Enhance with justification data
     const enhanced = await Promise.all(
       functions.map(async (fn) => {
-        const [justification, classification] = await Promise.all([
-          this.viewer.getJustification(fn.id).catch((err) => {
-            logger.debug({ error: err, functionId: fn.id }, "Failed to get justification for function");
-            return null;
-          }),
-          this.classificationStorage?.get(fn.id).catch((err) => {
-            logger.debug({ error: err, functionId: fn.id }, "Failed to get classification for function");
-            return null;
-          }),
-        ]);
+        const justification = await this.viewer.getJustification(fn.id).catch((err) => {
+          logger.debug({ error: err, functionId: fn.id }, "Failed to get justification for function");
+          return null;
+        });
 
         return {
           ...fn,
           kind: 'function' as const,
           confidence: justification?.confidenceScore,
           justification: justification?.purposeSummary,
-          classification: classification?.category,
-          subCategory: classification?.category === 'domain'
-            ? classification?.domainMetadata?.area
-            : classification?.infrastructureMetadata?.layer,
+          classification: justification?.category,
+          subCategory: justification?.category === 'domain'
+            ? justification?.domain
+            : justification?.architecturalPattern, // Fallback infrastructure distinction
         };
       })
     );
@@ -812,29 +802,23 @@ export class ViewerServer {
 
     const classes = await this.viewer.listClasses({ limit, offset, orderBy, orderDirection });
 
-    // Enhance with justification and classification data
+    // Enhance with justification data
     const enhanced = await Promise.all(
       classes.map(async (cls) => {
-        const [justification, classification] = await Promise.all([
-          this.viewer.getJustification(cls.id).catch((err) => {
-            logger.debug({ error: err, classId: cls.id }, "Failed to get justification for class");
-            return null;
-          }),
-          this.classificationStorage?.get(cls.id).catch((err) => {
-            logger.debug({ error: err, classId: cls.id }, "Failed to get classification for class");
-            return null;
-          }),
-        ]);
+        const justification = await this.viewer.getJustification(cls.id).catch((err) => {
+          logger.debug({ error: err, classId: cls.id }, "Failed to get justification for class");
+          return null;
+        });
 
         return {
           ...cls,
           kind: 'class' as const,
           confidence: justification?.confidenceScore,
           justification: justification?.purposeSummary,
-          classification: classification?.category,
-          subCategory: classification?.category === 'domain'
-            ? classification?.domainMetadata?.area
-            : classification?.infrastructureMetadata?.layer,
+          classification: justification?.category,
+          subCategory: justification?.category === 'domain'
+            ? justification?.domain
+            : justification?.architecturalPattern, // Fallback infrastructure distinction
         };
       })
     );
@@ -884,29 +868,23 @@ export class ViewerServer {
 
     const interfaces = await this.viewer.listInterfaces({ limit, offset, orderBy, orderDirection });
 
-    // Enhance with justification and classification data
+    // Enhance with justification data
     const enhanced = await Promise.all(
       interfaces.map(async (iface) => {
-        const [justification, classification] = await Promise.all([
-          this.viewer.getJustification(iface.id).catch((err) => {
-            logger.debug({ error: err, interfaceId: iface.id }, "Failed to get justification for interface");
-            return null;
-          }),
-          this.classificationStorage?.get(iface.id).catch((err) => {
-            logger.debug({ error: err, interfaceId: iface.id }, "Failed to get classification for interface");
-            return null;
-          }),
-        ]);
+        const justification = await this.viewer.getJustification(iface.id).catch((err) => {
+          logger.debug({ error: err, interfaceId: iface.id }, "Failed to get justification for interface");
+          return null;
+        });
 
         return {
           ...iface,
           kind: 'interface' as const,
           confidence: justification?.confidenceScore,
           justification: justification?.purposeSummary,
-          classification: classification?.category,
-          subCategory: classification?.category === 'domain'
-            ? classification?.domainMetadata?.area
-            : classification?.infrastructureMetadata?.layer,
+          classification: justification?.category,
+          subCategory: justification?.category === 'domain'
+            ? justification?.domain
+            : justification?.architecturalPattern, // Fallback infrastructure distinction
         };
       })
     );
@@ -1452,7 +1430,7 @@ export class ViewerServer {
   }
 
   // ===========================================================================
-  // API Handlers - Classification (Domain/Infrastructure)
+  // API Handlers - Classification (Unified via Justification)
   // ===========================================================================
 
   private async handleClassificationStats(
@@ -1460,26 +1438,18 @@ export class ViewerServer {
     res: http.ServerResponse,
     _params: RouteParams
   ): Promise<void> {
-    if (!this.classificationStorage) {
-      this.sendJSON(res, { total: 0, byCategory: {}, bySubCategory: {} });
-      return;
-    }
-
     try {
-      const stats = await this.classificationStorage.getStats();
+      const stats = await this.viewer.getJustificationStats();
 
-      // Transform to UI expected format
+      // Transform generic stats to classification structure
       this.sendJSON(res, {
-        total: stats.classifiedEntities,
+        total: stats.justifiedEntities,
         byCategory: {
-          domain: stats.domainCount,
-          infrastructure: stats.infrastructureCount,
-          unknown: stats.unknownCount,
+          domain: 0,
+          infrastructure: 0,
+          unknown: stats.totalEntities - stats.justifiedEntities,
         },
-        bySubCategory: {
-          ...stats.byArea,
-          ...stats.byLayer,
-        },
+        bySubCategory: {},
       });
     } catch (error) {
       this.sendError(res, 500, "Failed to get classification stats", error);
@@ -1491,34 +1461,27 @@ export class ViewerServer {
     res: http.ServerResponse,
     params: RouteParams
   ): Promise<void> {
-    if (!this.classificationStorage) {
-      this.sendJSON(res, { error: "Classification storage not available" }, 503);
-      return;
-    }
-
-    const category = params.query.get("category") as ClassificationCategory | null;
     const limit = parseInt(params.query.get("limit") || "100", 10);
     const offset = parseInt(params.query.get("offset") || "0", 10);
-    const minConfidence = params.query.get("minConfidence")
-      ? parseFloat(params.query.get("minConfidence")!)
-      : undefined;
 
     try {
-      if (category) {
-        const results = await this.classificationStorage.queryByCategory(category, {
-          limit,
-          offset,
-          minConfidence,
-        });
-        this.sendJSON(res, results);
-      } else {
-        // Get both domain and infrastructure
-        const [domain, infrastructure] = await Promise.all([
-          this.classificationStorage.queryByCategory("domain", { limit: Math.floor(limit / 2), offset }),
-          this.classificationStorage.queryByCategory("infrastructure", { limit: Math.floor(limit / 2), offset }),
-        ]);
-        this.sendJSON(res, { domain, infrastructure });
-      }
+      const justifications = await this.viewer.listJustifications({ limit, offset });
+
+      // Map to old classification format
+      const mapped = justifications.map(j => ({
+        entityId: j.entityId,
+        category: j.category || "unknown",
+        primaryLabel: j.category === 'domain' ? j.domain : j.architecturalPattern,
+        confidence: j.confidenceScore,
+        metadata: {
+          area: j.domain,
+          layer: j.architecturalPattern
+        },
+        classifiedAt: j.updatedAt,
+        modelId: "unified-analysis"
+      }));
+
+      this.sendJSON(res, mapped);
     } catch (error) {
       this.sendError(res, 500, "Failed to list classifications", error);
     }
@@ -1529,14 +1492,8 @@ export class ViewerServer {
     res: http.ServerResponse,
     params: RouteParams
   ): Promise<void> {
-    if (!this.classificationStorage) {
-      this.sendJSON(res, { error: "Classification storage not available" }, 503);
-      return;
-    }
-
     const query = params.query.get("q") || "";
     const limit = parseInt(params.query.get("limit") || "50", 10);
-    const category = params.query.get("category") as ClassificationCategory | undefined;
 
     if (!query) {
       this.sendJSON(res, []);
@@ -1544,55 +1501,42 @@ export class ViewerServer {
     }
 
     try {
-      const results = await this.classificationStorage.search(query, { limit, category });
-      this.sendJSON(res, results);
+      const results = await this.viewer.searchJustifications(query, limit);
+
+      const mapped = results.map(j => ({
+        entityId: j.entityId,
+        category: j.category || "unknown",
+        primaryLabel: j.category === 'domain' ? j.domain : j.architecturalPattern,
+        confidence: j.confidenceScore,
+        metadata: {
+          area: j.domain,
+          layer: j.architecturalPattern
+        },
+        classifiedAt: j.updatedAt,
+        modelId: "unified-analysis"
+      }));
+
+      this.sendJSON(res, mapped);
     } catch (error) {
       this.sendError(res, 500, "Failed to search classifications", error);
     }
   }
 
+  // Deprecated handlers removed (stubs for safety)
   private async handleClassificationsByDomain(
     _req: http.IncomingMessage,
     res: http.ServerResponse,
-    params: RouteParams
+    _params: RouteParams
   ): Promise<void> {
-    if (!this.classificationStorage) {
-      this.sendJSON(res, { error: "Classification storage not available" }, 503);
-      return;
-    }
-
-    const area = params.pathParams.area as DomainArea;
-    const limit = parseInt(params.query.get("limit") || "100", 10);
-    const offset = parseInt(params.query.get("offset") || "0", 10);
-
-    try {
-      const results = await this.classificationStorage.queryDomainByArea(area, { limit, offset });
-      this.sendJSON(res, results);
-    } catch (error) {
-      this.sendError(res, 500, "Failed to get domain classifications", error);
-    }
+    this.sendJSON(res, []);
   }
 
   private async handleClassificationsByInfrastructure(
     _req: http.IncomingMessage,
     res: http.ServerResponse,
-    params: RouteParams
+    _params: RouteParams
   ): Promise<void> {
-    if (!this.classificationStorage) {
-      this.sendJSON(res, { error: "Classification storage not available" }, 503);
-      return;
-    }
-
-    const layer = params.pathParams.layer as InfrastructureLayer;
-    const limit = parseInt(params.query.get("limit") || "100", 10);
-    const offset = parseInt(params.query.get("offset") || "0", 10);
-
-    try {
-      const results = await this.classificationStorage.queryInfrastructureByLayer(layer, { limit, offset });
-      this.sendJSON(res, results);
-    } catch (error) {
-      this.sendError(res, 500, "Failed to get infrastructure classifications", error);
-    }
+    this.sendJSON(res, []);
   }
 
   private async handleGetClassification(
@@ -1600,20 +1544,27 @@ export class ViewerServer {
     res: http.ServerResponse,
     params: RouteParams
   ): Promise<void> {
-    if (!this.classificationStorage) {
-      this.sendJSON(res, { error: "Classification storage not available" }, 503);
-      return;
-    }
-
     const entityId = params.pathParams.entityId!;
 
     try {
-      const classification = await this.classificationStorage.get(entityId);
-      if (!classification) {
+      const j = await this.viewer.getJustification(entityId);
+      if (!j) {
         this.sendJSON(res, null);
         return;
       }
-      this.sendJSON(res, classification);
+
+      this.sendJSON(res, {
+        entityId: j.entityId,
+        category: j.category || "unknown",
+        primaryLabel: j.category === 'domain' ? j.domain : j.architecturalPattern,
+        confidence: j.confidenceScore,
+        metadata: {
+          area: j.domain,
+          layer: j.architecturalPattern
+        },
+        classifiedAt: j.updatedAt,
+        modelId: "unified-analysis"
+      });
     } catch (error) {
       this.sendError(res, 500, "Failed to get classification", error);
     }
@@ -2350,19 +2301,14 @@ export class ViewerServer {
     res: http.ServerResponse,
     _params: RouteParams
   ): Promise<void> {
+    // Deprecated
     try {
-      const body = await this.parseBody(req);
-      const { entityId, force } = body as { entityId?: string; force?: boolean };
-
-      // For now, return a message that classification is handled externally
       this.sendJSON(res, {
-        status: "accepted",
-        message: entityId
-          ? `Classification requested for entity: ${entityId}. Classification runs automatically during indexing.`
-          : "Full classification requested. Classification runs automatically during indexing.",
+        status: "deprecated",
+        message: "Explicit classification is deprecated. Use 'justify' instead."
       });
     } catch (error) {
-      this.sendError(res, 500, "Failed to trigger classification", error);
+      this.sendError(res, 500, "Error", error);
     }
   }
 

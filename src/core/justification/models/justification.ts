@@ -139,7 +139,24 @@ export interface EntityJustification {
 
   /** Assessed risk of changing this entity based on dependencies */
   dependencyRisk?: "low" | "medium" | "high" | "critical";
+
+  // === Unified Classification (Phase 6) ===
+
+  /** Primary classification category */
+  category: "domain" | "infrastructure" | "test" | "config" | "unknown";
+
+  /** Specific domain or layer (e.g., "Authentication", "Database") */
+  domain: string;
+
+  /** Architectural pattern detection (for bad pattern identification) */
+  architecturalPattern: "pure_domain" | "pure_infrastructure" | "mixed" | "adapter" | "unknown";
 }
+// ... (skip down to LLMJustificationResponse)
+// Since the file is large, I'll do this in two chunks or use multi_replace.
+// Let's stick to the EntityJustification interface first, then I'll add the factory function update and LLMJustificationResponse in a moment.
+// Actually, I can do it all here if I target the right block, but I need to be careful with line numbers.
+// The replace_file_content tool works on contiguous blocks.
+// I will just update the interface first.
 
 // =============================================================================
 // Clarification System
@@ -418,6 +435,11 @@ export interface LLMJustificationResponse {
   reasoning: string;
   needsClarification: boolean;
   clarificationQuestions: string[];
+
+  // === Unified Classification ===
+  category: "domain" | "infrastructure" | "test" | "config" | "unknown";
+  domain: string;
+  architecturalPattern: "pure_domain" | "pure_infrastructure" | "mixed" | "adapter" | "unknown";
 }
 
 // =============================================================================
@@ -483,6 +505,9 @@ export function createEntityJustification(
     version: 1,
     dependentCount: 0,
     dependencyRisk: "low",
+    category: "unknown",
+    domain: "unknown",
+    architecturalPattern: "unknown",
     ...partial,
   };
 }

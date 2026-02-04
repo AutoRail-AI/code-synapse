@@ -1536,13 +1536,16 @@ export class CozoGraphViewer implements IGraphViewer {
         clarification_pending: boolean;
         created_at: number;
         updated_at: number;
+        category: string | null;
+        domain: string | null;
+        architectural_pattern: string | null;
       }>(
         `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
-          confidence_level, clarification_pending, created_at, updated_at] :=
+          confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern] :=
           *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, clarification_pending, created_at, updated_at},
+            confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern},
           entity_id = $entityId`,
         { entityId }
       );
@@ -1588,13 +1591,16 @@ export class CozoGraphViewer implements IGraphViewer {
         clarification_pending: boolean;
         created_at: number;
         updated_at: number;
+        category: string | null;
+        domain: string | null;
+        architectural_pattern: string | null;
       }>(
         `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
-          confidence_level, clarification_pending, created_at, updated_at] :=
+          confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern] :=
           *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, clarification_pending, created_at, updated_at}
+            confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern}
         :order ${orderDir}${orderBy}
         :limit ${limit}
         :offset ${offset}`
@@ -1625,13 +1631,16 @@ export class CozoGraphViewer implements IGraphViewer {
         clarification_pending: boolean;
         created_at: number;
         updated_at: number;
+        category: string | null;
+        domain: string | null;
+        architectural_pattern: string | null;
       }>(
         `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
-          confidence_level, clarification_pending, created_at, updated_at] :=
+          confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern] :=
           *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, clarification_pending, created_at, updated_at},
+            confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern},
           or(
             str_includes(lowercase(purpose_summary), lowercase($query)),
             str_includes(lowercase(business_value), lowercase($query)),
@@ -1792,13 +1801,16 @@ export class CozoGraphViewer implements IGraphViewer {
         clarification_pending: boolean;
         created_at: number;
         updated_at: number;
+        category: string | null;
+        domain: string | null;
+        architectural_pattern: string | null;
       }>(
         `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
-          confidence_level, clarification_pending, created_at, updated_at] :=
+          confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern] :=
           *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, clarification_pending, created_at, updated_at}
+            confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern}
         :order confidence_score
         :limit $limit`,
         { limit }
@@ -1882,13 +1894,16 @@ export class CozoGraphViewer implements IGraphViewer {
         clarification_pending: boolean;
         created_at: number;
         updated_at: number;
+        category: string | null;
+        domain: string | null;
+        architectural_pattern: string | null;
       }>(
         `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
-          confidence_level, clarification_pending, created_at, updated_at] :=
+          confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern] :=
           *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, clarification_pending, created_at, updated_at},
+            confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern},
           feature_context = $feature
         :order -confidence_score
         :limit $limit`,
@@ -1929,15 +1944,18 @@ export class CozoGraphViewer implements IGraphViewer {
         hierarchy_depth: number;
         created_at: number;
         updated_at: number;
+        category: string | null;
+        domain: string | null;
+        architectural_pattern: string | null;
       }>(
         `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, clarification_pending, parent_justification_id, hierarchy_depth,
-          created_at, updated_at] :=
+          created_at, updated_at, category, domain, architectural_pattern] :=
           *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
             confidence_level, clarification_pending, parent_justification_id, hierarchy_depth,
-            created_at, updated_at},
+            created_at, updated_at, category, domain, architectural_pattern},
           file_path = $filePath
         :order hierarchy_depth, name`,
         { filePath }
@@ -2015,13 +2033,16 @@ export class CozoGraphViewer implements IGraphViewer {
         clarification_pending: boolean;
         created_at: number;
         updated_at: number;
+        category: string | null;
+        domain: string | null;
+        architectural_pattern: string | null;
       }>(
         `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
-          confidence_level, clarification_pending, created_at, updated_at] :=
+          confidence_level, clarification_pending, created_at, updated_at, category, domain, architectural_pattern] :=
           *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, clarification_pending, parent_justification_id, created_at, updated_at},
+            confidence_level, clarification_pending, parent_justification_id, created_at, updated_at, category, domain, architectural_pattern},
           parent_justification_id = $parentId
         :order name`,
         { parentId: justificationId }
@@ -2074,17 +2095,19 @@ export class CozoGraphViewer implements IGraphViewer {
           parent_justification_id: string | null;
           created_at: number;
           updated_at: number;
+          category: string | null;
+          domain: string | null;
+          architectural_pattern: string | null;
         }>(
           `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          feature_context, detailed_description, tags, inferred_from, confidence_score,
+          confidence_level, clarification_pending, parent_justification_id, created_at, updated_at, category, domain, architectural_pattern] :=
+          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, clarification_pending, parent_justification_id, created_at, updated_at] :=
-            *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
-              feature_context, detailed_description, tags, inferred_from, confidence_score,
-              confidence_level, clarification_pending, parent_justification_id, created_at, updated_at},
-            id = $parentId`,
+            confidence_level, clarification_pending, parent_justification_id, created_at, updated_at, category, domain, architectural_pattern},
+          id = $parentId`,
           { parentId: currentParentId }
         );
-
         if (result.rows.length === 0) {
           break;
         }
@@ -2120,6 +2143,9 @@ export class CozoGraphViewer implements IGraphViewer {
     clarification_pending: boolean;
     created_at: number;
     updated_at: number;
+    category: string | null;
+    domain: string | null;
+    architectural_pattern: string | null;
   }): JustificationInfo {
     let parsedTags: string[] = [];
     try {
@@ -2148,6 +2174,9 @@ export class CozoGraphViewer implements IGraphViewer {
       clarificationPending: row.clarification_pending,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
+      category: (row.category as any) || "unknown",
+      domain: row.domain || "",
+      architecturalPattern: row.architectural_pattern || "unknown",
     };
   }
 }

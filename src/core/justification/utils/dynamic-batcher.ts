@@ -127,6 +127,8 @@ export interface TokenBatchConfig {
   outputTokensPerEntity: number;
   /** Safety margin percentage (0.10 = 10%, 0.15 = 15%) */
   safetyMargin: number;
+  /** Maximum number of entities per batch (hard limit) */
+  maxEntitiesPerBatch: number;
 }
 
 /**
@@ -137,7 +139,8 @@ export const DEFAULT_TOKEN_BATCH_CONFIG: TokenBatchConfig = {
   maxOutputTokens: 2048,
   systemPromptTokens: 500,
   outputTokensPerEntity: 500, // Conservative estimate to prevent truncation
-  safetyMargin: 0.20,
+  safetyMargin: 0.80,
+  maxEntitiesPerBatch: 25, // Safe default hard limit
 };
 
 /**
@@ -155,11 +158,13 @@ export function getTokenBatchConfig(
   }
 
   const config: TokenBatchConfig = {
-    maxContextTokens: modelConfig.contextWindow,
-    maxOutputTokens: modelConfig.maxOutputTokens,
+    // Reduce capacity to 50% to prevent timeouts and truncation
+    maxContextTokens: Math.floor(modelConfig.contextWindow * 0.5),
+    maxOutputTokens: Math.floor(modelConfig.maxOutputTokens * 0.5),
     systemPromptTokens: 500,
     outputTokensPerEntity: 500,
-    safetyMargin: 0.20, // 20% safety margin
+    safetyMargin: 0.80, // Increased to 80% as requested by user
+    maxEntitiesPerBatch: 25, // Hard limit to prevent massive batches
   };
 
   logger.debug(
@@ -368,10 +373,20 @@ export class TokenBasedBatcher {
 
       const exceedsInputBudget = tokensAfterAdd > maxInputTokens;
       const exceedsOutputBudget = entitiesAfterAdd > maxEntitiesPerBatchByOutput;
+      const exceedsHardLimit = entitiesAfterAdd > this.config.maxEntitiesPerBatch;
 
-      if (currentBatch.length > 0 && (exceedsInputBudget || exceedsOutputBudget)) {
+      if (currentBatch.length > 0 && (exceedsInputBudget || exceedsOutputBudget || exceedsHardLimit)) {
         // Log why we're emitting the batch
-        if (exceedsOutputBudget && !exceedsInputBudget) {
+        if (exceedsHardLimit && !exceedsInputBudget && !exceedsOutputBudget) {
+          logger.debug(
+            {
+              currentEntities: currentBatch.length,
+              hardLimit: this.config.maxEntitiesPerBatch,
+              currentInputTokens,
+            },
+            "Batch limited by hard entity count cap"
+          );
+        } else if (exceedsOutputBudget && !exceedsInputBudget) {
           logger.debug(
             {
               currentEntities: currentBatch.length,
@@ -561,6 +576,7 @@ export class DynamicBatcher {
       systemPromptTokens: config.systemPromptTokens,
       outputTokensPerEntity: config.responseTokensPerEntity,
       safetyMargin: config.bufferPercent,
+      maxEntitiesPerBatch: config.maxBatchSize > 0 ? config.maxBatchSize : 25,
     };
     this.tokenBatcher = new TokenBasedBatcher(tokenConfig);
   }

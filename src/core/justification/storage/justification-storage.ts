@@ -44,6 +44,9 @@ export interface JustificationRow {
   confidence_level: string;
   reasoning: string | null;
   evidence_sources: string; // JSON string array
+  category: string | null;
+  domain: string | null;
+  architectural_pattern: string | null;
   parent_justification_id: string | null;
   hierarchy_depth: number;
   clarification_pending: boolean;
@@ -95,7 +98,7 @@ export interface ProjectContextRow {
  * Handles all CozoDB operations for the justification layer.
  */
 export class JustificationStorage {
-  constructor(private graphStore: IGraphStore) {}
+  constructor(private graphStore: IGraphStore) { }
 
   // ===========================================================================
   // Write Operations
@@ -110,21 +113,21 @@ export class JustificationStorage {
     const query = `
       ?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
-        confidence_level, reasoning, evidence_sources, parent_justification_id,
-        hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
-        confirmed_by_user_id, created_at, updated_at, version] <- [[
+        confidence_level, reasoning, evidence_sources, category, domain, architectural_pattern,
+        parent_justification_id, hierarchy_depth, clarification_pending, pending_questions,
+        last_confirmed_by_user, confirmed_by_user_id, created_at, updated_at, version] <- [[
           $id, $entity_id, $entity_type, $name, $file_path, $purpose_summary, $business_value,
           $feature_context, $detailed_description, $tags, $inferred_from, $confidence_score,
-          $confidence_level, $reasoning, $evidence_sources, $parent_justification_id,
-          $hierarchy_depth, $clarification_pending, $pending_questions, $last_confirmed_by_user,
-          $confirmed_by_user_id, $created_at, $updated_at, $version
+          $confidence_level, $reasoning, $evidence_sources, $category, $domain, $architectural_pattern,
+          $parent_justification_id, $hierarchy_depth, $clarification_pending, $pending_questions,
+          $last_confirmed_by_user, $confirmed_by_user_id, $created_at, $updated_at, $version
         ]]
       :put justification {
         id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
-        confidence_level, reasoning, evidence_sources, parent_justification_id,
-        hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
-        confirmed_by_user_id, created_at, updated_at, version
+        confidence_level, reasoning, evidence_sources, category, domain, architectural_pattern,
+        parent_justification_id, hierarchy_depth, clarification_pending, pending_questions,
+        last_confirmed_by_user, confirmed_by_user_id, created_at, updated_at, version
       }
     `;
 
@@ -160,21 +163,21 @@ export class JustificationStorage {
         const query = `
           ?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, reasoning, evidence_sources, parent_justification_id,
-            hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
-            confirmed_by_user_id, created_at, updated_at, version] <- [[
+            confidence_level, reasoning, evidence_sources, category, domain, architectural_pattern,
+            parent_justification_id, hierarchy_depth, clarification_pending, pending_questions,
+            last_confirmed_by_user, confirmed_by_user_id, created_at, updated_at, version] <- [[
               $id, $entity_id, $entity_type, $name, $file_path, $purpose_summary, $business_value,
               $feature_context, $detailed_description, $tags, $inferred_from, $confidence_score,
-              $confidence_level, $reasoning, $evidence_sources, $parent_justification_id,
-              $hierarchy_depth, $clarification_pending, $pending_questions, $last_confirmed_by_user,
-              $confirmed_by_user_id, $created_at, $updated_at, $version
+              $confidence_level, $reasoning, $evidence_sources, $category, $domain, $architectural_pattern,
+              $parent_justification_id, $hierarchy_depth, $clarification_pending, $pending_questions,
+              $last_confirmed_by_user, $confirmed_by_user_id, $created_at, $updated_at, $version
             ]]
           :put justification {
             id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
-            confidence_level, reasoning, evidence_sources, parent_justification_id,
-            hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
-            confirmed_by_user_id, created_at, updated_at, version
+            confidence_level, reasoning, evidence_sources, category, domain, architectural_pattern,
+            parent_justification_id, hierarchy_depth, clarification_pending, pending_questions,
+            last_confirmed_by_user, confirmed_by_user_id, created_at, updated_at, version
           }
         `;
 
@@ -975,6 +978,9 @@ export class JustificationStorage {
       confidence_level: j.confidenceLevel,
       reasoning: j.reasoning || null,
       evidence_sources: JSON.stringify(j.evidenceSources),
+      category: j.category || null,
+      domain: j.domain || null,
+      architectural_pattern: j.architecturalPattern || null,
       parent_justification_id: j.parentJustificationId,
       hierarchy_depth: j.hierarchyDepth,
       clarification_pending: j.clarificationPending,
@@ -1007,6 +1013,9 @@ export class JustificationStorage {
       confidenceLevel: row.confidence_level as ConfidenceLevel,
       reasoning: row.reasoning || "",
       evidenceSources: this.parseJsonArray(row.evidence_sources),
+      category: (row.category as EntityJustification["category"]) || "unknown",
+      domain: row.domain || "unknown",
+      architecturalPattern: (row.architectural_pattern as EntityJustification["architecturalPattern"]) || "unknown",
       parentJustificationId: row.parent_justification_id,
       hierarchyDepth: row.hierarchy_depth,
       clarificationPending: row.clarification_pending,

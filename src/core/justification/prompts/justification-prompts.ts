@@ -27,7 +27,7 @@ const logger = createLogger("justification-prompts");
 export const JUSTIFICATION_GRAMMAR = `
 root ::= "{" ws justification-object ws "}"
 
-justification-object ::= purpose-summary "," ws business-value "," ws feature-context "," ws detailed-description "," ws tags "," ws confidence-score "," ws reasoning "," ws needs-clarification "," ws clarification-questions
+justification-object ::= purpose-summary "," ws business-value "," ws feature-context "," ws detailed-description "," ws tags "," ws confidence-score "," ws reasoning "," ws needs-clarification "," ws clarification-questions "," ws category "," ws domain "," ws architectural-pattern
 
 purpose-summary ::= "\\"purposeSummary\\"" ws ":" ws string
 business-value ::= "\\"businessValue\\"" ws ":" ws string
@@ -38,6 +38,9 @@ confidence-score ::= "\\"confidenceScore\\"" ws ":" ws number
 reasoning ::= "\\"reasoning\\"" ws ":" ws string
 needs-clarification ::= "\\"needsClarification\\"" ws ":" ws boolean
 clarification-questions ::= "\\"clarificationQuestions\\"" ws ":" ws string-array
+category ::= "\\"category\\"" ws ":" ws ("\\"domain\\"" | "\\"infrastructure\\"" | "\\"test\\"" | "\\"config\\"" | "\\"unknown\\"")
+domain ::= "\\"domain\\"" ws ":" ws string
+architectural-pattern ::= "\\"architecturalPattern\\"" ws ":" ws ("\\"pure_domain\\"" | "\\"pure_infrastructure\\"" | "\\"mixed\\"" | "\\"adapter\\"" | "\\"unknown\\"")
 
 string-array ::= "[" ws (string ("," ws string)*)? ws "]"
 string ::= "\\"" ([^"\\\\] | "\\\\" .)* "\\""
@@ -59,14 +62,15 @@ ws ::= [ \\t\\n]*
  * - featureContext: Domain noun (e.g., "Authentication", "Payment Processing")
  * - tags: Domain-specific categorization keywords
  * - confidenceScore: Must auto-generate clarification questions when < 0.5
+ * - category: "domain" vs "infrastructure" classification
+ * - architecturalPattern: Detection of mixed responsibilities
  */
-export const JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect analyzing code to extract MEANINGFUL business knowledge.
+export const JUSTIFICATION_SYSTEM_PROMPT = `You are a senior software architect analyzing code to extract MEANINGFUL business knowledge and classify architectural roles.
 
 ## YOUR GOAL
-Create justifications that help developers and AI agents understand:
-- WHY this code exists (the problem it solves)
-- WHAT business capability it enables
-- HOW it fits into the larger system
+1. Justify: Explain WHY this code exists and WHAT business capability it enables.
+2. Classify: Determine if this is Domain (Business) or Infrastructure (Platform) code.
+3. Detect: Identify architectural patterns, especially "bad patterns" like mixed responsibilities.
 
 ## CRITICAL RULES - READ CAREFULLY
 
@@ -74,54 +78,39 @@ Create justifications that help developers and AI agents understand:
 - "Type interface defining X structure" ❌
 - "Function named X" ❌
 - "Utility function: X" ❌
-- "Class definition for X" ❌
-- "Provides utility functionality" ❌
 
 ### DO generate specific, meaningful descriptions like:
 - "Stores cached query results with TTL-based expiration to reduce database load" ✓
 - "Validates incoming webhook payloads before processing payment events" ✓
-- "Defines the contract for dependency injection of storage implementations" ✓
-- "Orchestrates the multi-step user registration flow including email verification" ✓
 
 ## FIELD REQUIREMENTS
 
 1. **purposeSummary** (REQUIRED - one meaningful sentence)
-   - Describe the SPECIFIC problem this code solves
-   - Use action verbs: "Validates", "Orchestrates", "Transforms", "Caches", "Routes"
-   - Include WHAT it operates on and WHY
-
-   GOOD EXAMPLES:
-   - "Caches expensive graph traversal results to avoid repeated database queries"
-   - "Validates MCP tool parameters against schema before execution"
-   - "Transforms raw AST nodes into normalized entity representations for storage"
-
-   BAD EXAMPLES (NEVER USE):
-   - "Interface for cache entries" (too vague)
-   - "Handles caching" (what caching? why?)
-   - "Type definition" (meaningless)
+   - Describe the SPECIFIC problem this code solves.
+   - Use action verbs: "Validates", "Orchestrates", "Transforms", "Caches".
 
 2. **businessValue** (REQUIRED)
-   - Explain the BUSINESS IMPACT if this code didn't exist
-   - What user problem does it solve? What system capability does it enable?
-
-   GOOD: "Reduces API response latency by 90% for repeated queries, improving user experience"
-   BAD: "Provides caching functionality" (doesn't explain impact)
+   - Explain the BUSINESS IMPACT if this code didn't exist.
+   - Good: "Reduces API response latency by 90% for repeated queries..."
 
 3. **featureContext** (REQUIRED - specific domain noun)
-   - The subsystem or feature this belongs to
-   - Be specific: "Query Result Caching", "Webhook Processing", "Entity Extraction"
-   - NOT generic: "Utilities", "Helpers", "Core"
+   - The subsystem or feature this belongs to (e.g., "Query Result Caching").
 
-4. **tags** (2-5 domain-specific keywords)
-   - Related concepts: ["cache", "performance", "query-optimization", "ttl-expiration"]
-   - NOT syntax: ["interface", "function", "exported"]
+4. **category** (REQUIRED)
+   - "domain": Business logic, product features, user-facing functionality (Authentication, Payments).
+   - "infrastructure": Platform services, utilities, cross-cutting concerns (Database, Logging, Cache).
+   - "test": Test files, mocks, fixtures.
+   - "config": Configuration files, environment setup.
 
-5. **confidenceScore** (0.0-1.0)
-   - Be honest about uncertainty. Low confidence is OK - it triggers clarification.
+5. **architecturalPattern** (REQUIRED - BAD PATTERN DETECTION)
+   - "pure_domain": Contains ONLY business logic, no direct infrastructure calls (good).
+   - "pure_infrastructure": Contains ONLY platform/tech logic, no business rules (good).
+   - "mixed": **BAD PATTERN**. Contains BOTH business rules AND direct low-level infrastructure calls (e.g., SQL queries inside a business rule validator).
+   - "adapter": Explicitly converts between domain and infrastructure (valid pattern).
 
 6. **reasoning** (REQUIRED)
-   - Explain HOW you determined the purpose
-   - What clues did you use? (naming, parameters, dependencies, file location)
+   - Explain your justification AND classification choices.
+   - If "mixed" pattern is detected, explicitly state WHY (e.g., "Mixed pattern detected: Payment validation logic violates separation of concerns by directly querying the database").
 
 ## OUTPUT FORMAT (JSON)
 {
@@ -133,7 +122,10 @@ Create justifications that help developers and AI agents understand:
   "confidenceScore": 0.0-1.0,
   "reasoning": "Evidence: naming patterns, parameters, dependencies, file context",
   "needsClarification": true/false,
-  "clarificationQuestions": ["Specific question about unclear aspects"]
+  "clarificationQuestions": ["Specific question about unclear aspects"],
+  "category": "domain" | "infrastructure" | "test" | "config",
+  "domain": "Specific Domain (e.g. 'Authentication') or Layer (e.g. 'Database')",
+  "architecturalPattern": "pure_domain" | "pure_infrastructure" | "mixed" | "adapter"
 }`;
 
 // =============================================================================
@@ -710,6 +702,9 @@ export function parseJustificationResponse(
       clarificationQuestions: Array.isArray(parsed.clarificationQuestions)
         ? parsed.clarificationQuestions
         : [],
+      category: parsed.category || "unknown",
+      domain: parsed.domain || "",
+      architecturalPattern: parsed.architecturalPattern || "unknown",
     };
   } catch {
     return null;
@@ -732,6 +727,9 @@ export function createDefaultResponse(
     reasoning: "LLM inference failed, using defaults",
     needsClarification: true,
     clarificationQuestions: [`What is the purpose of ${entity.name}?`],
+    category: "unknown",
+    domain: inferFeatureFromPath(entity.filePath),
+    architecturalPattern: "unknown",
   };
 }
 

@@ -12,6 +12,8 @@ import { createLogger } from "../../../utils/logger.js";
 import type { IGraphStore } from "../../interfaces/IGraphStore.js";
 import type { IModelRouter } from "../../models/interfaces/IModel.js";
 import { getDefaultModelId } from "../../models/Registry.js";
+import * as fs from "fs";
+import * as path from "path";
 import type {
   IJustificationService,
   JustifyOptions,
@@ -98,8 +100,11 @@ const JUSTIFICATION_JSON_SCHEMA = {
     reasoning: { type: "string" },
     needsClarification: { type: "boolean" },
     clarificationQuestions: { type: "array", items: { type: "string" } },
+    category: { enum: ["domain", "infrastructure", "test", "config", "unknown"] },
+    domain: { type: "string" },
+    architecturalPattern: { enum: ["pure_domain", "pure_infrastructure", "mixed", "adapter", "unknown"] },
   },
-  required: ["purposeSummary", "businessValue", "confidenceScore"],
+  required: ["purposeSummary", "businessValue", "confidenceScore", "category", "architecturalPattern"],
 };
 
 /**
@@ -407,43 +412,37 @@ export class LLMJustificationService implements IJustificationService {
       );
 
       // Process each batch
-      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-        const batchEntities = batches[batchIdx];
-        const batchInfo = batchingResult.batches[batchIdx];
-        if (!batchEntities || batchEntities.length === 0) continue;
+      // Process batches with concurrency control
+      const concurrencyLimit = Math.max(1, parseInt(process.env.LLM_CONCURRENCY || "1", 10));
+      logger.info({ concurrencyLimit, totalBatches: batches.length }, "Processing batches with concurrency");
 
-        if (opts.onProgress) {
-          const tokenInfo = batchInfo
-            ? ` [${batchInfo.inputTokens} input tokens]`
-            : "";
-          opts.onProgress({
-            phase: "inferring",
-            current: result.stats.succeeded,
-            total: toProcess.length,
-            message: `Batch ${batchIdx + 1}/${batches.length} (${batchEntities.length} entities)${tokenInfo}`,
-          });
-        }
+      for (let i = 0; i < batches.length; i += concurrencyLimit) {
+        const batchChunk = batches.slice(i, i + concurrencyLimit);
+        const chunkPromises = batchChunk.map(async (batchEntities, relativeIdx) => {
+          const batchIdx = i + relativeIdx;
+          const batchInfo = batchingResult.batches[batchIdx];
 
-        try {
-          const batchResults = await this.processBatch(batchEntities, existing, opts);
+          if (!batchEntities || batchEntities.length === 0) return;
 
-          for (const justification of batchResults) {
-            if (justification.clarificationPending) {
-              result.needingClarification.push(justification);
-              result.stats.pendingClarification++;
-            } else {
-              result.justified.push(justification);
-              result.stats.succeeded++;
-            }
+          if (opts.onProgress) {
+            const tokenInfo = batchInfo ? ` [${batchInfo.inputTokens} input tokens]` : "";
+            opts.onProgress({
+              phase: "inferring",
+              current: result.stats.succeeded,
+              total: toProcess.length,
+              message: `Batch ${batchIdx + 1}/${batches.length} (${batchEntities.length} entities)${tokenInfo}`,
+            });
           }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.error({ err: error, errorMessage, batchSize: batchEntities.length }, "Batch inference failed, falling back to single");
 
-          // Fallback to single processing for this batch
-          for (const entity of batchEntities) {
-            try {
-              const justification = await this.justifyEntity(entity.id, existing, opts);
+          try {
+            const batchResults = await this.executeWithRetry(
+              async () => this.processBatch(batchEntities, existing, opts),
+              `batch-${batchIdx}`,
+              3,
+              5000 // Start with 5s delay
+            );
+
+            for (const justification of batchResults) {
               if (justification.clarificationPending) {
                 result.needingClarification.push(justification);
                 result.stats.pendingClarification++;
@@ -451,13 +450,36 @@ export class LLMJustificationService implements IJustificationService {
                 result.justified.push(justification);
                 result.stats.succeeded++;
               }
-            } catch (singleError) {
-              const singleErrorMessage = singleError instanceof Error ? singleError.message : String(singleError);
-              result.failed.push({ entityId: entity.id, error: singleErrorMessage });
-              result.stats.failed++;
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.error(
+              { err: error, errorMessage, batchSize: batchEntities.length, batchIdx },
+              "Batch inference failed, falling back to single"
+            );
+
+            // Fallback to single processing for this batch
+            for (const entity of batchEntities) {
+              try {
+                const justification = await this.justifyEntity(entity.id, existing, opts);
+                if (justification.clarificationPending) {
+                  result.needingClarification.push(justification);
+                  result.stats.pendingClarification++;
+                } else {
+                  result.justified.push(justification);
+                  result.stats.succeeded++;
+                }
+              } catch (singleError) {
+                const singleErrorMessage =
+                  singleError instanceof Error ? singleError.message : String(singleError);
+                result.failed.push({ entityId: entity.id, error: singleErrorMessage });
+                result.stats.failed++;
+              }
             }
           }
-        }
+        });
+
+        await Promise.all(chunkPromises);
       }
     } else {
       // Single entity processing (original behavior)
@@ -596,8 +618,8 @@ export class LLMJustificationService implements IJustificationService {
       taskType: "justification",
       parameters: {
         maxTokens: estimatedResponseTokens,
-        temperature: 0.3,
-        thinkingLevel: "medium",
+        temperature: 0.0,
+        thinkingLevel: "high",
       },
       schema: BATCH_JUSTIFICATION_JSON_SCHEMA,
     });
@@ -921,17 +943,23 @@ export class LLMJustificationService implements IJustificationService {
 
     if (this.modelRouter && !options.skipLLM) {
       try {
-        const inferenceResult = await this.modelRouter.execute({
-          prompt: prompt,
-          systemPrompt: JUSTIFICATION_SYSTEM_PROMPT,
-          taskType: "justification",
-          parameters: {
-            maxTokens: 1024,
-            temperature: 0.3,
-            thinkingLevel: "medium",
-          },
-          schema: JUSTIFICATION_JSON_SCHEMA,
-        });
+        const inferenceResult = await this.executeWithRetry(
+          async () =>
+            this.modelRouter!.execute({
+              prompt: prompt,
+              systemPrompt: JUSTIFICATION_SYSTEM_PROMPT,
+              taskType: "justification",
+              parameters: {
+                maxTokens: 1024,
+                temperature: 0.0,
+                thinkingLevel: "high",
+              },
+              schema: JUSTIFICATION_JSON_SCHEMA,
+            }),
+          `entity-${entityId}`,
+          3,
+          5000 // Start with 5s delay
+        );
 
         const parsed = inferenceResult.parsed || parseJustificationResponse(inferenceResult.content);
         llmResponse = (parsed as LLMJustificationResponse) || createDefaultResponse(context.entity);
@@ -973,8 +1001,11 @@ export class LLMJustificationService implements IJustificationService {
       reasoning: llmResponse.reasoning,
       evidenceSources: [context.entity.filePath],
       parentJustificationId: context.parentContext?.justification?.id || null,
-      hierarchyDepth: context.parentContext ? 1 : 0,
+      hierarchyDepth: context.parentContext ? context.parentContext.justification!.hierarchyDepth + 1 : 0,
       clarificationPending: llmResponse.needsClarification,
+      category: llmResponse.category,
+      domain: llmResponse.domain,
+      architecturalPattern: llmResponse.architecturalPattern,
       pendingQuestions: llmResponse.clarificationQuestions.map((q, i) =>
         createClarificationQuestion({
           id: `q-${entityId}-${i}`,
@@ -1106,6 +1137,9 @@ export class LLMJustificationService implements IJustificationService {
       clarificationQuestions: confidenceScore < 0.5
         ? [`What business problem does ${name} solve?`, `How is ${name} used in the system?`]
         : [],
+      category: "unknown",
+      domain: featureContext,
+      architecturalPattern: "unknown",
     };
   }
 
@@ -2166,6 +2200,67 @@ export class LLMJustificationService implements IJustificationService {
 
   async clearAllJustifications(): Promise<void> {
     await this.storage.clearAll();
+  }
+
+  /**
+   * Execute a function with exponential backoff retry for specific errors
+   */
+  private async executeWithRetry<T>(
+    fn: () => Promise<T>,
+    contextId: string,
+    maxRetries: number = 3,
+    initialDelayMs: number = 5000
+  ): Promise<T> {
+    let lastError: any;
+    let delay = initialDelayMs;
+
+    for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+      try {
+        return await fn();
+      } catch (error: any) {
+        lastError = error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        // Check if error is retryable (5XX or JSON parse error)
+        const isModelOverloaded = errorMessage.includes("503") || errorMessage.includes("overloaded");
+        const isParseError = errorMessage.includes("Failed to parse") || errorMessage.includes("JSON");
+        const isFetchFailed = errorMessage.includes("fetch failed");
+
+        if (attempt <= maxRetries && (isModelOverloaded || isParseError || isFetchFailed)) {
+          logger.warn(
+            { contextId, attempt, delay, error: errorMessage },
+            `Retryable error encountered, waiting ${delay}ms...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          delay = initialDelayMs * (attempt + 1); // Linear increase (5, 10, 15)
+        } else {
+          // Final failure or non-retryable
+          break;
+        }
+      }
+    }
+
+    // Log to file if completely failed
+    this.logFailureToFile(contextId, lastError);
+    throw lastError;
+  }
+
+  /**
+   * Log failure details to a file for persistent tracking
+   */
+  private logFailureToFile(contextId: string, error: any): void {
+    try {
+      const logFile = path.resolve(process.cwd(), "llm_failures.log");
+      const timestamp = new Date().toISOString();
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : "";
+
+      const logEntry = `[${timestamp}] [${contextId}] FAILED\nError: ${errorMessage}\nStack: ${errorStack}\n----------------------------------------\n`;
+
+      fs.appendFileSync(logFile, logEntry);
+    } catch (fsError) {
+      logger.error({ err: fsError }, "Failed to write to llm_failures.log");
+    }
   }
 }
 

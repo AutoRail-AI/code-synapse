@@ -262,6 +262,10 @@ export const SCHEMA = {
       confidenceLevel: { type: "STRING" }, // 'high' | 'medium' | 'low' | 'uncertain'
       reasoning: { type: "STRING", nullable: true },
       evidenceSources: { type: "JSON" }, // string[]
+      // Unified Classification Fields
+      category: { type: "STRING", nullable: true, index: true }, // 'domain' | 'infrastructure'
+      domain: { type: "STRING", nullable: true, index: true },
+      architecturalPattern: { type: "STRING", nullable: true, index: true },
       parentJustificationId: { type: "STRING", nullable: true },
       hierarchyDepth: { type: "INT32" },
       clarificationPending: { type: "BOOLEAN", index: true },

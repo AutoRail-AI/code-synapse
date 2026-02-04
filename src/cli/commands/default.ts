@@ -28,11 +28,6 @@ import { createGraphViewer, startViewerServer } from "../../viewer/index.js";
 import type { ViewerServerOptions } from "../../viewer/ui/server.js";
 import { createIParser } from "../../core/parser/index.js";
 import {
-  createClassificationStorage,
-  createClassificationEngine,
-  type IClassificationEngine,
-} from "../../core/classification/index.js";
-import {
   createChangeLedger,
   createLedgerStorage,
   createLedgerEntry,
@@ -375,139 +370,7 @@ async function runJustification(
   }
 }
 
-/**
- * Run classification with shared database connection
- */
-async function runClassification(
-  store: IGraphStore,
-  modelRouter: IModelRouter | null,
-  spinner: ReturnType<typeof ora>
-): Promise<IClassificationEngine | null> {
-  try {
-    spinner.text = "Initializing classification engine...";
 
-    // Create classification storage and engine
-    const adapter = createStorageAdapter(store);
-    const classificationStorage = createClassificationStorage(adapter);
-    const classificationEngine = await createClassificationEngine(
-      classificationStorage,
-      modelRouter ?? null
-    );
-
-    // Get all entity IDs that need classification
-    spinner.text = "Fetching entities for classification...";
-
-    const functions = await store.query<{ id: string; name: string; file_id: string }>(
-      `?[id, name, file_id] := *function{id, name, file_id}`
-    );
-    const classes = await store.query<{ id: string; name: string; file_id: string }>(
-      `?[id, name, file_id] := *class{id, name, file_id}`
-    );
-    const interfaces = await store.query<{ id: string; name: string; file_id: string }>(
-      `?[id, name, file_id] := *interface{id, name, file_id}`
-    );
-
-    // Get file paths for context
-    const fileIds = new Set([
-      ...functions.rows.map(r => r.file_id),
-      ...classes.rows.map(r => r.file_id),
-      ...interfaces.rows.map(r => r.file_id),
-    ]);
-    const filePathMap = new Map<string, string>();
-    if (fileIds.size > 0) {
-      const files = await store.query<{ id: string; relative_path: string }>(
-        `?[id, relative_path] := *file{id, relative_path}, id in $fileIds`,
-        { fileIds: Array.from(fileIds) }
-      );
-      for (const f of files.rows) {
-        filePathMap.set(f.id, f.relative_path);
-      }
-    }
-
-    // Build classification requests with all required fields
-    const allEntities = [
-      ...functions.rows.map(r => ({
-        entityId: r.id,
-        entityType: "function" as const,
-        entityName: r.name,
-        filePath: filePathMap.get(r.file_id) || "",
-        imports: [] as string[],
-        exports: [] as string[],
-        calls: [] as string[],
-        calledBy: [] as string[],
-        fileImports: [] as string[],
-        packageDependencies: [] as string[],
-      })),
-      ...classes.rows.map(r => ({
-        entityId: r.id,
-        entityType: "class" as const,
-        entityName: r.name,
-        filePath: filePathMap.get(r.file_id) || "",
-        imports: [] as string[],
-        exports: [] as string[],
-        calls: [] as string[],
-        calledBy: [] as string[],
-        fileImports: [] as string[],
-        packageDependencies: [] as string[],
-      })),
-      ...interfaces.rows.map(r => ({
-        entityId: r.id,
-        entityType: "interface" as const,
-        entityName: r.name,
-        filePath: filePathMap.get(r.file_id) || "",
-        imports: [] as string[],
-        exports: [] as string[],
-        calls: [] as string[],
-        calledBy: [] as string[],
-        fileImports: [] as string[],
-        packageDependencies: [] as string[],
-      })),
-    ];
-
-    if (allEntities.length === 0) {
-      spinner.info(chalk.dim("No entities to classify"));
-      return classificationEngine;
-    }
-
-    // Run classification in batches
-    spinner.text = `Classifying ${allEntities.length} entities...`;
-
-    let classified = 0;
-    const batchSize = 50;
-
-    for (let i = 0; i < allEntities.length; i += batchSize) {
-      const batch = allEntities.slice(i, i + batchSize);
-      await classificationEngine.classifyBatch({
-        entities: batch,
-        options: {
-          parallel: true,
-          maxConcurrency: 5,
-          skipExisting: true,
-        },
-      });
-      classified += batch.length;
-      spinner.text = `Classifying entities: ${classified}/${allEntities.length}`;
-    }
-
-    spinner.succeed(chalk.green(`Classification complete! ${classified} entities classified`));
-
-    // Show classification stats
-    const stats = await classificationEngine.getStats();
-    console.log();
-    console.log(chalk.white.bold("Classification Results"));
-    console.log(`  Domain entities:         ${stats.domainCount}`);
-    console.log(`  Infrastructure entities: ${stats.infrastructureCount}`);
-    console.log(`  Unknown:                 ${stats.unknownCount}`);
-    console.log();
-    console.log(chalk.dim("─".repeat(50)));
-
-    return classificationEngine;
-  } catch (error) {
-    spinner.warn(chalk.yellow("Classification had issues, continuing..."));
-    logger.error({ err: error }, "Classification failed");
-    return null;
-  }
-}
 
 /**
  * Default command - handles init, index, and start in one go
@@ -519,7 +382,6 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
   let viewerServer: Awaited<ReturnType<typeof startViewerServer>> | null = null;
   let graphStore: IGraphStore | null = null;
   let viewer: ReturnType<typeof createGraphViewer> | null = null;
-  let classificationEngine: IClassificationEngine | null = null;
   let changeLedger: IChangeLedger | null = null;
 
   // Step 1: Check if initialized, if not run interactive setup (before any logging)
@@ -663,28 +525,17 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
     }
 
     // Step 4.5: Run classification (Domain/Infrastructure)
-    if (!options.skipJustify) {
-      console.log();
-      console.log(chalk.cyan.bold("Business Classification Layer"));
-      console.log(chalk.dim("─".repeat(50)));
-      console.log();
-
-      spinner.start("Running classification...");
-      // We pass null for now as we don't have the router instance from runJustification
-      // TODO: Refactor runJustification to return the router or initialize it at top level
-      classificationEngine = await runClassification(graphStore, null, spinner);
-
-      // Log classification completion
-      if (changeLedger) {
-        await changeLedger.append(
-          createLedgerEntry(
-            "classify:completed",
-            "classification-engine",
-            "Business classification completed"
-          )
-        );
-      }
-    }
+    // Deprecated: Classification is now part of the unified Justification process (Phase 6)
+    // if (!options.skipJustify) {
+    //   console.log();
+    //   console.log(chalk.cyan.bold("Business Classification Layer"));
+    //   console.log(chalk.dim("─".repeat(50)));
+    //   console.log();
+    //
+    //   spinner.start("Running classification...");
+    //   // Classification is now handled during justification
+    //   spinner.info(chalk.dim("Classification matched with Justification (Unified Analysis)"));
+    // }
 
     // Step 5: Find available ports (one for MCP, one for Viewer)
     let mcpPort: number;
@@ -762,13 +613,8 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       // Get stats for display
       const stats = await viewer.getOverviewStats();
 
-      // Create classification storage for viewer
-      const viewerAdapter = createStorageAdapter(graphStore);
-      const classificationStorage = createClassificationStorage(viewerAdapter);
-
       // Start viewer server with classification and ledger
       const viewerOptions: ViewerServerOptions = {
-        classificationStorage,
         changeLedger: changeLedger ?? undefined,
       };
       viewerServer = await startViewerServer(viewer, viewerPort, "127.0.0.1", viewerOptions);

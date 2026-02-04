@@ -352,6 +352,12 @@ export interface JustificationInfo {
   createdAt: Date;
   /** When last updated */
   updatedAt: Date;
+  /** Classification category (unified) */
+  category?: "domain" | "infrastructure" | "test" | "config" | "unknown";
+  /** Domain/Layer name */
+  domain?: string;
+  /** Architectural pattern detected */
+  architecturalPattern?: string;
 }
 
 /**
