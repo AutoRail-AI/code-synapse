@@ -33,15 +33,32 @@ const logger = createLogger("model-router");
 // =============================================================================
 
 /**
+ * Preferred vendor order for fallback routing (policy decision).
+ * 1. "google" - High quality Gemini models with 1M context
+ * 2. "local" - Always available, no API costs
+ * This is intentionally explicit to document the routing preference.
+ */
+const PREFERRED_FALLBACK_VENDORS: ModelVendor[] = ["google", "local"];
+
+/**
  * Get default fallback order from Registry
- * Prefers: google (best quality), local (always available), then others
+ * Uses PREFERRED_FALLBACK_VENDORS first, then remaining providers alphabetically
  */
 function getDefaultFallbackOrder(): ModelVendor[] {
-  const allProviders = getAllProviderIds();
-  // Preferred order: google first (high quality), local (always available), then alphabetical rest
-  const preferred: ModelVendor[] = ["google", "local"];
-  const rest = allProviders.filter((p) => !preferred.includes(p as ModelVendor)) as ModelVendor[];
-  return [...preferred, ...rest.sort()];
+  const allProviders = getAllProviderIds() as ModelVendor[];
+  const rest = allProviders.filter((p) => !PREFERRED_FALLBACK_VENDORS.includes(p));
+  return [...PREFERRED_FALLBACK_VENDORS.filter((p) => allProviders.includes(p)), ...rest.sort()];
+}
+
+/**
+ * Build initial stats structure dynamically from Registry
+ */
+function buildInitialVendorStats(): Record<ModelVendor, number> {
+  const stats: Record<string, number> = {};
+  for (const vendor of getAllProviderIds()) {
+    stats[vendor] = 0;
+  }
+  return stats as Record<ModelVendor, number>;
 }
 
 export const DEFAULT_ROUTING_POLICY: RoutingPolicy = {
@@ -62,16 +79,11 @@ export class ModelRouter implements IModelRouter {
   private _isInitialized = false;
   private feedbackLoop: IFeedbackLoop | null = null;
 
-  // Statistics
+  // Statistics - vendor stats built dynamically from Registry
   private stats: RouterStats = {
     totalRequests: 0,
     requestsByModel: {},
-    requestsByVendor: {
-      local: 0,
-      openai: 0,
-      anthropic: 0,
-      google: 0,
-    },
+    requestsByVendor: buildInitialVendorStats(),
     averageLatencyMs: 0,
     totalTokensUsed: 0,
     totalCost: 0,

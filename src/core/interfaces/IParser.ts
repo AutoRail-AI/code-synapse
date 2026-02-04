@@ -8,6 +8,7 @@
  */
 
 import type { UCEFile } from "../../types/uce.js";
+import type { Node as SyntaxNode, Tree } from "web-tree-sitter";
 
 /**
  * Parser interface for converting source code to UCE format.
@@ -64,4 +65,24 @@ export interface IParser {
    * Whether the parser is initialized and ready
    */
   readonly isReady: boolean;
+
+  /**
+   * Parse code and return the raw AST tree (for semantic analysis).
+   * This provides direct access to Tree-sitter AST for advanced analysis.
+   *
+   * @param code - Source code content
+   * @param language - Language identifier
+   * @returns The parsed Tree-sitter tree
+   */
+  parseToAST?(code: string, language: string): Promise<Tree>;
+
+  /**
+   * Parse a function body and return the function AST node.
+   * Wraps the body in a function declaration for parsing.
+   *
+   * @param functionBody - Function body code
+   * @param language - Language identifier
+   * @returns The function's body statement block node
+   */
+  parseFunctionBody?(functionBody: string, language: string): Promise<SyntaxNode | null>;
 }

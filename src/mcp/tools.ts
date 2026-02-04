@@ -1321,6 +1321,1161 @@ function extractKeywords(text: string): string[] {
 }
 
 // =============================================================================
+// Phase 1: Enhanced Entity Semantics Tools
+// =============================================================================
+
+/**
+ * Input for get_function_semantics tool
+ */
+export interface GetFunctionSemanticsInput {
+  /** Function name to find */
+  name: string;
+  /** Optional file path to narrow search */
+  filePath?: string;
+}
+
+/**
+ * Output for function semantics
+ */
+export interface FunctionSemanticsResult {
+  functionId: string;
+  functionName: string;
+  filePath: string;
+  /** Parameter analysis */
+  parameters: Array<{
+    name: string;
+    index: number;
+    type: string | null;
+    purpose: string;
+    isOptional: boolean;
+    isRest: boolean;
+    isDestructured: boolean;
+    defaultValue: string | null;
+    isMutated: boolean;
+    confidence: number;
+  }>;
+  /** Return value analysis */
+  returnSemantics: {
+    declaredType: string | null;
+    inferredType: string | null;
+    canReturnVoid: boolean;
+    alwaysThrows: boolean;
+    possibleValues: string[];
+    nullConditions: string[];
+    errorConditions: string[];
+    confidence: number;
+  } | null;
+  /** Error analysis summary */
+  errorAnalysis: {
+    neverThrows: boolean;
+    hasTopLevelCatch: boolean;
+    escapingErrorTypes: string[];
+    throwPoints: number;
+    tryCatchBlocks: number;
+    confidence: number;
+  } | null;
+}
+
+/**
+ * Get semantic analysis for a function (Phase 1)
+ */
+export async function getFunctionSemantics(
+  store: GraphDatabase,
+  input: GetFunctionSemanticsInput
+): Promise<FunctionSemanticsResult | null> {
+  const { name, filePath } = input;
+  logger.debug({ name, filePath }, "Getting function semantics");
+
+  // Find the function
+  let funcQuery = `
+    ?[id, name, file_path] :=
+      *function{id, name, file_id},
+      *file{id: file_id, path: file_path},
+      name = $name
+  `;
+  if (filePath) {
+    funcQuery = `
+      ?[id, name, file_path] :=
+        *function{id, name, file_id},
+        *file{id: file_id, path: file_path},
+        name = $name,
+        contains(file_path, $filePath)
+    `;
+  }
+  funcQuery += " :limit 1";
+
+  try {
+    const funcResult = await store.query<{
+      id: string;
+      name: string;
+      file_path: string;
+    }>(funcQuery, { name, filePath: filePath || "" });
+
+    if (funcResult.length === 0) {
+      return null;
+    }
+
+    const func = funcResult[0];
+    if (!func) return null;
+    const functionId = func.id;
+
+    // Get parameter semantics
+    const paramQuery = `
+      ?[param_name, param_index, param_type, purpose, is_optional, is_rest,
+        is_destructured, default_value, is_mutated, confidence] :=
+        *function_parameter_semantics{
+          function_id, param_name, param_index, param_type, purpose,
+          is_optional, is_rest, is_destructured, default_value, is_mutated, confidence
+        },
+        function_id = $functionId
+      :order param_index
+    `;
+    const paramResult = await store.query<{
+      param_name: string;
+      param_index: number;
+      param_type: string | null;
+      purpose: string;
+      is_optional: boolean;
+      is_rest: boolean;
+      is_destructured: boolean;
+      default_value: string | null;
+      is_mutated: boolean;
+      confidence: number;
+    }>(paramQuery, { functionId });
+
+    // Get return semantics
+    const returnQuery = `
+      ?[declared_type, inferred_type, can_return_void, always_throws,
+        possible_values, null_conditions, error_conditions, confidence] :=
+        *function_return_semantics{
+          function_id, declared_type, inferred_type, can_return_void, always_throws,
+          possible_values, null_conditions, error_conditions, confidence
+        },
+        function_id = $functionId
+      :limit 1
+    `;
+    const returnResult = await store.query<{
+      declared_type: string | null;
+      inferred_type: string | null;
+      can_return_void: boolean;
+      always_throws: boolean;
+      possible_values: string;
+      null_conditions: string;
+      error_conditions: string;
+      confidence: number;
+    }>(returnQuery, { functionId });
+
+    // Get error analysis
+    const errorQuery = `
+      ?[never_throws, has_top_level_catch, escaping_error_types, throw_points,
+        try_catch_blocks, confidence] :=
+        *function_error_analysis{
+          function_id, never_throws, has_top_level_catch, escaping_error_types,
+          throw_points, try_catch_blocks, confidence
+        },
+        function_id = $functionId
+      :limit 1
+    `;
+    const errorResult = await store.query<{
+      never_throws: boolean;
+      has_top_level_catch: boolean;
+      escaping_error_types: string;
+      throw_points: string;
+      try_catch_blocks: string;
+      confidence: number;
+    }>(errorQuery, { functionId });
+
+    // Parse JSON fields and build result
+    const parameters = paramResult.map((p) => ({
+      name: p.param_name,
+      index: p.param_index,
+      type: p.param_type,
+      purpose: p.purpose,
+      isOptional: p.is_optional,
+      isRest: p.is_rest,
+      isDestructured: p.is_destructured,
+      defaultValue: p.default_value,
+      isMutated: p.is_mutated,
+      confidence: p.confidence,
+    }));
+
+    const returnSemantics = returnResult.length > 0 && returnResult[0]
+      ? {
+          declaredType: returnResult[0].declared_type,
+          inferredType: returnResult[0].inferred_type,
+          canReturnVoid: returnResult[0].can_return_void,
+          alwaysThrows: returnResult[0].always_throws,
+          possibleValues: JSON.parse(returnResult[0].possible_values || "[]") as string[],
+          nullConditions: JSON.parse(returnResult[0].null_conditions || "[]") as string[],
+          errorConditions: JSON.parse(returnResult[0].error_conditions || "[]") as string[],
+          confidence: returnResult[0].confidence,
+        }
+      : null;
+
+    const errorAnalysis = errorResult.length > 0 && errorResult[0]
+      ? {
+          neverThrows: errorResult[0].never_throws,
+          hasTopLevelCatch: errorResult[0].has_top_level_catch,
+          escapingErrorTypes: JSON.parse(errorResult[0].escaping_error_types || "[]") as string[],
+          throwPoints: (JSON.parse(errorResult[0].throw_points || "[]") as unknown[]).length,
+          tryCatchBlocks: (JSON.parse(errorResult[0].try_catch_blocks || "[]") as unknown[]).length,
+          confidence: errorResult[0].confidence,
+        }
+      : null;
+
+    return {
+      functionId,
+      functionName: func.name,
+      filePath: func.file_path,
+      parameters,
+      returnSemantics,
+      errorAnalysis,
+    };
+  } catch (e) {
+    logger.debug({ error: e }, "Function semantics query failed");
+    return null;
+  }
+}
+
+/**
+ * Input for get_error_paths tool
+ */
+export interface GetErrorPathsInput {
+  /** Function name to find error paths for */
+  functionName: string;
+  /** Optional file path to narrow search */
+  filePath?: string;
+}
+
+/**
+ * Output for error paths
+ */
+export interface ErrorPathsResult {
+  functionId: string;
+  functionName: string;
+  filePath: string;
+  errorPaths: Array<{
+    id: string;
+    errorType: string;
+    condition: string | null;
+    isHandled: boolean;
+    handlingStrategy: string | null;
+    recoveryAction: string | null;
+    propagatesTo: string[];
+    sourceLocation: { line: number; column: number };
+    confidence: number;
+  }>;
+}
+
+/**
+ * Get error propagation paths for a function
+ */
+export async function getErrorPaths(
+  store: GraphDatabase,
+  input: GetErrorPathsInput
+): Promise<ErrorPathsResult | null> {
+  const { functionName, filePath } = input;
+  logger.debug({ functionName, filePath }, "Getting error paths");
+
+  // Find the function
+  let funcQuery = `
+    ?[id, name, file_path] :=
+      *function{id, name, file_id},
+      *file{id: file_id, path: file_path},
+      name = $name
+  `;
+  if (filePath) {
+    funcQuery = `
+      ?[id, name, file_path] :=
+        *function{id, name, file_id},
+        *file{id: file_id, path: file_path},
+        name = $name,
+        contains(file_path, $filePath)
+    `;
+  }
+  funcQuery += " :limit 1";
+
+  try {
+    const funcResult = await store.query<{
+      id: string;
+      name: string;
+      file_path: string;
+    }>(funcQuery, { name: functionName, filePath: filePath || "" });
+
+    if (funcResult.length === 0) {
+      return null;
+    }
+
+    const func = funcResult[0];
+    if (!func) return null;
+    const functionId = func.id;
+
+    // Get error paths
+    const pathQuery = `
+      ?[id, error_type, condition, is_handled, handling_strategy, recovery_action,
+        propagates_to, source_location, confidence] :=
+        *error_path{
+          id, function_id, error_type, condition, is_handled, handling_strategy,
+          recovery_action, propagates_to, source_location, confidence
+        },
+        function_id = $functionId
+    `;
+    const pathResult = await store.query<{
+      id: string;
+      error_type: string;
+      condition: string | null;
+      is_handled: boolean;
+      handling_strategy: string | null;
+      recovery_action: string | null;
+      propagates_to: string;
+      source_location: string;
+      confidence: number;
+    }>(pathQuery, { functionId });
+
+    const errorPaths = pathResult.map((p) => ({
+      id: p.id,
+      errorType: p.error_type,
+      condition: p.condition,
+      isHandled: p.is_handled,
+      handlingStrategy: p.handling_strategy,
+      recoveryAction: p.recovery_action,
+      propagatesTo: JSON.parse(p.propagates_to || "[]") as string[],
+      sourceLocation: JSON.parse(p.source_location || '{"line":0,"column":0}') as { line: number; column: number },
+      confidence: p.confidence,
+    }));
+
+    return {
+      functionId,
+      functionName: func.name,
+      filePath: func.file_path,
+      errorPaths,
+    };
+  } catch (e) {
+    logger.debug({ error: e }, "Error paths query failed");
+    return null;
+  }
+}
+
+// =============================================================================
+// Phase 2: Data Flow Analysis Tools
+// =============================================================================
+
+/**
+ * Input for get_data_flow tool
+ */
+export interface GetDataFlowInput {
+  /** Function name to analyze */
+  functionName: string;
+  /** Optional file path to narrow search */
+  filePath?: string;
+  /** Whether to include full node/edge graph (default: false for summary only) */
+  includeFullGraph?: boolean;
+}
+
+/**
+ * Output for data flow analysis
+ */
+export interface DataFlowResult {
+  functionId: string;
+  functionName: string;
+  filePath: string;
+  /** Summary of data flow (always included) */
+  summary: {
+    nodeCount: number;
+    edgeCount: number;
+    hasSideEffects: boolean;
+    accessesExternalState: boolean;
+    isPure: boolean;
+    inputsAffectingOutput: string[];
+    confidence: number;
+  };
+  /** Full data flow graph (only if includeFullGraph=true) */
+  fullGraph?: {
+    nodes: Array<{
+      id: string;
+      kind: string;
+      name: string;
+      line: number;
+      column: number;
+      inferredType: string | null;
+      isTainted: boolean;
+      taintSource: string | null;
+    }>;
+    edges: Array<{
+      from: string;
+      to: string;
+      kind: string;
+      transformation: string | null;
+      condition: string | null;
+      lineNumber: number;
+      propagatesTaint: boolean;
+    }>;
+  };
+  /** Taint flows found */
+  taintFlows?: Array<{
+    source: string;
+    sink: string;
+    pathLength: number;
+    isSanitized: boolean;
+  }>;
+  /** Whether this was from cache or computed fresh */
+  fromCache: boolean;
+}
+
+/**
+ * Get data flow analysis for a function (Phase 2)
+ * Uses lazy evaluation - returns cached result if available, otherwise returns summary only
+ */
+export async function getDataFlow(
+  store: GraphDatabase,
+  input: GetDataFlowInput
+): Promise<DataFlowResult | null> {
+  const { functionName, filePath, includeFullGraph = false } = input;
+  logger.debug({ functionName, filePath, includeFullGraph }, "Getting data flow");
+
+  // Find the function
+  let funcQuery = `
+    ?[id, name, file_path, file_id] :=
+      *function{id, name, file_id},
+      *file{id: file_id, path: file_path},
+      name = $name
+  `;
+  if (filePath) {
+    funcQuery = `
+      ?[id, name, file_path, file_id] :=
+        *function{id, name, file_id},
+        *file{id: file_id, path: file_path},
+        name = $name,
+        contains(file_path, $filePath)
+    `;
+  }
+  funcQuery += " :limit 1";
+
+  try {
+    const funcResult = await store.query<{
+      id: string;
+      name: string;
+      file_path: string;
+      file_id: string;
+    }>(funcQuery, { name: functionName, filePath: filePath || "" });
+
+    if (funcResult.length === 0) {
+      return null;
+    }
+
+    const func = funcResult[0];
+    if (!func) return null;
+    const functionId = func.id;
+
+    // Check for cached data flow
+    const cacheQuery = `
+      ?[node_count, edge_count, has_side_effects, accesses_external_state, is_pure,
+        inputs_affecting_output, flow_summary_json, full_graph_json, taint_flows_json,
+        confidence, access_count] :=
+        *data_flow_cache{
+          function_id, node_count, edge_count, has_side_effects, accesses_external_state,
+          is_pure, inputs_affecting_output, flow_summary_json, full_graph_json,
+          taint_flows_json, confidence, access_count
+        },
+        function_id = $functionId
+      :limit 1
+    `;
+    const cacheResult = await store.query<{
+      node_count: number;
+      edge_count: number;
+      has_side_effects: boolean;
+      accesses_external_state: boolean;
+      is_pure: boolean;
+      inputs_affecting_output: string;
+      flow_summary_json: string;
+      full_graph_json: string;
+      taint_flows_json: string | null;
+      confidence: number;
+      access_count: number;
+    }>(cacheQuery, { functionId });
+
+    if (cacheResult.length > 0 && cacheResult[0]) {
+      const cache = cacheResult[0];
+
+      // Update access count (fire and forget)
+      store.execute(
+        `?[id] := *data_flow_cache{id, function_id}, function_id = $functionId
+         :update data_flow_cache {id => access_count: $newCount, last_accessed_at: $now}`,
+        { functionId, newCount: cache.access_count + 1, now: Date.now() }
+      ).catch((e) => logger.debug({ error: e }, "Failed to update cache access count"));
+
+      const result: DataFlowResult = {
+        functionId,
+        functionName: func.name,
+        filePath: func.file_path,
+        summary: {
+          nodeCount: cache.node_count,
+          edgeCount: cache.edge_count,
+          hasSideEffects: cache.has_side_effects,
+          accessesExternalState: cache.accesses_external_state,
+          isPure: cache.is_pure,
+          inputsAffectingOutput: JSON.parse(cache.inputs_affecting_output || "[]") as string[],
+          confidence: cache.confidence,
+        },
+        fromCache: true,
+      };
+
+      // Include full graph if requested
+      if (includeFullGraph && cache.full_graph_json) {
+        const fullGraph = JSON.parse(cache.full_graph_json) as {
+          nodes: DataFlowResult["fullGraph"];
+          edges: DataFlowResult["fullGraph"];
+        };
+        result.fullGraph = fullGraph as unknown as DataFlowResult["fullGraph"];
+      }
+
+      // Include taint flows if available
+      if (cache.taint_flows_json) {
+        result.taintFlows = JSON.parse(cache.taint_flows_json) as DataFlowResult["taintFlows"];
+      }
+
+      return result;
+    }
+
+    // No cache available - return minimal result indicating analysis needed
+    // In a full implementation, this would trigger lazy computation
+    return {
+      functionId,
+      functionName: func.name,
+      filePath: func.file_path,
+      summary: {
+        nodeCount: 0,
+        edgeCount: 0,
+        hasSideEffects: false,
+        accessesExternalState: false,
+        isPure: true,
+        inputsAffectingOutput: [],
+        confidence: 0,
+      },
+      fromCache: false,
+    };
+  } catch (e) {
+    logger.debug({ error: e }, "Data flow query failed");
+    return null;
+  }
+}
+
+// =============================================================================
+// Phase 3: Side-Effect Analysis Tools
+// =============================================================================
+
+/**
+ * Input for get_side_effects tool
+ */
+export interface GetSideEffectsInput {
+  /** Function name to analyze */
+  functionName: string;
+  /** Optional file path to narrow search */
+  filePath?: string;
+  /** Optional: only include effects of certain categories */
+  categories?: string[];
+  /** Optional: minimum confidence level ('high', 'medium', 'low') */
+  minConfidence?: string;
+}
+
+/**
+ * Output for side effect analysis
+ */
+export interface SideEffectResult {
+  functionId: string;
+  functionName: string;
+  filePath: string;
+  /** Summary of side effects */
+  summary: {
+    totalCount: number;
+    isPure: boolean;
+    allConditional: boolean;
+    primaryCategories: string[];
+    riskLevel: string;
+    confidence: number;
+  };
+  /** Individual side effects */
+  sideEffects: Array<{
+    id: string;
+    category: string;
+    description: string;
+    target: string | null;
+    apiCall: string;
+    isConditional: boolean;
+    condition: string | null;
+    confidence: string;
+    location: {
+      line: number;
+      column: number;
+    };
+  }>;
+}
+
+/**
+ * Get side effects analysis for a function (Phase 3)
+ */
+export async function getSideEffects(
+  store: GraphDatabase,
+  input: GetSideEffectsInput
+): Promise<SideEffectResult | null> {
+  const { functionName, filePath, categories, minConfidence } = input;
+  logger.debug({ functionName, filePath, categories, minConfidence }, "Getting side effects");
+
+  // Find the function
+  let funcQuery = `
+    ?[id, name, file_path] :=
+      *function{id, name, file_id},
+      *file{id: file_id, path: file_path},
+      name = $name
+  `;
+  if (filePath) {
+    funcQuery = `
+      ?[id, name, file_path] :=
+        *function{id, name, file_id},
+        *file{id: file_id, path: file_path},
+        name = $name,
+        contains(file_path, $filePath)
+    `;
+  }
+  funcQuery += " :limit 1";
+
+  try {
+    const funcResult = await store.query<{
+      id: string;
+      name: string;
+      file_path: string;
+    }>(funcQuery, { name: functionName, filePath: filePath || "" });
+
+    if (funcResult.length === 0) {
+      return null;
+    }
+
+    const func = funcResult[0];
+    if (!func) return null;
+    const functionId = func.id;
+
+    // Get the summary
+    const summaryQuery = `
+      ?[total_count, is_pure, all_conditional, primary_categories_json,
+        risk_level, confidence] :=
+        *function_side_effect_summary{
+          function_id, total_count, is_pure, all_conditional,
+          primary_categories_json, risk_level, confidence
+        },
+        function_id = $functionId
+      :limit 1
+    `;
+    const summaryResult = await store.query<{
+      total_count: number;
+      is_pure: boolean;
+      all_conditional: boolean;
+      primary_categories_json: string;
+      risk_level: string;
+      confidence: number;
+    }>(summaryQuery, { functionId });
+
+    // Get individual side effects
+    let effectsQuery = `
+      ?[id, category, description, target, api_call, is_conditional,
+        condition, confidence, source_line, source_column] :=
+        *side_effect{
+          id, function_id, category, description, target, api_call,
+          is_conditional, condition, confidence, source_line, source_column
+        },
+        function_id = $functionId
+    `;
+
+    // Add category filter if specified
+    if (categories && categories.length > 0) {
+      effectsQuery = `
+        ?[id, category, description, target, api_call, is_conditional,
+          condition, confidence, source_line, source_column] :=
+          *side_effect{
+            id, function_id, category, description, target, api_call,
+            is_conditional, condition, confidence, source_line, source_column
+          },
+          function_id = $functionId,
+          category in $categories
+      `;
+    }
+
+    const effectsResult = await store.query<{
+      id: string;
+      category: string;
+      description: string;
+      target: string | null;
+      api_call: string;
+      is_conditional: boolean;
+      condition: string | null;
+      confidence: string;
+      source_line: number;
+      source_column: number;
+    }>(effectsQuery, { functionId, categories: categories || [] });
+
+    // Filter by confidence if specified
+    let filteredEffects = effectsResult;
+    if (minConfidence) {
+      const confidenceOrder = ["high", "medium", "low"];
+      const minIndex = confidenceOrder.indexOf(minConfidence);
+      if (minIndex >= 0) {
+        filteredEffects = effectsResult.filter((e) => {
+          const eIndex = confidenceOrder.indexOf(e.confidence);
+          return eIndex <= minIndex;
+        });
+      }
+    }
+
+    // Build result
+    const summary = summaryResult[0];
+    return {
+      functionId,
+      functionName: func.name,
+      filePath: func.file_path,
+      summary: summary
+        ? {
+            totalCount: summary.total_count,
+            isPure: summary.is_pure,
+            allConditional: summary.all_conditional,
+            primaryCategories: JSON.parse(summary.primary_categories_json || "[]") as string[],
+            riskLevel: summary.risk_level,
+            confidence: summary.confidence,
+          }
+        : {
+            totalCount: filteredEffects.length,
+            isPure: filteredEffects.length === 0,
+            allConditional: filteredEffects.every((e) => e.is_conditional),
+            primaryCategories: [],
+            riskLevel: "low",
+            confidence: 0,
+          },
+      sideEffects: filteredEffects.map((e) => ({
+        id: e.id,
+        category: e.category,
+        description: e.description,
+        target: e.target,
+        apiCall: e.api_call,
+        isConditional: e.is_conditional,
+        condition: e.condition,
+        confidence: e.confidence,
+        location: {
+          line: e.source_line,
+          column: e.source_column,
+        },
+      })),
+    };
+  } catch (e) {
+    logger.debug({ error: e }, "Side effects query failed");
+    return null;
+  }
+}
+
+// =============================================================================
+// Design Pattern Detection Tools (Phase 4)
+// =============================================================================
+
+export interface FindPatternsInput {
+  /** Pattern type to find (optional - all patterns if not specified) */
+  patternType?: "factory" | "singleton" | "observer" | "repository" | "service" | "adapter" | "builder" | "strategy" | "decorator";
+  /** Minimum confidence threshold (default: 0.5) */
+  minConfidence?: number;
+  /** File path to search in (optional - all files if not specified) */
+  filePath?: string;
+  /** Maximum number of results (default: 20) */
+  limit?: number;
+}
+
+export interface PatternResult {
+  id: string;
+  patternType: string;
+  name: string;
+  confidence: number;
+  confidenceLevel: string;
+  description: string | null;
+  filePaths: string[];
+  evidence: string[];
+  participants: Array<{
+    role: string;
+    entityName: string;
+    entityType: string;
+    filePath: string;
+    evidence: string[];
+  }>;
+}
+
+export interface FindPatternsResult {
+  patterns: PatternResult[];
+  stats: {
+    total: number;
+    byType: Record<string, number>;
+    highConfidence: number;
+    mediumConfidence: number;
+    lowConfidence: number;
+  };
+}
+
+/**
+ * Find design patterns in the codebase.
+ */
+export async function findPatterns(
+  store: GraphDatabase,
+  input: FindPatternsInput
+): Promise<FindPatternsResult> {
+  const { patternType, minConfidence = 0.5, filePath, limit = 20 } = input;
+  logger.debug({ patternType, minConfidence, filePath }, "Finding design patterns");
+
+  try {
+    // Build query
+    let patternQuery: string;
+    const params: Record<string, unknown> = { minConfidence, limit };
+
+    if (patternType && filePath) {
+      patternQuery = `
+        ?[id, pattern_type, name, confidence, confidence_level, description,
+          file_paths_json, evidence_json] :=
+          *design_pattern{id, pattern_type, name, confidence, confidence_level,
+            description, file_paths_json, evidence_json},
+          pattern_type = $patternType,
+          confidence >= $minConfidence
+        :limit $limit
+      `;
+      params.patternType = patternType;
+    } else if (patternType) {
+      patternQuery = `
+        ?[id, pattern_type, name, confidence, confidence_level, description,
+          file_paths_json, evidence_json] :=
+          *design_pattern{id, pattern_type, name, confidence, confidence_level,
+            description, file_paths_json, evidence_json},
+          pattern_type = $patternType,
+          confidence >= $minConfidence
+        :limit $limit
+      `;
+      params.patternType = patternType;
+    } else if (filePath) {
+      patternQuery = `
+        ?[id, pattern_type, name, confidence, confidence_level, description,
+          file_paths_json, evidence_json] :=
+          *design_pattern{id, pattern_type, name, confidence, confidence_level,
+            description, file_paths_json, evidence_json},
+          confidence >= $minConfidence
+        :limit $limit
+      `;
+    } else {
+      patternQuery = `
+        ?[id, pattern_type, name, confidence, confidence_level, description,
+          file_paths_json, evidence_json] :=
+          *design_pattern{id, pattern_type, name, confidence, confidence_level,
+            description, file_paths_json, evidence_json},
+          confidence >= $minConfidence
+        :limit $limit
+      `;
+    }
+
+    const patternResult = await store.query<{
+      id: string;
+      pattern_type: string;
+      name: string;
+      confidence: number;
+      confidence_level: string;
+      description: string | null;
+      file_paths_json: string;
+      evidence_json: string;
+    }>(patternQuery, params);
+
+    // Filter by file path if specified (client-side filtering)
+    let filteredPatterns = patternResult;
+    if (filePath) {
+      filteredPatterns = patternResult.filter((p) => {
+        const paths = JSON.parse(p.file_paths_json || "[]") as string[];
+        return paths.some((fp) => fp.includes(filePath) || filePath.includes(fp));
+      });
+    }
+
+    // Get participants for each pattern
+    const patterns: PatternResult[] = [];
+    const byType: Record<string, number> = {};
+    let highConfidence = 0;
+    let mediumConfidence = 0;
+    let lowConfidence = 0;
+
+    for (const p of filteredPatterns) {
+      // Get participants
+      const participantQuery = `
+        ?[role, entity_name, entity_type, file_path, evidence_json] :=
+          *pattern_participant{pattern_id, role, entity_name, entity_type,
+            file_path, evidence_json},
+          pattern_id = $patternId
+      `;
+      const participantResult = await store.query<{
+        role: string;
+        entity_name: string;
+        entity_type: string;
+        file_path: string;
+        evidence_json: string;
+      }>(participantQuery, { patternId: p.id });
+
+      patterns.push({
+        id: p.id,
+        patternType: p.pattern_type,
+        name: p.name,
+        confidence: p.confidence,
+        confidenceLevel: p.confidence_level,
+        description: p.description,
+        filePaths: JSON.parse(p.file_paths_json || "[]") as string[],
+        evidence: JSON.parse(p.evidence_json || "[]") as string[],
+        participants: participantResult.map((pp) => ({
+          role: pp.role,
+          entityName: pp.entity_name,
+          entityType: pp.entity_type,
+          filePath: pp.file_path,
+          evidence: JSON.parse(pp.evidence_json || "[]") as string[],
+        })),
+      });
+
+      // Stats
+      byType[p.pattern_type] = (byType[p.pattern_type] || 0) + 1;
+      if (p.confidence_level === "high") highConfidence++;
+      else if (p.confidence_level === "medium") mediumConfidence++;
+      else lowConfidence++;
+    }
+
+    return {
+      patterns,
+      stats: {
+        total: patterns.length,
+        byType,
+        highConfidence,
+        mediumConfidence,
+        lowConfidence,
+      },
+    };
+  } catch (e) {
+    logger.debug({ error: e }, "Pattern query failed");
+    return {
+      patterns: [],
+      stats: {
+        total: 0,
+        byType: {},
+        highConfidence: 0,
+        mediumConfidence: 0,
+        lowConfidence: 0,
+      },
+    };
+  }
+}
+
+export interface GetPatternInput {
+  /** Pattern ID */
+  patternId: string;
+}
+
+/**
+ * Get details of a specific design pattern.
+ */
+export async function getPattern(
+  store: GraphDatabase,
+  input: GetPatternInput
+): Promise<PatternResult | null> {
+  const { patternId } = input;
+  logger.debug({ patternId }, "Getting pattern details");
+
+  try {
+    const patternQuery = `
+      ?[id, pattern_type, name, confidence, confidence_level, description,
+        file_paths_json, evidence_json] :=
+        *design_pattern{id, pattern_type, name, confidence, confidence_level,
+          description, file_paths_json, evidence_json},
+        id = $patternId
+      :limit 1
+    `;
+
+    const patternResult = await store.query<{
+      id: string;
+      pattern_type: string;
+      name: string;
+      confidence: number;
+      confidence_level: string;
+      description: string | null;
+      file_paths_json: string;
+      evidence_json: string;
+    }>(patternQuery, { patternId });
+
+    const p = patternResult[0];
+    if (!p) {
+      return null;
+    }
+
+    // Get participants
+    const participantQuery = `
+      ?[role, entity_name, entity_type, file_path, evidence_json] :=
+        *pattern_participant{pattern_id, role, entity_name, entity_type,
+          file_path, evidence_json},
+        pattern_id = $patternId
+    `;
+    const participantResult = await store.query<{
+      role: string;
+      entity_name: string;
+      entity_type: string;
+      file_path: string;
+      evidence_json: string;
+    }>(participantQuery, { patternId });
+
+    return {
+      id: p.id,
+      patternType: p.pattern_type,
+      name: p.name,
+      confidence: p.confidence,
+      confidenceLevel: p.confidence_level,
+      description: p.description,
+      filePaths: JSON.parse(p.file_paths_json || "[]") as string[],
+      evidence: JSON.parse(p.evidence_json || "[]") as string[],
+      participants: participantResult.map((pp) => ({
+        role: pp.role,
+        entityName: pp.entity_name,
+        entityType: pp.entity_type,
+        filePath: pp.file_path,
+        evidence: JSON.parse(pp.evidence_json || "[]") as string[],
+      })),
+    };
+  } catch (e) {
+    logger.debug({ error: e }, "Get pattern failed");
+    return null;
+  }
+}
+
+// =============================================================================
+// Phase 6: Semantic Similarity & Related Code Discovery
+// =============================================================================
+
+export interface FindSimilarCodeInput {
+  /** Entity ID to find similar code for (use this OR text, not both) */
+  entityId?: string;
+  /** Natural language description to search for (use this OR entityId, not both) */
+  text?: string;
+  /** Maximum number of results (default: 10) */
+  limit?: number;
+  /** Minimum similarity threshold 0.0-1.0 (default: 0.5) */
+  minSimilarity?: number;
+  /** Filter by entity type */
+  entityTypes?: Array<"function" | "class" | "interface" | "method">;
+  /** Filter by file path pattern (regex) */
+  filePathPattern?: string;
+}
+
+export interface SimilarCodeResult {
+  entityId: string;
+  entityType: "function" | "class" | "interface" | "method";
+  name: string;
+  filePath: string;
+  similarity: number;
+  signature?: string;
+  description?: string;
+}
+
+export interface FindSimilarCodeResult {
+  results: SimilarCodeResult[];
+  query: {
+    type: "entity" | "text";
+    value: string;
+  };
+  stats: {
+    total: number;
+    avgSimilarity: number;
+    searchTimeMs: number;
+  };
+}
+
+/**
+ * Find semantically similar code using vector embeddings.
+ *
+ * Uses local embeddings (HuggingFace transformers) and HNSW vector indices
+ * to find code that is functionally similar to the query.
+ */
+export async function findSimilarCode(
+  store: GraphDatabase,
+  input: FindSimilarCodeInput,
+  embeddingService?: import("../core/embeddings/index.js").IEmbeddingService,
+  similarityService?: import("../core/embeddings/index.js").ISimilarityService
+): Promise<FindSimilarCodeResult> {
+  const { entityId, text, limit = 10, minSimilarity = 0.5, entityTypes, filePathPattern } = input;
+  logger.debug({ entityId, text, limit, minSimilarity }, "Finding similar code");
+
+  const startTime = Date.now();
+
+  // Validate input
+  if (!entityId && !text) {
+    return {
+      results: [],
+      query: { type: "text", value: "" },
+      stats: { total: 0, avgSimilarity: 0, searchTimeMs: 0 },
+    };
+  }
+
+  // If no similarity service, return empty (embeddings not initialized)
+  if (!similarityService) {
+    logger.warn("Similarity service not initialized - embeddings may not be enabled");
+    return {
+      results: [],
+      query: { type: entityId ? "entity" : "text", value: entityId || text || "" },
+      stats: { total: 0, avgSimilarity: 0, searchTimeMs: Date.now() - startTime },
+    };
+  }
+
+  try {
+    const searchOptions = {
+      limit,
+      minSimilarity,
+      entityTypes,
+      filePathPattern,
+    };
+
+    let results: import("../core/embeddings/index.js").SimilarEntity[];
+
+    if (entityId) {
+      // Search by entity ID
+      results = await similarityService.findSimilarByEntityId(entityId, searchOptions);
+    } else if (text) {
+      // Search by natural language text
+      results = await similarityService.findSimilarByText(text, searchOptions);
+    } else {
+      results = [];
+    }
+
+    const searchTimeMs = Date.now() - startTime;
+    const avgSimilarity = results.length > 0
+      ? results.reduce((sum, r) => sum + r.similarity, 0) / results.length
+      : 0;
+
+    return {
+      results: results.map(r => ({
+        entityId: r.entityId,
+        entityType: r.entityType,
+        name: r.name,
+        filePath: r.filePath,
+        similarity: r.similarity,
+        signature: r.signature,
+        description: r.description,
+      })),
+      query: {
+        type: entityId ? "entity" : "text",
+        value: entityId || text || "",
+      },
+      stats: {
+        total: results.length,
+        avgSimilarity: Math.round(avgSimilarity * 1000) / 1000,
+        searchTimeMs,
+      },
+    };
+  } catch (e) {
+    logger.debug({ error: e }, "Find similar code failed");
+    return {
+      results: [],
+      query: { type: entityId ? "entity" : "text", value: entityId || text || "" },
+      stats: { total: 0, avgSimilarity: 0, searchTimeMs: Date.now() - startTime },
+    };
+  }
+}
+
+// =============================================================================
 // Tool Context (for dependency injection)
 // =============================================================================
 

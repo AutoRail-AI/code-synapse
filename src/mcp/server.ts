@@ -49,6 +49,13 @@ import {
   requestReindex,
   enhancePrompt,
   createGenerationContext,
+  getFunctionSemantics,
+  getErrorPaths,
+  getDataFlow,
+  getSideEffects,
+  findPatterns,
+  getPattern,
+  findSimilarCode,
   type ToolContext,
 } from "./tools.js";
 import {
@@ -72,6 +79,12 @@ import {
   vibeStatus,
   VIBE_TOOL_DEFINITIONS,
 } from "./vibe-coding.js";
+import {
+  createEmbeddingService,
+  createSimilarityService,
+  type IEmbeddingService,
+  type ISimilarityService,
+} from "../core/embeddings/index.js";
 
 const logger = createLogger("mcp-server");
 
@@ -90,6 +103,8 @@ let observer: MCPObserverService | null = null;
 let modelRouter: IModelRouter | null = null;
 let justificationService: IJustificationService | null = null;
 let changeLedger: IChangeLedger | null = null;
+let embeddingService: IEmbeddingService | null = null;
+let similarityService: ISimilarityService | null = null;
 
 /**
  * Extended config that includes LLM settings
@@ -358,6 +373,180 @@ export const TOOL_DEFINITIONS = [
       required: ["originalPrompt", "affectedFiles"],
     },
   },
+  // Phase 1: Enhanced Entity Semantics
+  {
+    name: "get_function_semantics",
+    description:
+      "Get detailed semantic analysis for a function including parameter purposes, return value analysis, and error handling patterns. Phase 1 analysis provides deep insight into function behavior.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        name: {
+          type: "string",
+          description: "Function name to analyze",
+        },
+        filePath: {
+          type: "string",
+          description: "Optional file path to narrow search",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "get_error_paths",
+    description:
+      "Get error propagation paths for a function. Shows how errors flow through the code, what's handled vs propagated, and recovery strategies.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        functionName: {
+          type: "string",
+          description: "Function name to find error paths for",
+        },
+        filePath: {
+          type: "string",
+          description: "Optional file path to narrow search",
+        },
+      },
+      required: ["functionName"],
+    },
+  },
+  // Phase 2: Data Flow Analysis
+  {
+    name: "get_data_flow",
+    description:
+      "Get data flow analysis for a function. Shows how data moves through the function, side effects, purity analysis, and taint tracking. Uses lazy evaluation with caching.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        functionName: {
+          type: "string",
+          description: "Function name to analyze",
+        },
+        filePath: {
+          type: "string",
+          description: "Optional file path to narrow search",
+        },
+        includeFullGraph: {
+          type: "boolean",
+          description: "Include full node/edge graph (default: false for summary only)",
+        },
+      },
+      required: ["functionName"],
+    },
+  },
+  // Phase 3: Side-Effect Analysis
+  {
+    name: "get_side_effects",
+    description:
+      "Get side effects analysis for a function. Shows I/O operations, mutations, async operations, and external service calls with confidence levels.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        functionName: {
+          type: "string",
+          description: "Function name to analyze",
+        },
+        filePath: {
+          type: "string",
+          description: "Optional file path to narrow search",
+        },
+        categories: {
+          type: "array",
+          items: { type: "string" },
+          description: "Filter by side effect categories (e.g., 'io-file', 'io-network', 'mutation-this')",
+        },
+        minConfidence: {
+          type: "string",
+          enum: ["high", "medium", "low"],
+          description: "Minimum confidence level (default: all)",
+        },
+      },
+      required: ["functionName"],
+    },
+  },
+  // Phase 4: Design Pattern Detection
+  {
+    name: "find_patterns",
+    description:
+      "Find design patterns in the codebase (Factory, Singleton, Observer, Repository, Service, Builder, Strategy, Decorator). Returns patterns with participants and confidence scores.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        patternType: {
+          type: "string",
+          enum: ["factory", "singleton", "observer", "repository", "service", "adapter", "builder", "strategy", "decorator"],
+          description: "Filter by pattern type (optional - all patterns if not specified)",
+        },
+        minConfidence: {
+          type: "number",
+          description: "Minimum confidence threshold 0.0-1.0 (default: 0.5)",
+        },
+        filePath: {
+          type: "string",
+          description: "Optional file path to narrow search",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results (default: 20)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_pattern",
+    description:
+      "Get details of a specific design pattern by ID. Returns full participant information and evidence.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        patternId: {
+          type: "string",
+          description: "Pattern ID to retrieve",
+        },
+      },
+      required: ["patternId"],
+    },
+  },
+  // Phase 6: Semantic Similarity & Related Code Discovery
+  {
+    name: "find_similar_code",
+    description:
+      "Find semantically similar code using vector embeddings. Search by entity ID or natural language description. Returns similar functions, classes, interfaces ranked by similarity score.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        entityId: {
+          type: "string",
+          description: "Entity ID to find similar code for (use this OR text, not both)",
+        },
+        text: {
+          type: "string",
+          description: "Natural language description to search for (use this OR entityId, not both)",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results (default: 10)",
+        },
+        minSimilarity: {
+          type: "number",
+          description: "Minimum similarity threshold 0.0-1.0 (default: 0.5)",
+        },
+        entityTypes: {
+          type: "array",
+          items: { type: "string", enum: ["function", "class", "interface", "method"] },
+          description: "Filter by entity type",
+        },
+        filePathPattern: {
+          type: "string",
+          description: "Filter by file path pattern (regex)",
+        },
+      },
+      required: [],
+    },
+  },
   // Vibe coding tools
   ...VIBE_TOOL_DEFINITIONS,
 ];
@@ -372,6 +561,8 @@ export interface McpServerOptions {
   ledger?: IChangeLedger;
   justificationService?: IJustificationService;
   indexer?: Indexer;
+  embeddingService?: IEmbeddingService;
+  similarityService?: ISimilarityService;
 }
 
 /**
@@ -394,6 +585,8 @@ export function createMcpServer(
     ledger,
     justificationService,
     indexer: indexerRef,
+    embeddingService: embeddingSvc,
+    similarityService: similaritySvc,
   } = options;
 
   // Create tool context for dependency injection
@@ -665,6 +858,124 @@ export function createMcpServer(
             result,
             toolContext.sessionId,
             Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        // Phase 1: Enhanced Entity Semantics tools
+        case "get_function_semantics": {
+          const result = await getFunctionSemantics(graphStore, {
+            name: args?.name as string,
+            filePath: args?.filePath as string | undefined,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "Function not found or no semantic analysis available" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "get_error_paths": {
+          const result = await getErrorPaths(graphStore, {
+            functionName: args?.functionName as string,
+            filePath: args?.filePath as string | undefined,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "Function not found or no error analysis available" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        // Phase 2: Data Flow Analysis tools
+        case "get_data_flow": {
+          const result = await getDataFlow(graphStore, {
+            functionName: args?.functionName as string,
+            filePath: args?.filePath as string | undefined,
+            includeFullGraph: args?.includeFullGraph as boolean | undefined,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "Function not found" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        // Phase 3: Side-Effect Analysis tools
+        case "get_side_effects": {
+          const result = await getSideEffects(graphStore, {
+            functionName: args?.functionName as string,
+            filePath: args?.filePath as string | undefined,
+            categories: args?.categories as string[] | undefined,
+            minConfidence: args?.minConfidence as string | undefined,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "Function not found or no side effects analysis available" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        // Phase 4: Design Pattern Detection tools
+        case "find_patterns": {
+          const result = await findPatterns(graphStore, {
+            patternType: args?.patternType as "factory" | "singleton" | "observer" | "repository" | "service" | "adapter" | "builder" | "strategy" | "decorator" | undefined,
+            minConfidence: args?.minConfidence as number | undefined,
+            filePath: args?.filePath as string | undefined,
+            limit: args?.limit as number | undefined,
+          });
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "get_pattern": {
+          const result = await getPattern(graphStore, {
+            patternId: args?.patternId as string,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "Pattern not found" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        // Phase 6: Semantic Similarity & Related Code Discovery
+        case "find_similar_code": {
+          const result = await findSimilarCode(
+            graphStore,
+            {
+              entityId: args?.entityId as string | undefined,
+              text: args?.text as string | undefined,
+              limit: args?.limit as number | undefined,
+              minSimilarity: args?.minSimilarity as number | undefined,
+              entityTypes: args?.entityTypes as Array<"function" | "class" | "interface" | "method"> | undefined,
+              filePathPattern: args?.filePathPattern as string | undefined,
+            },
+            embeddingSvc,
+            similaritySvc
           );
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -1017,6 +1328,27 @@ export async function startServer(options: ServerOptions): Promise<void> {
     changeLedger = null;
   }
 
+  // Initialize embedding and similarity services (non-fatal - semantic search optional)
+  try {
+    embeddingService = createEmbeddingService();
+    await embeddingService.initialize();
+    logger.info({ modelId: embeddingService.getModelId() }, "Embedding service initialized");
+
+    similarityService = createSimilarityService(
+      graphStore as unknown as import("../core/interfaces/IGraphStore.js").IGraphStore,
+      embeddingService
+    );
+    await similarityService.initialize();
+    logger.info("Similarity service initialized");
+  } catch (embeddingError) {
+    logger.warn(
+      { error: embeddingError },
+      "Failed to initialize embedding services - semantic similarity search unavailable"
+    );
+    embeddingService = null;
+    similarityService = null;
+  }
+
   // Create MCP server with full service integration
   server = createMcpServer({
     graphStore,
@@ -1025,6 +1357,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
     ledger: changeLedger ?? undefined,
     justificationService,
     indexer,
+    embeddingService: embeddingService ?? undefined,
+    similarityService: similarityService ?? undefined,
   });
 
   // Start file watcher for automatic incremental indexing
@@ -1125,6 +1459,10 @@ export async function stopServer(): Promise<void> {
   // Note: Model router doesn't need explicit cleanup
   // but clear the reference
   modelRouter = null;
+
+  // Clear embedding and similarity services (no explicit cleanup needed)
+  embeddingService = null;
+  similarityService = null;
 
   if (server) {
     await server.close();

@@ -444,7 +444,17 @@ export class GraphWriter {
       batch.interface.length +
       batch.typeAlias.length +
       batch.variable.length +
-      batch.ghostNode.length
+      batch.ghostNode.length +
+      // Phase 1: Enhanced Entity Semantics
+      batch.parameterSemantics.length +
+      batch.returnSemantics.length +
+      batch.errorPaths.length +
+      batch.errorAnalysis.length +
+      // Phase 2: Data Flow Analysis
+      batch.dataFlowCache.length +
+      batch.dataFlowNodes.length +
+      batch.crossFunctionFlows.length +
+      batch.taintSources.length
     );
   }
 
@@ -458,7 +468,11 @@ export class GraphWriter {
       batch.extendsInterface.length +
       batch.hasMethod.length +
       batch.usesType.length +
-      batch.referencesExternal.length
+      batch.referencesExternal.length +
+      // Phase 2: Data Flow Relationships
+      batch.dataFlowsTo.length +
+      batch.hasCrossFlow.length +
+      batch.taintFlowsTo.length
     );
   }
 }

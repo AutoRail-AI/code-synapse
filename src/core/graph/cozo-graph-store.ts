@@ -540,6 +540,386 @@ async function writeBatchToDb(
       );
     }
   }
+
+  // =========================================================================
+  // Phase 1: Enhanced Entity Semantics
+  // =========================================================================
+
+  if (batch.parameterSemantics.length > 0) {
+    for (const row of batch.parameterSemantics) {
+      await db.execute(
+        `?[id, function_id, param_name, param_index, param_type, purpose, is_optional, is_rest,
+          is_destructured, default_value, validation_rules, used_in_expressions, is_mutated,
+          accessed_at_lines, confidence, analyzed_at] <- [[
+          $id, $functionId, $paramName, $paramIndex, $paramType, $purpose, $isOptional, $isRest,
+          $isDestructured, $defaultValue, $validationRules, $usedInExpressions, $isMutated,
+          $accessedAtLines, $confidence, $analyzedAt
+        ]]
+        :put function_parameter_semantics {id => function_id, param_name, param_index, param_type, purpose,
+          is_optional, is_rest, is_destructured, default_value, validation_rules, used_in_expressions,
+          is_mutated, accessed_at_lines, confidence, analyzed_at}`,
+        {
+          id: row[0],
+          functionId: row[1],
+          paramName: row[2],
+          paramIndex: row[3],
+          paramType: row[4],
+          purpose: row[5],
+          isOptional: row[6],
+          isRest: row[7],
+          isDestructured: row[8],
+          defaultValue: row[9],
+          validationRules: row[10],
+          usedInExpressions: row[11],
+          isMutated: row[12],
+          accessedAtLines: row[13],
+          confidence: row[14],
+          analyzedAt: row[15],
+        },
+      );
+    }
+  }
+
+  if (batch.returnSemantics.length > 0) {
+    for (const row of batch.returnSemantics) {
+      await db.execute(
+        `?[id, function_id, declared_type, inferred_type, return_points, possible_values,
+          null_conditions, error_conditions, derived_from, transformations, can_return_void,
+          always_throws, confidence, analyzed_at] <- [[
+          $id, $functionId, $declaredType, $inferredType, $returnPoints, $possibleValues,
+          $nullConditions, $errorConditions, $derivedFrom, $transformations, $canReturnVoid,
+          $alwaysThrows, $confidence, $analyzedAt
+        ]]
+        :put function_return_semantics {id => function_id, declared_type, inferred_type, return_points,
+          possible_values, null_conditions, error_conditions, derived_from, transformations,
+          can_return_void, always_throws, confidence, analyzed_at}`,
+        {
+          id: row[0],
+          functionId: row[1],
+          declaredType: row[2],
+          inferredType: row[3],
+          returnPoints: row[4],
+          possibleValues: row[5],
+          nullConditions: row[6],
+          errorConditions: row[7],
+          derivedFrom: row[8],
+          transformations: row[9],
+          canReturnVoid: row[10],
+          alwaysThrows: row[11],
+          confidence: row[12],
+          analyzedAt: row[13],
+        },
+      );
+    }
+  }
+
+  if (batch.errorPaths.length > 0) {
+    for (const row of batch.errorPaths) {
+      await db.execute(
+        `?[id, function_id, error_type, condition, is_handled, handling_strategy, recovery_action,
+          propagates_to, source_location, stack_context, confidence, analyzed_at] <- [[
+          $id, $functionId, $errorType, $condition, $isHandled, $handlingStrategy, $recoveryAction,
+          $propagatesTo, $sourceLocation, $stackContext, $confidence, $analyzedAt
+        ]]
+        :put error_path {id => function_id, error_type, condition, is_handled, handling_strategy,
+          recovery_action, propagates_to, source_location, stack_context, confidence, analyzed_at}`,
+        {
+          id: row[0],
+          functionId: row[1],
+          errorType: row[2],
+          condition: row[3],
+          isHandled: row[4],
+          handlingStrategy: row[5],
+          recoveryAction: row[6],
+          propagatesTo: row[7],
+          sourceLocation: row[8],
+          stackContext: row[9],
+          confidence: row[10],
+          analyzedAt: row[11],
+        },
+      );
+    }
+  }
+
+  if (batch.errorAnalysis.length > 0) {
+    for (const row of batch.errorAnalysis) {
+      await db.execute(
+        `?[id, function_id, throw_points, try_catch_blocks, never_throws, has_top_level_catch,
+          escaping_error_types, confidence, analyzed_at] <- [[
+          $id, $functionId, $throwPoints, $tryCatchBlocks, $neverThrows, $hasTopLevelCatch,
+          $escapingErrorTypes, $confidence, $analyzedAt
+        ]]
+        :put function_error_analysis {id => function_id, throw_points, try_catch_blocks, never_throws,
+          has_top_level_catch, escaping_error_types, confidence, analyzed_at}`,
+        {
+          id: row[0],
+          functionId: row[1],
+          throwPoints: row[2],
+          tryCatchBlocks: row[3],
+          neverThrows: row[4],
+          hasTopLevelCatch: row[5],
+          escapingErrorTypes: row[6],
+          confidence: row[7],
+          analyzedAt: row[8],
+        },
+      );
+    }
+  }
+
+  // =========================================================================
+  // Phase 2: Data Flow Analysis
+  // =========================================================================
+
+  if (batch.dataFlowCache.length > 0) {
+    for (const row of batch.dataFlowCache) {
+      await db.execute(
+        `?[id, function_id, file_id, file_hash, node_count, edge_count, has_side_effects,
+          accesses_external_state, is_pure, inputs_affecting_output, flow_summary_json,
+          full_graph_json, taint_flows_json, confidence, computed_at, access_count, last_accessed_at] <- [[
+          $id, $functionId, $fileId, $fileHash, $nodeCount, $edgeCount, $hasSideEffects,
+          $accessesExternalState, $isPure, $inputsAffectingOutput, $flowSummaryJson,
+          $fullGraphJson, $taintFlowsJson, $confidence, $computedAt, $accessCount, $lastAccessedAt
+        ]]
+        :put data_flow_cache {id => function_id, file_id, file_hash, node_count, edge_count,
+          has_side_effects, accesses_external_state, is_pure, inputs_affecting_output,
+          flow_summary_json, full_graph_json, taint_flows_json, confidence, computed_at,
+          access_count, last_accessed_at}`,
+        {
+          id: row[0],
+          functionId: row[1],
+          fileId: row[2],
+          fileHash: row[3],
+          nodeCount: row[4],
+          edgeCount: row[5],
+          hasSideEffects: row[6],
+          accessesExternalState: row[7],
+          isPure: row[8],
+          inputsAffectingOutput: row[9],
+          flowSummaryJson: row[10],
+          fullGraphJson: row[11],
+          taintFlowsJson: row[12],
+          confidence: row[13],
+          computedAt: row[14],
+          accessCount: row[15],
+          lastAccessedAt: row[16],
+        },
+      );
+    }
+  }
+
+  if (batch.dataFlowNodes.length > 0) {
+    for (const row of batch.dataFlowNodes) {
+      await db.execute(
+        `?[id, function_id, kind, name, line, column, inferred_type, is_tainted, taint_source] <- [[
+          $id, $functionId, $kind, $name, $line, $column, $inferredType, $isTainted, $taintSource
+        ]]
+        :put data_flow_node {id => function_id, kind, name, line, column, inferred_type, is_tainted, taint_source}`,
+        {
+          id: row[0],
+          functionId: row[1],
+          kind: row[2],
+          name: row[3],
+          line: row[4],
+          column: row[5],
+          inferredType: row[6],
+          isTainted: row[7],
+          taintSource: row[8],
+        },
+      );
+    }
+  }
+
+  if (batch.crossFunctionFlows.length > 0) {
+    for (const row of batch.crossFunctionFlows) {
+      await db.execute(
+        `?[id, caller_id, callee_id, call_site_line, arguments_json, return_usage_json,
+          propagates_taint, tainted_arguments, confidence, analyzed_at] <- [[
+          $id, $callerId, $calleeId, $callSiteLine, $argumentsJson, $returnUsageJson,
+          $propagatesTaint, $taintedArguments, $confidence, $analyzedAt
+        ]]
+        :put cross_function_flow {id => caller_id, callee_id, call_site_line, arguments_json,
+          return_usage_json, propagates_taint, tainted_arguments, confidence, analyzed_at}`,
+        {
+          id: row[0],
+          callerId: row[1],
+          calleeId: row[2],
+          callSiteLine: row[3],
+          argumentsJson: row[4],
+          returnUsageJson: row[5],
+          propagatesTaint: row[6],
+          taintedArguments: row[7],
+          confidence: row[8],
+          analyzedAt: row[9],
+        },
+      );
+    }
+  }
+
+  if (batch.taintSources.length > 0) {
+    for (const row of batch.taintSources) {
+      await db.execute(
+        `?[id, function_id, source_category, node_id, description, line, is_sanitized,
+          sanitization_point, discovered_at] <- [[
+          $id, $functionId, $sourceCategory, $nodeId, $description, $line, $isSanitized,
+          $sanitizationPoint, $discoveredAt
+        ]]
+        :put taint_source {id => function_id, source_category, node_id, description, line,
+          is_sanitized, sanitization_point, discovered_at}`,
+        {
+          id: row[0],
+          functionId: row[1],
+          sourceCategory: row[2],
+          nodeId: row[3],
+          description: row[4],
+          line: row[5],
+          isSanitized: row[6],
+          sanitizationPoint: row[7],
+          discoveredAt: row[8],
+        },
+      );
+    }
+  }
+
+  // =========================================================================
+  // Phase 2: Data Flow Relationships
+  // =========================================================================
+
+  if (batch.dataFlowsTo.length > 0) {
+    for (const row of batch.dataFlowsTo) {
+      await db.execute(
+        `?[from_id, to_id, edge_kind, transformation, condition, line_number, propagates_taint] <- [[
+          $fromId, $toId, $edgeKind, $transformation, $condition, $lineNumber, $propagatesTaint
+        ]]
+        :put data_flows_to {from_id, to_id => edge_kind, transformation, condition, line_number, propagates_taint}`,
+        {
+          fromId: row[0],
+          toId: row[1],
+          edgeKind: row[2],
+          transformation: row[3],
+          condition: row[4],
+          lineNumber: row[5],
+          propagatesTaint: row[6],
+        },
+      );
+    }
+  }
+
+  if (batch.hasCrossFlow.length > 0) {
+    for (const row of batch.hasCrossFlow) {
+      await db.execute(
+        `?[from_id, to_id, role] <- [[$fromId, $toId, $role]]
+        :put has_cross_flow {from_id, to_id => role}`,
+        {
+          fromId: row[0],
+          toId: row[1],
+          role: row[2],
+        },
+      );
+    }
+  }
+
+  if (batch.taintFlowsTo.length > 0) {
+    for (const row of batch.taintFlowsTo) {
+      await db.execute(
+        `?[from_id, to_id, path_length, is_sanitized] <- [[$fromId, $toId, $pathLength, $isSanitized]]
+        :put taint_flows_to {from_id, to_id => path_length, is_sanitized}`,
+        {
+          fromId: row[0],
+          toId: row[1],
+          pathLength: row[2],
+          isSanitized: row[3],
+        },
+      );
+    }
+  }
+
+  // =========================================================================
+  // Phase 3: Side-Effect Analysis
+  // =========================================================================
+
+  if (batch.sideEffects.length > 0) {
+    for (const row of batch.sideEffects) {
+      await db.execute(
+        `?[id, function_id, file_path, category, description, target, api_call,
+          is_conditional, condition, confidence, evidence_json, source_line,
+          source_column, analyzed_at] <- [[
+          $id, $functionId, $filePath, $category, $description, $target, $apiCall,
+          $isConditional, $condition, $confidence, $evidenceJson, $sourceLine,
+          $sourceColumn, $analyzedAt
+        ]]
+        :put side_effect {id => function_id, file_path, category, description, target,
+          api_call, is_conditional, condition, confidence, evidence_json, source_line,
+          source_column, analyzed_at}`,
+        {
+          id: row[0],
+          functionId: row[1],
+          filePath: row[2],
+          category: row[3],
+          description: row[4],
+          target: row[5],
+          apiCall: row[6],
+          isConditional: row[7],
+          condition: row[8],
+          confidence: row[9],
+          evidenceJson: row[10],
+          sourceLine: row[11],
+          sourceColumn: row[12],
+          analyzedAt: row[13],
+        },
+      );
+    }
+  }
+
+  if (batch.sideEffectSummaries.length > 0) {
+    for (const row of batch.sideEffectSummaries) {
+      await db.execute(
+        `?[function_id, file_path, total_count, is_pure, all_conditional,
+          primary_categories_json, risk_level, confidence, analyzed_at] <- [[
+          $functionId, $filePath, $totalCount, $isPure, $allConditional,
+          $primaryCategoriesJson, $riskLevel, $confidence, $analyzedAt
+        ]]
+        :put function_side_effect_summary {function_id => file_path, total_count, is_pure,
+          all_conditional, primary_categories_json, risk_level, confidence, analyzed_at}`,
+        {
+          functionId: row[0],
+          filePath: row[1],
+          totalCount: row[2],
+          isPure: row[3],
+          allConditional: row[4],
+          primaryCategoriesJson: row[5],
+          riskLevel: row[6],
+          confidence: row[7],
+          analyzedAt: row[8],
+        },
+      );
+    }
+  }
+
+  if (batch.hasSideEffect.length > 0) {
+    for (const row of batch.hasSideEffect) {
+      await db.execute(
+        `?[from_id, to_id] <- [[$fromId, $toId]]
+        :put has_side_effect {from_id, to_id}`,
+        {
+          fromId: row[0],
+          toId: row[1],
+        },
+      );
+    }
+  }
+
+  if (batch.hasSideEffectSummary.length > 0) {
+    for (const row of batch.hasSideEffectSummary) {
+      await db.execute(
+        `?[from_id, to_id] <- [[$fromId, $toId]]
+        :put has_side_effect_summary {from_id, to_id}`,
+        {
+          fromId: row[0],
+          toId: row[1],
+        },
+      );
+    }
+  }
 }
 
 // =============================================================================

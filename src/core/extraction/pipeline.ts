@@ -22,13 +22,25 @@ import {
   type EmbeddingChunk,
   type FileRow,
   type ContainsRow,
+  type ParameterSemanticsRow,
+  type ReturnSemanticsRow,
+  type ErrorPathRow,
+  type ErrorAnalysisRow,
   createEmptyBatch,
 } from "./types.js";
-import { generateFileId } from "./id-generator.js";
+import { generateFileId, generateEntityId } from "./id-generator.js";
 import { FunctionExtractor } from "./function-extractor.js";
 import { ClassExtractor } from "./class-extractor.js";
 import { InterfaceExtractor } from "./interface-extractor.js";
 import { ImportExtractor } from "./import-extractor.js";
+import { ParameterAnalyzer } from "./analyzers/parameter-analyzer.js";
+import { ReturnAnalyzer } from "./analyzers/return-analyzer.js";
+import { ErrorAnalyzer } from "./analyzers/error-analyzer.js";
+import type {
+  ParameterAnalysisResult,
+  ReturnAnalysisResult,
+  ErrorAnalysisResult,
+} from "../analysis/interfaces.js";
 
 // =============================================================================
 // Pipeline Options
@@ -44,6 +56,8 @@ export interface PipelineOptions {
   extractEmbeddings?: boolean;
   /** Whether to track call sites for Pass 2 */
   trackCalls?: boolean;
+  /** Whether to perform enhanced semantic analysis (Phase 1) */
+  semanticAnalysis?: boolean;
 }
 
 // =============================================================================
@@ -76,12 +90,16 @@ export class EntityPipeline {
   private classExtractor: ClassExtractor;
   private interfaceExtractor: InterfaceExtractor;
   private importExtractor: ImportExtractor;
+  private parameterAnalyzer: ParameterAnalyzer;
+  private returnAnalyzer: ReturnAnalyzer;
+  private errorAnalyzer: ErrorAnalyzer;
   private options: Required<PipelineOptions>;
 
   constructor(options: PipelineOptions) {
     this.options = {
       extractEmbeddings: true,
       trackCalls: true,
+      semanticAnalysis: false, // Disabled by default for backwards compatibility
       ...options,
     };
 
@@ -89,6 +107,11 @@ export class EntityPipeline {
     this.classExtractor = new ClassExtractor();
     this.interfaceExtractor = new InterfaceExtractor();
     this.importExtractor = new ImportExtractor(options.projectRoot);
+
+    // Phase 1: Enhanced Entity Semantics analyzers
+    this.parameterAnalyzer = new ParameterAnalyzer();
+    this.returnAnalyzer = new ReturnAnalyzer();
+    this.errorAnalyzer = new ErrorAnalyzer();
   }
 
   /**
@@ -406,6 +429,11 @@ export class EntityPipeline {
       merged.hasMethod.push(...batch.hasMethod);
       merged.usesType.push(...batch.usesType);
       merged.referencesExternal.push(...batch.referencesExternal);
+      // Phase 1: Enhanced Entity Semantics
+      merged.parameterSemantics.push(...batch.parameterSemantics);
+      merged.returnSemantics.push(...batch.returnSemantics);
+      merged.errorPaths.push(...batch.errorPaths);
+      merged.errorAnalysis.push(...batch.errorAnalysis);
     }
 
     // Deduplicate ghost nodes by ID
@@ -440,7 +468,172 @@ export class EntityPipeline {
       hasMethod: batch.hasMethod.length,
       usesType: batch.usesType.length,
       referencesExternal: batch.referencesExternal.length,
+      // Phase 1: Enhanced Entity Semantics
+      parameterSemantics: batch.parameterSemantics.length,
+      returnSemantics: batch.returnSemantics.length,
+      errorPaths: batch.errorPaths.length,
+      errorAnalysis: batch.errorAnalysis.length,
     };
+  }
+
+  // ===========================================================================
+  // Semantic Analysis Methods (Phase 1)
+  // ===========================================================================
+
+  /**
+   * Convert parameter analysis result to database rows.
+   * Call this when you have AST access (at indexer level).
+   *
+   * @param analysisResult - Result from ParameterAnalyzer
+   * @returns Rows ready for CozoDB insertion
+   */
+  convertParameterAnalysisToRows(
+    analysisResult: ParameterAnalysisResult
+  ): ParameterSemanticsRow[] {
+    const rows: ParameterSemanticsRow[] = [];
+
+    for (const param of analysisResult.parameters) {
+      const id = generateEntityId(
+        analysisResult.functionId,
+        "param-semantics",
+        param.name,
+        "",
+        param.index.toString()
+      );
+
+      rows.push([
+        id,
+        analysisResult.functionId,
+        param.name,
+        param.index,
+        param.type,
+        param.purpose,
+        param.isOptional,
+        param.isRest,
+        param.isDestructured,
+        param.defaultValue,
+        JSON.stringify(param.validationRules),
+        JSON.stringify(param.usedInExpressions),
+        param.isMutated,
+        JSON.stringify(param.accessedAtLines),
+        analysisResult.confidence,
+        analysisResult.analyzedAt,
+      ]);
+    }
+
+    return rows;
+  }
+
+  /**
+   * Convert return analysis result to database row.
+   * Call this when you have AST access (at indexer level).
+   *
+   * @param analysisResult - Result from ReturnAnalyzer
+   * @returns Row ready for CozoDB insertion
+   */
+  convertReturnAnalysisToRow(
+    analysisResult: ReturnAnalysisResult
+  ): ReturnSemanticsRow {
+    const id = generateEntityId(
+      analysisResult.functionId,
+      "return-semantics",
+      "return",
+      "",
+      ""
+    );
+
+    const { returnSemantics } = analysisResult;
+
+    return [
+      id,
+      analysisResult.functionId,
+      returnSemantics.declaredType,
+      returnSemantics.inferredType,
+      JSON.stringify(returnSemantics.returnPoints),
+      JSON.stringify(returnSemantics.possibleValues),
+      JSON.stringify(returnSemantics.nullConditions),
+      JSON.stringify(returnSemantics.errorConditions),
+      JSON.stringify(returnSemantics.derivedFrom),
+      JSON.stringify(returnSemantics.transformations),
+      returnSemantics.canReturnVoid,
+      returnSemantics.alwaysThrows,
+      analysisResult.confidence,
+      analysisResult.analyzedAt,
+    ];
+  }
+
+  /**
+   * Convert error analysis result to database rows.
+   * Call this when you have AST access (at indexer level).
+   *
+   * @param analysisResult - Result from ErrorAnalyzer
+   * @returns Object with error paths and analysis summary rows
+   */
+  convertErrorAnalysisToRows(
+    analysisResult: ErrorAnalysisResult
+  ): { errorPaths: ErrorPathRow[]; errorAnalysis: ErrorAnalysisRow } {
+    // Convert error paths
+    const errorPathRows: ErrorPathRow[] = analysisResult.errorPaths.map((path) => [
+      path.id,
+      path.functionId,
+      path.errorType,
+      path.condition,
+      path.isHandled,
+      path.handlingStrategy,
+      path.recoveryAction,
+      JSON.stringify(path.propagatesTo),
+      JSON.stringify(path.sourceLocation),
+      JSON.stringify(path.stackContext),
+      analysisResult.confidence,
+      analysisResult.analyzedAt,
+    ]);
+
+    // Create analysis summary row
+    const analysisId = generateEntityId(
+      analysisResult.functionId,
+      "error-analysis",
+      "summary",
+      "",
+      ""
+    );
+
+    const errorAnalysisRow: ErrorAnalysisRow = [
+      analysisId,
+      analysisResult.functionId,
+      JSON.stringify(analysisResult.throwPoints),
+      JSON.stringify(analysisResult.tryCatchBlocks),
+      analysisResult.neverThrows,
+      analysisResult.hasTopLevelCatch,
+      JSON.stringify(analysisResult.escapingErrorTypes),
+      analysisResult.confidence,
+      analysisResult.analyzedAt,
+    ];
+
+    return { errorPaths: errorPathRows, errorAnalysis: errorAnalysisRow };
+  }
+
+  /**
+   * Get the parameter analyzer instance.
+   * Use this to run analysis on AST nodes directly.
+   */
+  getParameterAnalyzer(): ParameterAnalyzer {
+    return this.parameterAnalyzer;
+  }
+
+  /**
+   * Get the return analyzer instance.
+   * Use this to run analysis on AST nodes directly.
+   */
+  getReturnAnalyzer(): ReturnAnalyzer {
+    return this.returnAnalyzer;
+  }
+
+  /**
+   * Get the error analyzer instance.
+   * Use this to run analysis on AST nodes directly.
+   */
+  getErrorAnalyzer(): ErrorAnalyzer {
+    return this.errorAnalyzer;
   }
 }
 

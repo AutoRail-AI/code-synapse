@@ -19,6 +19,20 @@ import { EntityPipeline } from "../extraction/pipeline.js";
 import { GraphWriter, IncrementalUpdater } from "../graph-builder/index.js";
 import { createLogger } from "../../utils/logger.js";
 import { mapConcurrent } from "../../utils/async.js";
+import {
+  SemanticAnalysisService,
+  type SemanticAnalysisServiceOptions,
+  PatternAnalysisService,
+  convertUCEToPatternContext,
+  type PatternDetectionOptions,
+} from "../analysis/index.js";
+import type {
+  DesignPatternRow,
+  PatternParticipantRow,
+  HasPatternRow,
+  PatternHasParticipantRow,
+} from "../extraction/types.js";
+import { generateEntityId } from "../extraction/id-generator.js";
 
 const logger = createLogger("indexer-coordinator");
 
@@ -110,6 +124,14 @@ export interface IndexerCoordinatorOptions {
   onProgress?: (event: IndexingProgressEvent) => void;
   /** Error callback */
   onError?: (error: IndexingError) => void;
+  /** Enable Phase 1 semantic analysis (parameter, return, error analysis) */
+  enableSemanticAnalysis?: boolean;
+  /** Options for semantic analysis */
+  semanticAnalysisOptions?: SemanticAnalysisServiceOptions;
+  /** Enable Phase 4 pattern detection */
+  enablePatternDetection?: boolean;
+  /** Options for pattern detection */
+  patternDetectionOptions?: PatternDetectionOptions;
 }
 
 // =============================================================================
@@ -145,9 +167,13 @@ export class IndexerCoordinator {
   private pipeline: EntityPipeline;
   private writer: GraphWriter;
   private updater: IncrementalUpdater;
-  private options: Required<Omit<IndexerCoordinatorOptions, "onProgress" | "onError">> & {
+  private semanticAnalyzer: SemanticAnalysisService | null = null;
+  private patternAnalyzer: PatternAnalysisService | null = null;
+  private options: Required<Omit<IndexerCoordinatorOptions, "onProgress" | "onError" | "semanticAnalysisOptions" | "patternDetectionOptions">> & {
     onProgress?: (event: IndexingProgressEvent) => void;
     onError?: (error: IndexingError) => void;
+    semanticAnalysisOptions?: SemanticAnalysisServiceOptions;
+    patternDetectionOptions?: PatternDetectionOptions;
   };
 
   constructor(options: IndexerCoordinatorOptions) {
@@ -162,8 +188,12 @@ export class IndexerCoordinator {
       batchSize: options.batchSize ?? 10,
       concurrency: options.concurrency ?? 4,
       continueOnError: options.continueOnError ?? true,
+      enableSemanticAnalysis: options.enableSemanticAnalysis ?? false,
+      enablePatternDetection: options.enablePatternDetection ?? false,
       onProgress: options.onProgress,
       onError: options.onError,
+      semanticAnalysisOptions: options.semanticAnalysisOptions,
+      patternDetectionOptions: options.patternDetectionOptions,
     };
 
     // Initialize components
@@ -171,6 +201,18 @@ export class IndexerCoordinator {
     this.pipeline = new EntityPipeline({ projectRoot: this.project.rootPath });
     this.writer = new GraphWriter(this.store);
     this.updater = new IncrementalUpdater(this.store);
+
+    // Initialize semantic analyzer if enabled
+    if (this.options.enableSemanticAnalysis) {
+      this.semanticAnalyzer = new SemanticAnalysisService(this.options.semanticAnalysisOptions);
+      logger.info("Semantic analysis enabled");
+    }
+
+    // Initialize pattern analyzer if enabled
+    if (this.options.enablePatternDetection) {
+      this.patternAnalyzer = new PatternAnalysisService(this.options.patternDetectionOptions);
+      logger.info("Pattern detection enabled");
+    }
   }
 
   // ===========================================================================
@@ -493,7 +535,150 @@ export class IndexerCoordinator {
             }
           }
 
-          // Phase 4: Writing
+          // Phase 3.5: Semantic Analysis (if enabled)
+          if (this.semanticAnalyzer) {
+            try {
+              const semanticResult = await this.semanticAnalyzer.analyzeFile(
+                parsed.functions,
+                parsed.classes,
+                extracted.fileId,
+                file.absolutePath,
+                parsed.language,
+                this.parser
+              );
+
+              // Add semantic analysis results to the batch
+              for (const fnResult of semanticResult.functions) {
+                // Phase 1: Parameter, Return, Error analysis
+                extracted.batch.parameterSemantics.push(...fnResult.parameterSemantics);
+                if (fnResult.returnSemantics) {
+                  extracted.batch.returnSemantics.push(fnResult.returnSemantics);
+                }
+                extracted.batch.errorPaths.push(...fnResult.errorPaths);
+                if (fnResult.errorAnalysis) {
+                  extracted.batch.errorAnalysis.push(fnResult.errorAnalysis);
+                }
+                // Phase 3: Side-Effect analysis
+                extracted.batch.sideEffects.push(...fnResult.sideEffects);
+                if (fnResult.sideEffectSummary) {
+                  extracted.batch.sideEffectSummaries.push(fnResult.sideEffectSummary);
+                }
+                extracted.batch.hasSideEffect.push(...fnResult.hasSideEffect);
+                if (fnResult.hasSideEffectSummary) {
+                  extracted.batch.hasSideEffectSummary.push(fnResult.hasSideEffectSummary);
+                }
+              }
+
+              logger.debug(
+                {
+                  file: file.relativePath,
+                  functionsAnalyzed: semanticResult.stats.functionsAnalyzed,
+                  parametersAnalyzed: semanticResult.stats.parametersAnalyzed,
+                  sideEffectsFound: semanticResult.stats.sideEffectsFound,
+                  pureFunctions: semanticResult.stats.pureFunctionsFound,
+                },
+                "Semantic analysis complete"
+              );
+            } catch (semanticError) {
+              logger.warn(
+                { file: file.relativePath, error: semanticError },
+                "Semantic analysis failed (continuing without)"
+              );
+            }
+          }
+
+          // Phase 4: Design Pattern Detection (if enabled)
+          if (this.patternAnalyzer) {
+            try {
+              // Convert UCE entities to pattern analysis context
+              const patternContext = convertUCEToPatternContext(
+                parsed.classes,
+                parsed.functions,
+                parsed.interfaces,
+                extracted.fileId,
+                file.absolutePath
+              );
+
+              // Run pattern detection
+              const patternResult = this.patternAnalyzer.analyze(
+                patternContext,
+                this.options.patternDetectionOptions
+              );
+
+              // Add pattern detection results to the batch
+              for (const pattern of patternResult.patterns) {
+                // Add design pattern row
+                const patternRow: DesignPatternRow = [
+                  pattern.id,
+                  pattern.patternType,
+                  pattern.name,
+                  pattern.confidence,
+                  pattern.confidenceLevel,
+                  JSON.stringify(pattern.evidence),
+                  JSON.stringify(pattern.filePaths),
+                  pattern.description ?? null,
+                  pattern.detectedAt,
+                ];
+                extracted.batch.designPatterns.push(patternRow);
+
+                // Add participants
+                for (const participant of pattern.participants) {
+                  const participantId = generateEntityId(
+                    pattern.id,
+                    "participant",
+                    participant.entityId,
+                    participant.role,
+                    ""
+                  );
+
+                  const participantRow: PatternParticipantRow = [
+                    participantId,
+                    pattern.id,
+                    participant.entityId,
+                    participant.role,
+                    participant.entityType,
+                    participant.entityName,
+                    participant.filePath,
+                    JSON.stringify(participant.evidence),
+                  ];
+                  extracted.batch.patternParticipants.push(participantRow);
+
+                  // Add HAS_PATTERN relationship (entity -> pattern)
+                  const hasPatternRow: HasPatternRow = [
+                    participant.entityId,
+                    pattern.id,
+                    participant.role,
+                  ];
+                  extracted.batch.hasPattern.push(hasPatternRow);
+
+                  // Add PATTERN_HAS_PARTICIPANT relationship (pattern -> participant)
+                  const patternHasParticipantRow: PatternHasParticipantRow = [
+                    pattern.id,
+                    participantId,
+                  ];
+                  extracted.batch.patternHasParticipant.push(patternHasParticipantRow);
+                }
+              }
+
+              if (patternResult.patterns.length > 0) {
+                logger.debug(
+                  {
+                    file: file.relativePath,
+                    patternsFound: patternResult.patterns.length,
+                    stats: patternResult.stats.patternsByType,
+                  },
+                  "Pattern detection complete"
+                );
+              }
+            } catch (patternError) {
+              logger.warn(
+                { file: file.relativePath, error: patternError },
+                "Pattern detection failed (continuing without)"
+              );
+            }
+          }
+
+          // Phase 5: Writing
           const writeStart = Date.now();
           this.emitProgress("writing", overallProcessed, totalFiles, percentage, `Writing ${file.relativePath}`);
 

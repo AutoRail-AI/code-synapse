@@ -198,6 +198,61 @@ export class TypeScriptParser implements IParser, LanguageParser {
   }
 
   /**
+   * Parse code and return the raw AST tree (for semantic analysis).
+   * Implements IParser.parseToAST()
+   */
+  async parseToAST(code: string, language: string = "typescript"): Promise<import("web-tree-sitter").Tree> {
+    this.ensureInitialized();
+    const supportedLang = this.toSupportedLanguage(language);
+    const parseResult = await this.parserManager.parseCode(code, supportedLang);
+    return parseResult.tree;
+  }
+
+  /**
+   * Parse a function body and return the statement block AST node.
+   * Wraps the body in a function to create valid syntax for parsing.
+   * Implements IParser.parseFunctionBody()
+   */
+  async parseFunctionBody(
+    functionBody: string,
+    language: string = "typescript"
+  ): Promise<import("web-tree-sitter").Node | null> {
+    this.ensureInitialized();
+
+    // Wrap in a function to make it valid syntax
+    // This allows us to parse just the body content
+    const wrappedCode = `function __semantic_analysis_wrapper__() {\n${functionBody}\n}`;
+    const supportedLang = this.toSupportedLanguage(language);
+
+    try {
+      const parseResult = await this.parserManager.parseCode(wrappedCode, supportedLang);
+      const tree = parseResult.tree;
+
+      // Navigate to the statement_block inside the function
+      // Tree structure: program > function_declaration > statement_block
+      const rootNode = tree.rootNode;
+      const funcDecl = rootNode.children.find(
+        (child) =>
+          child.type === "function_declaration" ||
+          child.type === "function" ||
+          child.type === "arrow_function"
+      );
+
+      if (funcDecl) {
+        // Return the body/statement_block node
+        const bodyNode = funcDecl.childForFieldName("body") ||
+          funcDecl.children.find((c) => c.type === "statement_block");
+        return bodyNode || null;
+      }
+
+      return null;
+    } catch {
+      // If parsing fails, return null
+      return null;
+    }
+  }
+
+  /**
    * Maps Tree-sitter language to UCE language string.
    */
   private mapLanguage(language: SupportedLanguage): string {

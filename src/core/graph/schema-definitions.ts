@@ -20,7 +20,7 @@
  * Current schema version. Increment when making breaking changes.
  * Used by the migration system to track schema evolution.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 9;
 
 // =============================================================================
 // Property Type Definitions
@@ -518,6 +518,257 @@ export const SCHEMA = {
       modificationCount: { type: "INT32" },
       correlationCount: { type: "INT32" },
     },
+
+    // =========================================================================
+    // Enhanced Entity Semantics (Phase 1 - Improvement Plan)
+    // =========================================================================
+
+    /**
+     * FunctionParameterSemantics - enhanced parameter analysis
+     * Part of Phase 1: Enhanced Entity Semantics
+     */
+    FunctionParameterSemantics: {
+      id: { type: "STRING", primary: true },
+      functionId: { type: "STRING", index: true },
+      paramName: { type: "STRING", index: true },
+      paramIndex: { type: "INT32" },
+      paramType: { type: "STRING", nullable: true },
+      purpose: { type: "STRING" }, // 'input' | 'output' | 'config' | 'callback' | 'context' | 'unknown'
+      isOptional: { type: "BOOLEAN" },
+      isRest: { type: "BOOLEAN" },
+      isDestructured: { type: "BOOLEAN" },
+      defaultValue: { type: "STRING", nullable: true },
+      validationRules: { type: "JSON" }, // string[]
+      usedInExpressions: { type: "JSON" }, // ParameterUsage[]
+      isMutated: { type: "BOOLEAN" },
+      accessedAtLines: { type: "JSON" }, // number[]
+      confidence: { type: "FLOAT" },
+      analyzedAt: { type: "TIMESTAMP" },
+    },
+
+    /**
+     * FunctionReturnSemantics - enhanced return value analysis
+     * Part of Phase 1: Enhanced Entity Semantics
+     */
+    FunctionReturnSemantics: {
+      id: { type: "STRING", primary: true },
+      functionId: { type: "STRING", index: true },
+      declaredType: { type: "STRING", nullable: true },
+      inferredType: { type: "STRING", nullable: true },
+      returnPoints: { type: "JSON" }, // ReturnPoint[]
+      possibleValues: { type: "JSON" }, // string[]
+      nullConditions: { type: "JSON" }, // string[]
+      errorConditions: { type: "JSON" }, // string[]
+      derivedFrom: { type: "JSON" }, // string[]
+      transformations: { type: "JSON" }, // string[]
+      canReturnVoid: { type: "BOOLEAN" },
+      alwaysThrows: { type: "BOOLEAN" },
+      confidence: { type: "FLOAT" },
+      analyzedAt: { type: "TIMESTAMP" },
+    },
+
+    /**
+     * ErrorPath - error handling and propagation paths
+     * Part of Phase 1: Enhanced Entity Semantics
+     */
+    ErrorPath: {
+      id: { type: "STRING", primary: true },
+      functionId: { type: "STRING", index: true },
+      errorType: { type: "STRING", index: true },
+      condition: { type: "STRING", nullable: true },
+      isHandled: { type: "BOOLEAN" },
+      handlingStrategy: { type: "STRING", nullable: true }, // 'throw' | 'catch-rethrow' | 'catch-handle' | etc.
+      recoveryAction: { type: "STRING", nullable: true },
+      propagatesTo: { type: "JSON" }, // string[]
+      sourceLocation: { type: "JSON" }, // { line, column }
+      stackContext: { type: "JSON" }, // string[]
+      confidence: { type: "FLOAT" },
+      analyzedAt: { type: "TIMESTAMP" },
+    },
+
+    /**
+     * FunctionErrorAnalysis - summary of error handling for a function
+     * Part of Phase 1: Enhanced Entity Semantics
+     */
+    FunctionErrorAnalysis: {
+      id: { type: "STRING", primary: true },
+      functionId: { type: "STRING", index: true },
+      throwPoints: { type: "JSON" }, // ThrowPoint[]
+      tryCatchBlocks: { type: "JSON" }, // TryCatchBlock[]
+      neverThrows: { type: "BOOLEAN" },
+      hasTopLevelCatch: { type: "BOOLEAN" },
+      escapingErrorTypes: { type: "JSON" }, // string[]
+      confidence: { type: "FLOAT" },
+      analyzedAt: { type: "TIMESTAMP" },
+    },
+
+    // =========================================================================
+    // Data Flow Analysis (Phase 2 - Improvement Plan)
+    // =========================================================================
+
+    /**
+     * DataFlowCache - cached data flow analysis for a function
+     * Part of Phase 2: Data Flow Analysis (Lazy Evaluation Strategy)
+     *
+     * Stores both a compressed summary and the full graph for on-demand retrieval.
+     */
+    DataFlowCache: {
+      id: { type: "STRING", primary: true },
+      functionId: { type: "STRING", index: true },
+      fileId: { type: "STRING", index: true },
+      fileHash: { type: "STRING" }, // For staleness detection
+      // Summary for quick lookups
+      nodeCount: { type: "INT32" },
+      edgeCount: { type: "INT32" },
+      hasSideEffects: { type: "BOOLEAN" },
+      accessesExternalState: { type: "BOOLEAN" },
+      isPure: { type: "BOOLEAN" },
+      inputsAffectingOutput: { type: "JSON" }, // string[] - parameter names
+      // Full analysis data (JSON for flexibility)
+      flowSummaryJson: { type: "JSON" }, // FunctionDataFlowSummary
+      fullGraphJson: { type: "JSON" }, // FunctionDataFlow (full nodes/edges)
+      // Taint analysis results
+      taintFlowsJson: { type: "JSON", nullable: true }, // TaintFlow[]
+      // Metadata
+      confidence: { type: "FLOAT" },
+      computedAt: { type: "TIMESTAMP" },
+      accessCount: { type: "INT32" }, // For cache eviction policy
+      lastAccessedAt: { type: "TIMESTAMP", nullable: true },
+    },
+
+    /**
+     * DataFlowNode - individual node in a data flow graph
+     * Part of Phase 2: Data Flow Analysis
+     *
+     * Note: Only populated when full materialization is needed for cross-function analysis.
+     * For intra-function analysis, nodes are stored in DataFlowCache.fullGraphJson.
+     */
+    DataFlowNode: {
+      id: { type: "STRING", primary: true },
+      functionId: { type: "STRING", index: true },
+      kind: { type: "STRING", index: true }, // 'parameter' | 'variable' | 'return' | 'call_result' | etc.
+      name: { type: "STRING", index: true },
+      line: { type: "INT32" },
+      column: { type: "INT32" },
+      inferredType: { type: "STRING", nullable: true },
+      isTainted: { type: "BOOLEAN" },
+      taintSource: { type: "STRING", nullable: true }, // 'user_input' | 'network' | etc.
+    },
+
+    /**
+     * CrossFunctionFlow - data flow across function boundaries
+     * Part of Phase 2: Data Flow Analysis
+     *
+     * Tracks how data flows from one function to another through calls.
+     */
+    CrossFunctionFlow: {
+      id: { type: "STRING", primary: true },
+      callerId: { type: "STRING", index: true },
+      calleeId: { type: "STRING", index: true },
+      callSiteLine: { type: "INT32" },
+      // Argument mapping
+      argumentsJson: { type: "JSON" }, // ArgumentFlow[]
+      // Return usage
+      returnUsageJson: { type: "JSON", nullable: true }, // ReturnUsage
+      // Taint propagation
+      propagatesTaint: { type: "BOOLEAN" },
+      taintedArguments: { type: "JSON" }, // number[] - indices of tainted args
+      // Metadata
+      confidence: { type: "FLOAT" },
+      analyzedAt: { type: "TIMESTAMP" },
+    },
+
+    /**
+     * TaintSource - tracks external data sources that introduce taint
+     * Part of Phase 2: Data Flow Analysis (Taint Tracking)
+     */
+    TaintSource: {
+      id: { type: "STRING", primary: true },
+      functionId: { type: "STRING", index: true },
+      sourceCategory: { type: "STRING", index: true }, // 'user_input' | 'network' | 'filesystem' | etc.
+      nodeId: { type: "STRING" }, // DataFlowNode where taint originates
+      description: { type: "STRING" },
+      line: { type: "INT32" },
+      isSanitized: { type: "BOOLEAN" },
+      sanitizationPoint: { type: "STRING", nullable: true }, // Node ID where sanitized
+      discoveredAt: { type: "TIMESTAMP" },
+    },
+
+    // =========================================================================
+    // Side-Effect Analysis (Phase 3 - Improvement Plan)
+    // =========================================================================
+
+    /**
+     * SideEffect - individual side effect detected in a function
+     * Part of Phase 3: Side-Effect Analysis
+     */
+    SideEffect: {
+      id: { type: "STRING", primary: true },
+      functionId: { type: "STRING", index: true },
+      filePath: { type: "STRING", index: true },
+      category: { type: "STRING", index: true }, // 'io-file' | 'io-network' | 'io-database' | etc.
+      description: { type: "STRING" },
+      target: { type: "STRING", nullable: true }, // What is affected (e.g., "this.state", "database")
+      apiCall: { type: "STRING" }, // The API/method call causing the side effect
+      isConditional: { type: "BOOLEAN" },
+      condition: { type: "STRING", nullable: true }, // The condition under which this occurs
+      confidence: { type: "STRING" }, // 'high' | 'medium' | 'low'
+      evidenceJson: { type: "JSON" }, // string[] - evidence for detection
+      sourceLine: { type: "INT32" },
+      sourceColumn: { type: "INT32" },
+      analyzedAt: { type: "TIMESTAMP" },
+    },
+
+    /**
+     * FunctionSideEffectSummary - summary of side effects for a function
+     * Part of Phase 3: Side-Effect Analysis
+     */
+    FunctionSideEffectSummary: {
+      functionId: { type: "STRING", primary: true },
+      filePath: { type: "STRING", index: true },
+      totalCount: { type: "INT32" },
+      isPure: { type: "BOOLEAN", index: true },
+      allConditional: { type: "BOOLEAN" },
+      primaryCategoriesJson: { type: "JSON" }, // string[] - most significant categories
+      riskLevel: { type: "STRING", index: true }, // 'low' | 'medium' | 'high'
+      confidence: { type: "FLOAT" },
+      analyzedAt: { type: "TIMESTAMP" },
+    },
+
+    // =========================================================================
+    // Design Pattern Detection (Phase 4 - Improvement Plan)
+    // =========================================================================
+
+    /**
+     * DesignPattern - detected design pattern instance
+     * Part of Phase 4: Design Pattern Detection
+     */
+    DesignPattern: {
+      id: { type: "STRING", primary: true },
+      patternType: { type: "STRING", index: true }, // 'factory' | 'singleton' | 'observer' | etc.
+      name: { type: "STRING", index: true },
+      confidence: { type: "FLOAT" },
+      confidenceLevel: { type: "STRING" }, // 'high' | 'medium' | 'low'
+      evidenceJson: { type: "JSON" }, // string[] - evidence for detection
+      filePathsJson: { type: "JSON" }, // string[] - files where pattern is located
+      description: { type: "STRING", nullable: true },
+      detectedAt: { type: "TIMESTAMP" },
+    },
+
+    /**
+     * PatternParticipant - entity participating in a design pattern
+     * Part of Phase 4: Design Pattern Detection
+     */
+    PatternParticipant: {
+      id: { type: "STRING", primary: true },
+      patternId: { type: "STRING", index: true },
+      entityId: { type: "STRING", index: true },
+      role: { type: "STRING", index: true }, // 'factory' | 'product' | 'singleton' | etc.
+      entityType: { type: "STRING" }, // 'class' | 'function' | 'interface' | 'variable' | 'method'
+      entityName: { type: "STRING", index: true },
+      filePath: { type: "STRING", index: true },
+      evidenceJson: { type: "JSON" }, // string[] - why this entity has this role
+    },
   },
 
   relationships: {
@@ -756,6 +1007,173 @@ export const SCHEMA = {
     SESSION_CHANGE: {
       from: ["AdaptiveSession"],
       to: ["ObservedChange"],
+      properties: {},
+    },
+
+    // =========================================================================
+    // Enhanced Entity Semantics Relationships (Phase 1)
+    // =========================================================================
+
+    /**
+     * HAS_PARAMETER_SEMANTICS - Function has parameter semantic analysis
+     */
+    HAS_PARAMETER_SEMANTICS: {
+      from: ["Function"],
+      to: ["FunctionParameterSemantics"],
+      properties: {},
+    },
+
+    /**
+     * HAS_RETURN_SEMANTICS - Function has return value semantic analysis
+     */
+    HAS_RETURN_SEMANTICS: {
+      from: ["Function"],
+      to: ["FunctionReturnSemantics"],
+      properties: {},
+    },
+
+    /**
+     * HAS_ERROR_ANALYSIS - Function has error analysis
+     */
+    HAS_ERROR_ANALYSIS: {
+      from: ["Function"],
+      to: ["FunctionErrorAnalysis"],
+      properties: {},
+    },
+
+    /**
+     * HAS_ERROR_PATH - Function has specific error path
+     */
+    HAS_ERROR_PATH: {
+      from: ["Function"],
+      to: ["ErrorPath"],
+      properties: {},
+    },
+
+    /**
+     * ERROR_PROPAGATES_TO - Error path propagates to another function
+     */
+    ERROR_PROPAGATES_TO: {
+      from: ["ErrorPath"],
+      to: ["Function"],
+      properties: {
+        propagationType: { type: "STRING" }, // 'direct' | 'caught-rethrown' | 'wrapped'
+      },
+    },
+
+    // =========================================================================
+    // Data Flow Analysis Relationships (Phase 2)
+    // =========================================================================
+
+    /**
+     * HAS_DATA_FLOW_CACHE - Function has cached data flow analysis
+     */
+    HAS_DATA_FLOW_CACHE: {
+      from: ["Function"],
+      to: ["DataFlowCache"],
+      properties: {},
+    },
+
+    /**
+     * DATA_FLOWS_TO - Data flow edge between nodes
+     * Only materialized for cross-function analysis
+     */
+    DATA_FLOWS_TO: {
+      from: ["DataFlowNode"],
+      to: ["DataFlowNode"],
+      properties: {
+        edgeKind: { type: "STRING" }, // 'assign' | 'transform' | 'read' | 'write' | etc.
+        transformation: { type: "STRING", nullable: true },
+        condition: { type: "STRING", nullable: true },
+        lineNumber: { type: "INT32" },
+        propagatesTaint: { type: "BOOLEAN" },
+      },
+    },
+
+    /**
+     * HAS_CROSS_FLOW - Function has cross-function data flow
+     */
+    HAS_CROSS_FLOW: {
+      from: ["Function"],
+      to: ["CrossFunctionFlow"],
+      properties: {
+        role: { type: "STRING" }, // 'caller' | 'callee'
+      },
+    },
+
+    /**
+     * HAS_TAINT_SOURCE - Function has a taint source
+     */
+    HAS_TAINT_SOURCE: {
+      from: ["Function"],
+      to: ["TaintSource"],
+      properties: {},
+    },
+
+    /**
+     * TAINT_FLOWS_TO - Taint propagation path
+     */
+    TAINT_FLOWS_TO: {
+      from: ["TaintSource"],
+      to: ["DataFlowNode"],
+      properties: {
+        pathLength: { type: "INT32" },
+        isSanitized: { type: "BOOLEAN" },
+      },
+    },
+
+    // =========================================================================
+    // Side-Effect Analysis Relationships (Phase 3)
+    // =========================================================================
+
+    /**
+     * HAS_SIDE_EFFECT - Function has a detected side effect
+     */
+    HAS_SIDE_EFFECT: {
+      from: ["Function"],
+      to: ["SideEffect"],
+      properties: {},
+    },
+
+    /**
+     * HAS_SIDE_EFFECT_SUMMARY - Function has a side effect summary
+     */
+    HAS_SIDE_EFFECT_SUMMARY: {
+      from: ["Function"],
+      to: ["FunctionSideEffectSummary"],
+      properties: {},
+    },
+
+    // =========================================================================
+    // Design Pattern Detection Relationships (Phase 4)
+    // =========================================================================
+
+    /**
+     * HAS_PATTERN - Entity participates in a design pattern
+     */
+    HAS_PATTERN: {
+      from: ["Class", "Function", "Interface"],
+      to: ["DesignPattern"],
+      properties: {
+        role: { type: "STRING" }, // Role this entity plays in the pattern
+      },
+    },
+
+    /**
+     * PATTERN_HAS_PARTICIPANT - Design pattern has participating entity
+     */
+    PATTERN_HAS_PARTICIPANT: {
+      from: ["DesignPattern"],
+      to: ["PatternParticipant"],
+      properties: {},
+    },
+
+    /**
+     * PARTICIPANT_ENTITY - Pattern participant references an entity
+     */
+    PARTICIPANT_ENTITY: {
+      from: ["PatternParticipant"],
+      to: ["Class", "Function", "Interface", "Variable"],
       properties: {},
     },
   },

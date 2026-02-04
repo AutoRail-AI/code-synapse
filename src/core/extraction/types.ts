@@ -197,6 +197,314 @@ export type UsesTypeRow = [string, string, string, string | null];
 export type ReferencesExternalRow = [string, string, string, number];
 
 // =============================================================================
+// Enhanced Entity Semantics Row Types (Phase 1)
+// =============================================================================
+
+/**
+ * Row data for FunctionParameterSemantics relation.
+ * Order matches schema: id, function_id, param_name, param_index, param_type, purpose,
+ *                       is_optional, is_rest, is_destructured, default_value,
+ *                       validation_rules, used_in_expressions, is_mutated, accessed_at_lines,
+ *                       confidence, analyzed_at
+ */
+export type ParameterSemanticsRow = [
+  string,        // id
+  string,        // function_id
+  string,        // param_name
+  number,        // param_index
+  string | null, // param_type (nullable)
+  string,        // purpose
+  boolean,       // is_optional
+  boolean,       // is_rest
+  boolean,       // is_destructured
+  string | null, // default_value (nullable)
+  string,        // validation_rules (JSON array)
+  string,        // used_in_expressions (JSON array)
+  boolean,       // is_mutated
+  string,        // accessed_at_lines (JSON array)
+  number,        // confidence
+  number         // analyzed_at (timestamp)
+];
+
+/**
+ * Row data for FunctionReturnSemantics relation.
+ * Order matches schema: id, function_id, declared_type, inferred_type, return_points,
+ *                       possible_values, null_conditions, error_conditions, derived_from,
+ *                       transformations, can_return_void, always_throws, confidence, analyzed_at
+ */
+export type ReturnSemanticsRow = [
+  string,        // id
+  string,        // function_id
+  string | null, // declared_type (nullable)
+  string | null, // inferred_type (nullable)
+  string,        // return_points (JSON array)
+  string,        // possible_values (JSON array)
+  string,        // null_conditions (JSON array)
+  string,        // error_conditions (JSON array)
+  string,        // derived_from (JSON array)
+  string,        // transformations (JSON array)
+  boolean,       // can_return_void
+  boolean,       // always_throws
+  number,        // confidence
+  number         // analyzed_at (timestamp)
+];
+
+/**
+ * Row data for ErrorPath relation.
+ * Order matches schema: id, function_id, error_type, condition, is_handled,
+ *                       handling_strategy, recovery_action, propagates_to,
+ *                       source_location, stack_context, confidence, analyzed_at
+ */
+export type ErrorPathRow = [
+  string,        // id
+  string,        // function_id
+  string,        // error_type
+  string | null, // condition (nullable)
+  boolean,       // is_handled
+  string | null, // handling_strategy (nullable)
+  string | null, // recovery_action (nullable)
+  string,        // propagates_to (JSON array)
+  string,        // source_location (JSON object)
+  string,        // stack_context (JSON array)
+  number,        // confidence
+  number         // analyzed_at (timestamp)
+];
+
+/**
+ * Row data for FunctionErrorAnalysis relation.
+ * Order matches schema: id, function_id, throw_points, try_catch_blocks,
+ *                       never_throws, has_top_level_catch, escaping_error_types,
+ *                       confidence, analyzed_at
+ */
+export type ErrorAnalysisRow = [
+  string,  // id
+  string,  // function_id
+  string,  // throw_points (JSON array)
+  string,  // try_catch_blocks (JSON array)
+  boolean, // never_throws
+  boolean, // has_top_level_catch
+  string,  // escaping_error_types (JSON array)
+  number,  // confidence
+  number   // analyzed_at (timestamp)
+];
+
+// =============================================================================
+// Data Flow Analysis Row Types (Phase 2)
+// =============================================================================
+
+/**
+ * Row data for DataFlowCache relation.
+ * Order matches schema: id, function_id, file_id, file_hash, node_count, edge_count,
+ *                       has_side_effects, accesses_external_state, is_pure,
+ *                       inputs_affecting_output, flow_summary_json, full_graph_json,
+ *                       taint_flows_json, confidence, computed_at, access_count, last_accessed_at
+ */
+export type DataFlowCacheRow = [
+  string,        // id
+  string,        // function_id
+  string,        // file_id
+  string,        // file_hash
+  number,        // node_count
+  number,        // edge_count
+  boolean,       // has_side_effects
+  boolean,       // accesses_external_state
+  boolean,       // is_pure
+  string,        // inputs_affecting_output (JSON array)
+  string,        // flow_summary_json (JSON object)
+  string,        // full_graph_json (JSON object)
+  string | null, // taint_flows_json (JSON array, nullable)
+  number,        // confidence
+  number,        // computed_at (timestamp)
+  number,        // access_count
+  number | null  // last_accessed_at (timestamp, nullable)
+];
+
+/**
+ * Row data for DataFlowNode relation.
+ * Order matches schema: id, function_id, kind, name, line, column,
+ *                       inferred_type, is_tainted, taint_source
+ */
+export type DataFlowNodeRow = [
+  string,        // id
+  string,        // function_id
+  string,        // kind
+  string,        // name
+  number,        // line
+  number,        // column
+  string | null, // inferred_type (nullable)
+  boolean,       // is_tainted
+  string | null  // taint_source (nullable)
+];
+
+/**
+ * Row data for CrossFunctionFlow relation.
+ * Order matches schema: id, caller_id, callee_id, call_site_line,
+ *                       arguments_json, return_usage_json, propagates_taint,
+ *                       tainted_arguments, confidence, analyzed_at
+ */
+export type CrossFunctionFlowRow = [
+  string,        // id
+  string,        // caller_id
+  string,        // callee_id
+  number,        // call_site_line
+  string,        // arguments_json (JSON array)
+  string | null, // return_usage_json (JSON object, nullable)
+  boolean,       // propagates_taint
+  string,        // tainted_arguments (JSON array)
+  number,        // confidence
+  number         // analyzed_at (timestamp)
+];
+
+/**
+ * Row data for TaintSource relation.
+ * Order matches schema: id, function_id, source_category, node_id,
+ *                       description, line, is_sanitized, sanitization_point, discovered_at
+ */
+export type TaintSourceRow = [
+  string,        // id
+  string,        // function_id
+  string,        // source_category
+  string,        // node_id
+  string,        // description
+  number,        // line
+  boolean,       // is_sanitized
+  string | null, // sanitization_point (nullable)
+  number         // discovered_at (timestamp)
+];
+
+/**
+ * Row data for DATA_FLOWS_TO relation.
+ * Order: from_id, to_id, edge_kind, transformation, condition, line_number, propagates_taint
+ */
+export type DataFlowsToRow = [
+  string,        // from_id
+  string,        // to_id
+  string,        // edge_kind
+  string | null, // transformation (nullable)
+  string | null, // condition (nullable)
+  number,        // line_number
+  boolean        // propagates_taint
+];
+
+/**
+ * Row data for HAS_CROSS_FLOW relation.
+ * Order: from_id, to_id, role
+ */
+export type HasCrossFlowRow = [string, string, string];
+
+/**
+ * Row data for TAINT_FLOWS_TO relation.
+ * Order: from_id, to_id, path_length, is_sanitized
+ */
+export type TaintFlowsToRow = [string, string, number, boolean];
+
+// =============================================================================
+// Side-Effect Analysis Row Types (Phase 3)
+// =============================================================================
+
+/**
+ * Row data for SideEffect relation.
+ * Order matches schema: id, function_id, file_path, category, description, target,
+ *                       api_call, is_conditional, condition, confidence,
+ *                       evidence_json, source_line, source_column, analyzed_at
+ */
+export type SideEffectRow = [
+  string,        // id
+  string,        // function_id
+  string,        // file_path
+  string,        // category
+  string,        // description
+  string | null, // target (nullable)
+  string,        // api_call
+  boolean,       // is_conditional
+  string | null, // condition (nullable)
+  string,        // confidence ('high' | 'medium' | 'low')
+  string,        // evidence_json (JSON array)
+  number,        // source_line
+  number,        // source_column
+  number         // analyzed_at (timestamp)
+];
+
+/**
+ * Row data for FunctionSideEffectSummary relation.
+ * Order matches schema: function_id, file_path, total_count, is_pure,
+ *                       all_conditional, primary_categories_json, risk_level,
+ *                       confidence, analyzed_at
+ */
+export type SideEffectSummaryRow = [
+  string,  // function_id
+  string,  // file_path
+  number,  // total_count
+  boolean, // is_pure
+  boolean, // all_conditional
+  string,  // primary_categories_json (JSON array)
+  string,  // risk_level ('low' | 'medium' | 'high')
+  number,  // confidence
+  number   // analyzed_at (timestamp)
+];
+
+/**
+ * Row data for HAS_SIDE_EFFECT relation.
+ * Order: from_id (function_id), to_id (side_effect_id)
+ */
+export type HasSideEffectRow = [string, string];
+
+/**
+ * Row data for HAS_SIDE_EFFECT_SUMMARY relation.
+ * Order: from_id (function_id), to_id (function_id - same as summary primary key)
+ */
+export type HasSideEffectSummaryRow = [string, string];
+
+// =============================================================================
+// Design Pattern Detection Row Types (Phase 4)
+// =============================================================================
+
+/**
+ * Row data for DesignPattern relation.
+ * Order matches schema: id, pattern_type, name, confidence, confidence_level,
+ *                       evidence_json, file_paths_json, description, detected_at
+ */
+export type DesignPatternRow = [
+  string,        // id
+  string,        // pattern_type
+  string,        // name
+  number,        // confidence
+  string,        // confidence_level ('high' | 'medium' | 'low')
+  string,        // evidence_json (JSON array)
+  string,        // file_paths_json (JSON array)
+  string | null, // description (nullable)
+  number         // detected_at (timestamp)
+];
+
+/**
+ * Row data for PatternParticipant relation.
+ * Order matches schema: id, pattern_id, entity_id, role, entity_type, entity_name,
+ *                       file_path, evidence_json
+ */
+export type PatternParticipantRow = [
+  string, // id
+  string, // pattern_id
+  string, // entity_id
+  string, // role
+  string, // entity_type ('class' | 'function' | 'interface' | 'variable' | 'method')
+  string, // entity_name
+  string, // file_path
+  string  // evidence_json (JSON array)
+];
+
+/**
+ * Row data for HAS_PATTERN relation.
+ * Order: from_id (entity_id), to_id (pattern_id), role
+ */
+export type HasPatternRow = [string, string, string];
+
+/**
+ * Row data for PATTERN_HAS_PARTICIPANT relation.
+ * Order: from_id (pattern_id), to_id (participant_id)
+ */
+export type PatternHasParticipantRow = [string, string];
+
+// =============================================================================
 // CozoBatch - Main Output Structure
 // =============================================================================
 
@@ -232,6 +540,33 @@ export interface CozoBatch {
   hasMethod: HasMethodRow[];
   usesType: UsesTypeRow[];
   referencesExternal: ReferencesExternalRow[];
+
+  // Enhanced Entity Semantics tables (Phase 1)
+  parameterSemantics: ParameterSemanticsRow[];
+  returnSemantics: ReturnSemanticsRow[];
+  errorPaths: ErrorPathRow[];
+  errorAnalysis: ErrorAnalysisRow[];
+
+  // Data Flow Analysis tables (Phase 2)
+  dataFlowCache: DataFlowCacheRow[];
+  dataFlowNodes: DataFlowNodeRow[];
+  crossFunctionFlows: CrossFunctionFlowRow[];
+  taintSources: TaintSourceRow[];
+  dataFlowsTo: DataFlowsToRow[];
+  hasCrossFlow: HasCrossFlowRow[];
+  taintFlowsTo: TaintFlowsToRow[];
+
+  // Side-Effect Analysis tables (Phase 3)
+  sideEffects: SideEffectRow[];
+  sideEffectSummaries: SideEffectSummaryRow[];
+  hasSideEffect: HasSideEffectRow[];
+  hasSideEffectSummary: HasSideEffectSummaryRow[];
+
+  // Design Pattern Detection tables (Phase 4)
+  designPatterns: DesignPatternRow[];
+  patternParticipants: PatternParticipantRow[];
+  hasPattern: HasPatternRow[];
+  patternHasParticipant: PatternHasParticipantRow[];
 }
 
 // =============================================================================
@@ -394,6 +729,29 @@ export function createEmptyBatch(): CozoBatch {
     hasMethod: [],
     usesType: [],
     referencesExternal: [],
+    // Enhanced Entity Semantics (Phase 1)
+    parameterSemantics: [],
+    returnSemantics: [],
+    errorPaths: [],
+    errorAnalysis: [],
+    // Data Flow Analysis (Phase 2)
+    dataFlowCache: [],
+    dataFlowNodes: [],
+    crossFunctionFlows: [],
+    taintSources: [],
+    dataFlowsTo: [],
+    hasCrossFlow: [],
+    taintFlowsTo: [],
+    // Side-Effect Analysis (Phase 3)
+    sideEffects: [],
+    sideEffectSummaries: [],
+    hasSideEffect: [],
+    hasSideEffectSummary: [],
+    // Design Pattern Detection (Phase 4)
+    designPatterns: [],
+    patternParticipants: [],
+    hasPattern: [],
+    patternHasParticipant: [],
   };
 }
 

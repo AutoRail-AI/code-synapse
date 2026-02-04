@@ -240,6 +240,9 @@ export interface JustificationContext {
 
   /** Project-level context */
   projectContext: ProjectContext;
+
+  /** Enhanced analysis context (Phase 1-4 results) */
+  analysisContext?: EnhancedAnalysisContext;
 }
 
 /**
@@ -312,6 +315,90 @@ export interface ProjectContext {
   framework?: string;
   domain?: string;
   knownFeatures: string[];
+}
+
+// =============================================================================
+// Phase 5: Enhanced Analysis Context
+// =============================================================================
+
+/**
+ * Side-effect summary for context enrichment (from Phase 3).
+ */
+export interface SideEffectContext {
+  /** Total number of side effects detected */
+  totalCount: number;
+  /** Whether the function is pure (no side effects) */
+  isPure: boolean;
+  /** Primary categories of side effects */
+  categories: string[];
+  /** Human-readable descriptions of side effects */
+  descriptions: string[];
+  /** Risk level based on side effects */
+  riskLevel: "low" | "medium" | "high";
+}
+
+/**
+ * Error handling summary for context enrichment (from Phase 1).
+ */
+export interface ErrorBehaviorContext {
+  /** Whether the function can throw errors */
+  canThrow: boolean;
+  /** Types of errors that can be thrown */
+  errorTypes: string[];
+  /** Whether all errors are handled internally */
+  allHandled: boolean;
+  /** Types of errors that escape the function */
+  escapingErrorTypes: string[];
+  /** Human-readable summary of error behavior */
+  summary: string;
+}
+
+/**
+ * Data flow summary for context enrichment (from Phase 2).
+ */
+export interface DataFlowContext {
+  /** Whether data flow has been analyzed */
+  isAnalyzed: boolean;
+  /** Whether the function is pure (no side effects, deterministic) */
+  isPure: boolean;
+  /** Parameters that affect the return value */
+  inputsAffectingOutput: string[];
+  /** Whether the function accesses external state */
+  accessesExternalState: boolean;
+  /** Human-readable summary of data flow */
+  summary: string;
+}
+
+/**
+ * Pattern participation summary for context enrichment (from Phase 4).
+ */
+export interface PatternContext {
+  /** Patterns this entity participates in */
+  patterns: Array<{
+    /** Pattern type (factory, singleton, etc.) */
+    patternType: string;
+    /** Role in the pattern (factory, product, singleton, etc.) */
+    role: string;
+    /** Pattern instance name */
+    patternName: string;
+    /** Confidence level */
+    confidenceLevel: "high" | "medium" | "low";
+  }>;
+}
+
+/**
+ * Enhanced analysis context combining Phase 1-4 results.
+ * Used to enrich LLM prompts with deeper code understanding.
+ */
+export interface EnhancedAnalysisContext {
+  /** Side-effect analysis summary (Phase 3) */
+  sideEffects?: SideEffectContext;
+  /** Error handling analysis summary (Phase 1) */
+  errorBehavior?: ErrorBehaviorContext;
+  /** Data flow analysis summary (Phase 2) */
+  dataFlow?: DataFlowContext;
+  /** Design pattern participation (Phase 4) */
+  patterns?: PatternContext;
 }
 
 // =============================================================================

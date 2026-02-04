@@ -20,7 +20,12 @@ import type {
   CalleeContext,
   DependencyContext,
   ProjectContext,
+  EnhancedAnalysisContext,
 } from "../models/justification.js";
+import {
+  AnalysisContextBuilder,
+  type AnalysisContextOptions,
+} from "./analysis-context-builder.js";
 
 // =============================================================================
 // Types
@@ -59,6 +64,16 @@ export interface IGraphStoreForPropagation {
  * 3. Propagate top-down to enrich children with parent context
  * 4. Re-aggregate bottom-up with enriched context
  */
+/**
+ * Options for context propagator.
+ */
+export interface ContextPropagatorOptions {
+  /** Whether to include enhanced analysis context (Phase 1-4 results) */
+  includeAnalysisContext?: boolean;
+  /** Options for analysis context building */
+  analysisContextOptions?: AnalysisContextOptions;
+}
+
 export class ContextPropagator {
   // Performance optimization: Cache file hierarchies to avoid repeated rebuilds
   private hierarchyCache: Map<string, HierarchyNode[]> = new Map();
@@ -69,7 +84,24 @@ export class ContextPropagator {
   // Cache project context (rarely changes)
   private projectContextCache: ProjectContext | null = null;
 
-  constructor(private graphStore: IGraphStoreForPropagation) {}
+  // Analysis context builder (Phase 5 enhancement)
+  private analysisContextBuilder: AnalysisContextBuilder | null = null;
+
+  constructor(
+    private graphStore: IGraphStoreForPropagation,
+    options?: ContextPropagatorOptions
+  ) {
+    // Initialize analysis context builder if enabled (default: true)
+    if (options?.includeAnalysisContext !== false) {
+      // The IGraphStoreForPropagation interface is compatible with IGraphStore.query
+      // Using 'any' here because the builder only needs the query method
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.analysisContextBuilder = new AnalysisContextBuilder(
+        graphStore as any,
+        options?.analysisContextOptions
+      );
+    }
+  }
 
   /**
    * Clear all caches (useful for testing or after major index updates)
@@ -269,13 +301,29 @@ export class ContextPropagator {
     entityType: JustifiableEntityType,
     existingJustifications: Map<string, EntityJustification>
   ): Promise<JustificationContext> {
-    const entity = await this.getEntityDetails(entityId, entityType);
-    const parentContext = await this.getParentContext(entityId, entityType, existingJustifications);
-    const siblings = await this.getSiblingContext(entityId, entityType, existingJustifications);
-    const children = await this.getChildContext(entityId, entityType, existingJustifications);
-    const dependencies = await this.getDependencyContext(entityId, entityType);
-    const { callers, callees } = await this.getCallContext(entityId, entityType, existingJustifications);
-    const projectContext = await this.getProjectContext();
+    // Build standard context in parallel
+    const [
+      entity,
+      parentContext,
+      siblings,
+      children,
+      dependencies,
+      callContext,
+      projectContext,
+      analysisContext,
+    ] = await Promise.all([
+      this.getEntityDetails(entityId, entityType),
+      this.getParentContext(entityId, entityType, existingJustifications),
+      this.getSiblingContext(entityId, entityType, existingJustifications),
+      this.getChildContext(entityId, entityType, existingJustifications),
+      this.getDependencyContext(entityId, entityType),
+      this.getCallContext(entityId, entityType, existingJustifications),
+      this.getProjectContext(),
+      // Phase 5: Enhanced analysis context
+      this.getAnalysisContext(entityId, entityType),
+    ]);
+
+    const { callers, callees } = callContext;
 
     return {
       entity,
@@ -286,7 +334,27 @@ export class ContextPropagator {
       callers,
       callees,
       projectContext,
+      analysisContext,
     };
+  }
+
+  /**
+   * Get enhanced analysis context (Phase 1-4 results)
+   */
+  private async getAnalysisContext(
+    entityId: string,
+    entityType: JustifiableEntityType
+  ): Promise<EnhancedAnalysisContext | undefined> {
+    if (!this.analysisContextBuilder) {
+      return undefined;
+    }
+
+    try {
+      return await this.analysisContextBuilder.buildContext(entityId, entityType);
+    } catch (error) {
+      // Non-critical - return undefined on error
+      return undefined;
+    }
   }
 
   /**

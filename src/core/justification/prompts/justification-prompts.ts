@@ -11,6 +11,7 @@ import type {
   JustificationContext,
   EntityForJustification,
   LLMJustificationResponse,
+  EnhancedAnalysisContext,
 } from "../models/justification.js";
 import { createLogger } from "../../../utils/logger.js";
 
@@ -136,6 +137,101 @@ Create justifications that help developers and AI agents understand:
 }`;
 
 // =============================================================================
+// Analysis Context Formatting (Phase 5 Enhancement)
+// =============================================================================
+
+/**
+ * Format enhanced analysis context for LLM prompt.
+ * This provides rich semantic information from Phase 1-4 analysis.
+ */
+function formatAnalysisContext(analysisContext?: EnhancedAnalysisContext): string[] {
+  if (!analysisContext) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  let hasContent = false;
+
+  // Side-effects (Phase 3)
+  if (analysisContext.sideEffects) {
+    const se = analysisContext.sideEffects;
+    if (!hasContent) {
+      parts.push("## Code Behavior Analysis");
+      hasContent = true;
+    }
+    parts.push("");
+    parts.push("### Side Effects");
+    if (se.isPure) {
+      parts.push("- **Pure function**: No side effects detected");
+    } else {
+      parts.push(`- **Side effects detected**: ${se.totalCount}`);
+      parts.push(`- **Risk level**: ${se.riskLevel}`);
+      parts.push(`- **Categories**: ${se.categories.join(", ")}`);
+      if (se.descriptions.length > 0) {
+        parts.push("- **Details**:");
+        for (const desc of se.descriptions.slice(0, 3)) {
+          parts.push(`  - ${desc}`);
+        }
+      }
+    }
+  }
+
+  // Error behavior (Phase 1)
+  if (analysisContext.errorBehavior) {
+    const eb = analysisContext.errorBehavior;
+    if (!hasContent) {
+      parts.push("## Code Behavior Analysis");
+      hasContent = true;
+    }
+    parts.push("");
+    parts.push("### Error Handling");
+    parts.push(`- ${eb.summary}`);
+    if (eb.canThrow && eb.errorTypes.length > 0) {
+      parts.push(`- **Error types**: ${eb.errorTypes.join(", ")}`);
+    }
+    if (eb.escapingErrorTypes.length > 0) {
+      parts.push(`- **Errors propagated to callers**: ${eb.escapingErrorTypes.join(", ")}`);
+    }
+  }
+
+  // Data flow (Phase 2)
+  if (analysisContext.dataFlow && analysisContext.dataFlow.isAnalyzed) {
+    const df = analysisContext.dataFlow;
+    if (!hasContent) {
+      parts.push("## Code Behavior Analysis");
+      hasContent = true;
+    }
+    parts.push("");
+    parts.push("### Data Flow");
+    parts.push(`- ${df.summary}`);
+    if (df.inputsAffectingOutput.length > 0) {
+      parts.push(`- **Inputs affecting output**: ${df.inputsAffectingOutput.join(", ")}`);
+    }
+  }
+
+  // Design patterns (Phase 4)
+  if (analysisContext.patterns && analysisContext.patterns.patterns.length > 0) {
+    if (!hasContent) {
+      parts.push("## Code Behavior Analysis");
+      hasContent = true;
+    }
+    parts.push("");
+    parts.push("### Design Patterns");
+    for (const pattern of analysisContext.patterns.patterns) {
+      parts.push(
+        `- **${pattern.patternType}** pattern: Role = \`${pattern.role}\` in "${pattern.patternName}" (${pattern.confidenceLevel} confidence)`
+      );
+    }
+  }
+
+  if (hasContent) {
+    parts.push("");
+  }
+
+  return parts;
+}
+
+// =============================================================================
 // Entity-Specific Prompts
 // =============================================================================
 
@@ -246,11 +342,20 @@ export function generateFunctionPrompt(
     parts.push("");
   }
 
+  // Enhanced analysis context (Phase 5)
+  const analysisContextParts = formatAnalysisContext(context.analysisContext);
+  if (analysisContextParts.length > 0) {
+    parts.push(...analysisContextParts);
+  }
+
   parts.push("## Your Task");
   parts.push("Analyze this function and determine:");
   parts.push("1. What is the PURPOSE of this function?");
   parts.push("2. What BUSINESS VALUE does it provide?");
   parts.push("3. What FEATURE or domain does it belong to?");
+  if (context.analysisContext) {
+    parts.push("4. Consider the code behavior analysis above (side effects, error handling, data flow, patterns) in your assessment.");
+  }
   parts.push("");
   parts.push("Output your analysis as JSON.");
 
@@ -318,11 +423,25 @@ export function generateClassPrompt(
     parts.push("");
   }
 
+  // Enhanced analysis context - only patterns relevant for classes (Phase 5)
+  if (context.analysisContext?.patterns && context.analysisContext.patterns.patterns.length > 0) {
+    parts.push("## Design Patterns");
+    for (const pattern of context.analysisContext.patterns.patterns) {
+      parts.push(
+        `- **${pattern.patternType}** pattern: Role = \`${pattern.role}\` in "${pattern.patternName}" (${pattern.confidenceLevel} confidence)`
+      );
+    }
+    parts.push("");
+  }
+
   parts.push("## Your Task");
   parts.push("Analyze this class and determine:");
   parts.push("1. What is the PURPOSE of this class?");
   parts.push("2. What BUSINESS VALUE does it provide?");
   parts.push("3. What FEATURE or domain does it belong to?");
+  if (context.analysisContext?.patterns?.patterns.length) {
+    parts.push("4. Consider the design patterns this class participates in when assessing its architectural role.");
+  }
   parts.push("");
   parts.push("Output your analysis as JSON.");
 

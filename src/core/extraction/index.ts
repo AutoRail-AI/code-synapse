@@ -32,6 +32,19 @@ export type {
   HasMethodRow,
   UsesTypeRow,
   ReferencesExternalRow,
+  // Phase 1: Enhanced Entity Semantics row types
+  ParameterSemanticsRow,
+  ReturnSemanticsRow,
+  ErrorPathRow,
+  ErrorAnalysisRow,
+  // Phase 2: Data Flow Analysis row types
+  DataFlowCacheRow,
+  DataFlowNodeRow,
+  CrossFunctionFlowRow,
+  TaintSourceRow,
+  DataFlowsToRow,
+  HasCrossFlowRow,
+  TaintFlowsToRow,
   // Batch types
   CozoBatch,
   // Unresolved refs
@@ -106,3 +119,37 @@ export {
   createEntityPipeline,
   type PipelineOptions,
 } from "./pipeline.js";
+
+// =============================================================================
+// Analyzers (Phase 1: Enhanced Entity Semantics)
+// =============================================================================
+
+export {
+  ParameterAnalyzer,
+  createParameterAnalyzer,
+  ReturnAnalyzer,
+  createReturnAnalyzer,
+  ErrorAnalyzer,
+  createErrorAnalyzer,
+} from "./analyzers/index.js";
+
+export type {
+  // Parameter analysis types
+  IParameterAnalyzer,
+  ParameterSemantics,
+  ParameterAnalysisResult,
+  ParameterPurpose,
+  ParameterUsage,
+  // Return analysis types
+  IReturnAnalyzer,
+  ReturnSemantics,
+  ReturnAnalysisResult,
+  ReturnPoint,
+  // Error analysis types
+  IErrorAnalyzer,
+  ErrorAnalysisResult,
+  ErrorPath,
+  ThrowPoint,
+  TryCatchBlock,
+  ErrorHandlingStrategy,
+} from "./analyzers/index.js";

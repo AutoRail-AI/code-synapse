@@ -855,11 +855,23 @@ interface FunctionDataFlow {
 }
 ```
 
-**Implementation Approach:**
-1. Build SSA (Static Single Assignment) form from AST
-2. Track assignments and transformations
-3. Connect parameter inputs to return outputs
-4. Store as graph in CozoDB
+**Implementation Strategy: Lazy Evaluation (On-Demand)**
+*   **Problem:** Eagerly computing SSA/Data Flow for every function will explode the graph size (~50x nodes) and kill indexing performance.
+*   **Solution:**
+    *   **Index Time:** Complete Phase 1 (Scanning, Parsing, Basic Extraction).
+    *   **Runtime:** When an agent requests `trace_data(fn_id)`, *then* compute the SSA graph for that specific function and cache it.
+    *   **Storage:** Store a *compressed summary* (Input Params → Output Return) on the Function node, not the full flow graph.
+
+**Schema Addition (Lazy Cache):**
+```datalog
+:create data_flow_cache {
+  function_id: String,
+  flow_summary_json: Json, // Compressed { inputs: [], outputs: [] }
+  full_graph_json: Json,   // Cached full SSA graph
+  =>
+  computed_at: Int
+}
+```
 
 **Schema Addition:**
 ```datalog
@@ -920,7 +932,11 @@ interface TraceDataRequest {
 
 ---
 
-### Phase 3: Side-Effect Analysis (Critical for Understanding)
+### Phase 3: Side-Effect Analysis (Critical for Understanding) ✅ IMPLEMENTED
+
+**Status:** Implemented in Schema v8, fully integrated into indexing pipeline
+
+**Integration:** Side-effect analysis runs automatically during indexing when `enableSemanticAnalysis: true` is set. The `SemanticAnalysisService` now includes the `SideEffectAnalyzer` alongside parameter, return, and error analyzers.
 
 **Goal:** Identify and categorize side effects to understand what code actually *does* beyond its return value.
 
@@ -929,118 +945,343 @@ interface TraceDataRequest {
 ```typescript
 // src/core/analysis/side-effects/interfaces.ts
 type SideEffectCategory =
-  | 'io-file'           // File system operations
-  | 'io-network'        // HTTP, WebSocket, etc.
-  | 'io-database'       // DB queries
-  | 'io-console'        // Logging, console output
+  | 'io-file'           // File system operations (fs.*, readFile, writeFile)
+  | 'io-network'        // Network operations (fetch, axios, http.*)
+  | 'io-database'       // Database operations (ORM calls, raw SQL)
+  | 'io-console'        // Console/logging operations
   | 'mutation-param'    // Mutates input parameter
-  | 'mutation-global'   // Mutates global/module state
-  | 'mutation-this'     // Mutates object state
-  | 'async-spawn'       // Spawns async operations
-  | 'external-service'; // Calls external APIs
+  | 'mutation-global'   // Mutates global/module-level state
+  | 'mutation-this'     // Mutates object state (this.*)
+  | 'mutation-closure'  // Mutates closure variable
+  | 'async-spawn'       // Spawns async operations (setTimeout, Promise)
+  | 'external-service'  // Calls external APIs/services
+  | 'dom-manipulation'  // DOM operations (browser)
+  | 'event-emission'    // Emits events
+  | 'unknown';          // Detected but uncategorized
 
 interface SideEffect {
+  id: string;
   functionId: string;
   category: SideEffectCategory;
   description: string;
-  target?: string;        // What is affected
-  isConditional: boolean; // Only happens under certain conditions
-  condition?: string;     // The condition
+  target: string | null;     // What is affected (e.g., "this.state", "database")
+  isConditional: boolean;    // Only happens under certain conditions
+  condition: string | null;  // The condition
+  apiCall: string;           // The API/method call causing the side effect
+  location: { line: number; column: number };
+  confidence: DetectionConfidence; // 'high' | 'medium' | 'low'
+  evidence: string[];        // Evidence for detection
 }
 ```
 
-#### 3.2 Detection Strategies
+#### 3.2 Implementation Structure
 
-| Category | Detection Method |
-|----------|------------------|
-| `io-file` | Detect `fs.*`, `readFile`, `writeFile`, `path.*` calls |
-| `io-network` | Detect `fetch`, `axios`, `http.*`, WebSocket usage |
-| `io-database` | Detect ORM calls, raw SQL, MongoDB operations |
-| `mutation-param` | Track parameter modifications in body |
-| `mutation-global` | Track assignments to module-level variables |
-| `mutation-this` | Track `this.*` assignments in methods |
+```
+src/core/analysis/side-effects/
+├── index.ts           # Module exports
+├── interfaces.ts      # All type definitions and interfaces
+├── categorizer.ts     # SideEffectCategorizer - pattern matching engine
+└── detector.ts        # SideEffectAnalyzer - AST traversal and detection
+```
 
-**Implementation:**
-1. Create pattern matchers for each category
-2. Analyze call expressions against known side-effect APIs
-3. Track mutations through data flow analysis
-4. Store categorized side effects
+#### 3.3 Detection Strategies
 
-**Schema Addition:**
+| Category | Detection Method | Confidence |
+|----------|------------------|------------|
+| `io-file` | Pattern match: `fs.*`, `readFile`, `writeFile`, `createWriteStream` | High |
+| `io-network` | Pattern match: `fetch`, `axios.*`, `http.*`, `WebSocket` | High |
+| `io-database` | Pattern match: `.query`, `.save`, `prisma.*`, `mongoose.*` | High/Medium |
+| `io-console` | Pattern match: `console.*`, `logger.*`, `pino`, `winston` | High |
+| `mutation-param` | AST: Track assignments to parameter properties | High |
+| `mutation-global` | AST: Track assignments to `window`, `global`, `process` | High |
+| `mutation-this` | AST: Track `this.*` assignments in methods | High |
+| `mutation-closure` | AST: Track assignments to outer-scope variables | Medium |
+| `async-spawn` | Pattern match: `setTimeout`, `setInterval`, `Worker` | High |
+| `external-service` | Pattern match: `stripe.*`, `aws.*`, `firebase.*` | High |
+| `dom-manipulation` | Pattern match: `document.*`, `innerHTML`, `localStorage` | High |
+| `event-emission` | Pattern match: `.emit`, `.dispatch`, `.trigger` | Medium |
+
+**Built-in Patterns:** 80+ patterns defined in `DEFAULT_SIDE_EFFECT_PATTERNS` covering:
+- File system operations (14 patterns)
+- Network operations (13 patterns)
+- Database operations (14 patterns)
+- Console/logging (11 patterns)
+- Async operations (11 patterns)
+- External services (12 patterns)
+- DOM manipulation (13 patterns)
+- Event emission (6 patterns)
+
+#### 3.4 Schema (v8)
+
 ```datalog
-:create side_effects {
+:create side_effect {
+  id: String,
+  =>
   function_id: String,
+  file_path: String,
   category: String,
   description: String,
   target: String?,
+  api_call: String,
   is_conditional: Bool,
   condition: String?,
-  =>
-  confidence: Float,
-  source_location: String
+  confidence: String,
+  evidence_json: Json,
+  source_line: Int,
+  source_column: Int,
+  analyzed_at: Int
 }
+
+:create function_side_effect_summary {
+  function_id: String,
+  =>
+  file_path: String,
+  total_count: Int,
+  is_pure: Bool,
+  all_conditional: Bool,
+  primary_categories_json: Json,
+  risk_level: String,
+  confidence: Float,
+  analyzed_at: Int
+}
+
+:create has_side_effect {
+  from_id: String,  # Function ID
+  to_id: String     # SideEffect ID
+}
+
+:create has_side_effect_summary {
+  from_id: String,  # Function ID
+  to_id: String     # Function ID (same as summary primary key)
+}
+```
+
+#### 3.5 MCP Tool
+
+```typescript
+// get_side_effects tool
+interface GetSideEffectsInput {
+  functionName: string;
+  filePath?: string;
+  categories?: string[];      // Filter by category
+  minConfidence?: string;     // 'high' | 'medium' | 'low'
+}
+
+interface SideEffectResult {
+  functionId: string;
+  functionName: string;
+  filePath: string;
+  summary: {
+    totalCount: number;
+    isPure: boolean;
+    allConditional: boolean;
+    primaryCategories: string[];
+    riskLevel: 'low' | 'medium' | 'high';
+    confidence: number;
+  };
+  sideEffects: Array<{
+    id: string;
+    category: string;
+    description: string;
+    target: string | null;
+    apiCall: string;
+    isConditional: boolean;
+    condition: string | null;
+    confidence: string;
+    location: { line: number; column: number };
+  }>;
+}
+```
+
+#### 3.6 Usage Example
+
+```typescript
+import { createSideEffectAnalyzer, createSideEffectCategorizer } from './core/analysis/side-effects';
+
+const categorizer = createSideEffectCategorizer();
+const analyzer = createSideEffectAnalyzer(categorizer);
+
+const result = analyzer.analyze(
+  functionNode,    // tree-sitter AST node
+  functionBody,    // source code string
+  functionId,
+  filePath
+);
+
+console.log(result.summary.isPure);           // false
+console.log(result.summary.riskLevel);        // 'medium'
+console.log(result.sideEffects[0].category);  // 'io-database'
 ```
 
 ---
 
-### Phase 4: Design Pattern Detection (Architectural Insights)
+### Phase 4: Design Pattern Detection (Architectural Insights) ✅ IMPLEMENTED
+
+**Status:** Implemented in Schema v9, MCP tools available
 
 **Goal:** Automatically detect common design patterns to provide architectural context.
 
 #### 4.1 Detectable Patterns
 
-| Pattern | Detection Heuristics |
-|---------|---------------------|
-| **Factory** | Function returning new instances, multiple concrete types |
-| **Singleton** | Private constructor, static getInstance, module-level instance |
-| **Observer** | subscribe/unsubscribe methods, event emitter patterns |
-| **Repository** | CRUD methods, entity type parameter, storage abstraction |
-| **Service** | Stateless class, injected dependencies, business methods |
-| **Adapter** | Implements interface, wraps another type, method delegation |
-| **Builder** | Method chaining, build() method, partial construction |
-| **Strategy** | Interface with single method, multiple implementations |
-| **Decorator** | Wraps same interface, delegates with additions |
+| Pattern | Detection Heuristics | Confidence |
+|---------|---------------------|------------|
+| **Factory** | Function returning new instances, `create*`/`make*`/`build*` methods, `new` keyword | High |
+| **Singleton** | Private constructor, static `getInstance`, module-level instance | High |
+| **Observer** | `subscribe`/`unsubscribe`/`on`/`off` methods, event emitter patterns | High |
+| **Repository** | CRUD methods (`find*`, `get*`, `create*`, `update*`, `delete*`), entity type parameter | High |
+| **Service** | Stateless class ending in `Service`, injected dependencies, business methods | Medium |
+| **Adapter** | Implements interface, wraps another type, method delegation | Medium |
+| **Builder** | Method chaining returning `this`, `build()` method, fluent setters | High |
+| **Strategy** | Interface with 1-3 methods, multiple implementations, context class | Medium |
+| **Decorator** | Wraps same interface, constructor parameter of same type, delegates | Medium |
 
-#### 4.2 Implementation
+#### 4.2 Implementation Structure
+
+```
+src/core/analysis/patterns/
+├── index.ts              # Module exports
+├── interfaces.ts         # All type definitions and interfaces
+├── service.ts            # PatternAnalysisService - orchestrator
+└── detectors/
+    ├── index.ts          # Detector exports
+    ├── base-detector.ts  # BasePatternDetector abstract class
+    ├── factory-detector.ts
+    ├── singleton-detector.ts
+    ├── observer-detector.ts
+    ├── repository-detector.ts
+    ├── service-detector.ts
+    ├── builder-detector.ts
+    ├── strategy-detector.ts
+    └── decorator-detector.ts
+```
+
+#### 4.3 Interfaces
 
 ```typescript
 // src/core/analysis/patterns/interfaces.ts
 interface DetectedPattern {
-  patternType: string;
-  confidence: number;
-  participants: {
-    role: string;          // e.g., "factory", "product", "client"
-    entityId: string;
-    entityType: string;
-  }[];
-  evidence: string[];      // Why we think it's this pattern
+  id: string;
+  patternType: DesignPatternType;
+  name: string;
+  confidence: number;          // 0.0 - 1.0
+  confidenceLevel: 'high' | 'medium' | 'low';
+  participants: PatternParticipant[];
+  evidence: string[];          // Why we think it's this pattern
+  filePaths: string[];
+  description?: string;
+  detectedAt: number;
 }
 
-// src/core/analysis/patterns/detectors/
-// - factory-detector.ts
-// - singleton-detector.ts
-// - observer-detector.ts
-// - repository-detector.ts
-// etc.
+interface PatternParticipant {
+  role: PatternRole;           // e.g., "factory", "product", "singleton"
+  entityId: string;
+  entityType: 'class' | 'function' | 'interface' | 'variable' | 'method';
+  entityName: string;
+  filePath: string;
+  evidence: string[];
+}
+
+interface IPatternDetector {
+  readonly patternType: DesignPatternType;
+  detect(context: PatternAnalysisContext, options?: PatternDetectionOptions): DetectedPattern[];
+  getHeuristics(): PatternHeuristic[];
+}
+
+interface IPatternAnalysisService {
+  analyze(context: PatternAnalysisContext, options?: PatternDetectionOptions): PatternAnalysisResult;
+  analyzeFile(classes, functions, interfaces, filePath, options?): PatternAnalysisResult;
+  registerDetector(detector: IPatternDetector): void;
+}
 ```
 
-**Schema Addition:**
+#### 4.4 Schema (v9)
+
 ```datalog
-:create design_patterns {
-  pattern_id: String,
-  pattern_type: String,
-  confidence: Float,
-  evidence: [String],
+:create design_pattern {
+  id: String,
   =>
+  pattern_type: String,     # 'factory' | 'singleton' | 'observer' | etc.
+  name: String,
+  confidence: Float,
+  confidence_level: String, # 'high' | 'medium' | 'low'
+  evidence_json: Json,      # string[]
+  file_paths_json: Json,    # string[]
+  description: String?,
   detected_at: Int
 }
 
-:create pattern_participants {
+:create pattern_participant {
+  id: String,
+  =>
   pattern_id: String,
   entity_id: String,
-  role: String,
+  role: String,             # 'factory' | 'product' | 'singleton' | etc.
+  entity_type: String,      # 'class' | 'function' | 'interface' | etc.
+  entity_name: String,
+  file_path: String,
+  evidence_json: Json       # string[]
+}
+
+:create has_pattern {
+  from_id: String,          # Entity ID
+  to_id: String,            # Pattern ID
   =>
-  entity_type: String
+  role: String
+}
+
+:create pattern_has_participant {
+  from_id: String,          # Pattern ID
+  to_id: String             # Participant ID
+}
+```
+
+#### 4.5 MCP Tools
+
+```typescript
+// find_patterns tool
+interface FindPatternsInput {
+  patternType?: DesignPatternType; // Filter by pattern type
+  minConfidence?: number;          // 0.0 - 1.0 threshold
+  filePath?: string;               // Filter by file
+  limit?: number;                  // Max results (default: 20)
+}
+
+interface FindPatternsResult {
+  patterns: PatternResult[];
+  stats: {
+    total: number;
+    byType: Record<string, number>;
+    highConfidence: number;
+    mediumConfidence: number;
+    lowConfidence: number;
+  };
+}
+
+// get_pattern tool
+interface GetPatternInput {
+  patternId: string;
+}
+```
+
+#### 4.6 Usage Example
+
+```typescript
+import { createPatternAnalysisService, type ClassInfo } from './core/analysis';
+
+const service = createPatternAnalysisService({ minConfidence: 0.5 });
+
+const result = service.analyze({
+  classes: extractedClasses,
+  functions: extractedFunctions,
+  interfaces: extractedInterfaces,
+});
+
+console.log(`Found ${result.stats.totalPatterns} patterns`);
+for (const pattern of result.patterns) {
+  console.log(`${pattern.patternType}: ${pattern.name} (${pattern.confidenceLevel})`);
+  for (const p of pattern.participants) {
+    console.log(`  - ${p.role}: ${p.entityName} (${p.entityType})`);
+  }
 }
 ```
 
@@ -1180,55 +1421,92 @@ interface EntityEmbeddings {
 
 ## Implementation Priority & Timeline
 
-### Immediate (Weeks 1-2): Foundation Enhancements
+### Phase 1: Foundation Enhancements ✅ COMPLETE
 
-| Task | Effort | Impact |
-|------|--------|--------|
-| Parameter semantic analysis | 3 days | High |
-| Return value analysis | 2 days | Medium |
-| Error path extraction | 3 days | High |
-| Schema migrations | 1 day | Required |
+| Task | Status | Location |
+|------|--------|----------|
+| Parameter semantic analysis | ✅ Complete | `src/core/extraction/analyzers/parameter-analyzer.ts` |
+| Return value analysis | ✅ Complete | `src/core/extraction/analyzers/return-analyzer.ts` |
+| Error path extraction | ✅ Complete | `src/core/extraction/analyzers/error-analyzer.ts` |
+| Schema migrations | ✅ Complete | Schema v8 |
 
-### Short-Term (Weeks 3-4): Data Flow
+### Phase 2: Data Flow ✅ COMPLETE
 
-| Task | Effort | Impact |
-|------|--------|--------|
-| Intra-function data flow | 5 days | Critical |
-| Cross-function data flow | 4 days | Critical |
-| Data flow MCP tools | 2 days | High |
+| Task | Status | Location |
+|------|--------|----------|
+| Intra-function data flow | ✅ Complete | `src/core/analysis/data-flow/intra-function.ts` |
+| Cross-function data flow | ✅ Complete | `src/core/analysis/data-flow/cross-function.ts` |
+| Data flow MCP tools | ✅ Complete | `get_data_flow` tool in `src/mcp/tools.ts` |
 
-### Medium-Term (Weeks 5-6): Side Effects & Patterns
+### Phase 3: Side Effects ✅ COMPLETE
 
-| Task | Effort | Impact |
-|------|--------|--------|
-| Side-effect detection | 4 days | High |
-| Pattern detection (core 5) | 5 days | Medium |
-| Pattern detection (extended) | 3 days | Medium |
+| Task | Status | Location |
+|------|--------|----------|
+| Side-effect detection | ✅ Complete | `src/core/analysis/side-effects/detector.ts` |
+| Side-effect categorization | ✅ Complete | `src/core/analysis/side-effects/categorizer.ts` |
+| Side-effect MCP tool | ✅ Complete | `get_side_effects` tool in `src/mcp/tools.ts` |
+| Pipeline integration | ✅ Complete | `SemanticAnalysisService` in coordinator |
 
-### Long-Term (Weeks 7-8): Justification & Similarity
+### Phase 4: Design Patterns ✅ COMPLETE
 
-| Task | Effort | Impact |
-|------|--------|--------|
-| Enhanced justification context | 3 days | High |
-| Domain-specific prompts | 2 days | Medium |
-| Semantic similarity service | 4 days | Medium |
-| Multi-vector embeddings | 3 days | Medium |
+| Task | Status | Location |
+|------|--------|----------|
+| Pattern interfaces & types | ✅ Complete | `src/core/analysis/patterns/interfaces.ts` |
+| Factory detector | ✅ Complete | `src/core/analysis/patterns/detectors/factory-detector.ts` |
+| Singleton detector | ✅ Complete | `src/core/analysis/patterns/detectors/singleton-detector.ts` |
+| Observer detector | ✅ Complete | `src/core/analysis/patterns/detectors/observer-detector.ts` |
+| Repository detector | ✅ Complete | `src/core/analysis/patterns/detectors/repository-detector.ts` |
+| Service detector | ✅ Complete | `src/core/analysis/patterns/detectors/service-detector.ts` |
+| Builder detector | ✅ Complete | `src/core/analysis/patterns/detectors/builder-detector.ts` |
+| Strategy detector | ✅ Complete | `src/core/analysis/patterns/detectors/strategy-detector.ts` |
+| Decorator detector | ✅ Complete | `src/core/analysis/patterns/detectors/decorator-detector.ts` |
+| Pattern analysis service | ✅ Complete | `src/core/analysis/patterns/service.ts` |
+| UCE-to-Pattern converter | ✅ Complete | `src/core/analysis/patterns/uce-converter.ts` |
+| Schema definitions | ✅ Complete | Schema v9 |
+| MCP tools | ✅ Complete | `find_patterns`, `get_pattern` in `src/mcp/tools.ts` |
+| Pipeline integration | ✅ Complete | `IndexerCoordinator` with `enablePatternDetection` |
+
+### Phase 5: Enhanced Justification ✅ COMPLETE
+
+| Task | Status | Location |
+|------|--------|----------|
+| Enhanced context types | ✅ Complete | `src/core/justification/models/justification.ts` |
+| Analysis context builder | ✅ Complete | `src/core/justification/hierarchy/analysis-context-builder.ts` |
+| Context propagator integration | ✅ Complete | `src/core/justification/hierarchy/context-propagator.ts` |
+| Prompt generation updates | ✅ Complete | `src/core/justification/prompts/justification-prompts.ts` |
+
+### Phase 6: Semantic Similarity ✅ COMPLETE
+
+| Task | Status | Location |
+|------|--------|----------|
+| Embedding service | ✅ Complete | `src/core/embeddings/index.ts` |
+| Similarity service | ✅ Complete | `src/core/embeddings/similarity-service.ts` |
+| Vector search (HNSW) | ✅ Complete | Uses CozoDB `v_knn()` for HNSW indices |
+| MCP tool | ✅ Complete | `find_similar_code` in `src/mcp/tools.ts` |
+| Pipeline integration | ✅ Complete | `src/mcp/server.ts` service initialization |
+
+**Implementation Details:**
+
+- **EmbeddingService**: Uses `@huggingface/transformers` with local ONNX models (Xenova/all-MiniLM-L6-v2, 384 dimensions)
+- **SimilarityService**: Provides `findSimilarByEntityId`, `findSimilarByText`, `findSimilarByEmbedding`, `computeSimilarity`, `clusterSimilarCode`
+- **Vector Search**: HNSW-based similarity search using CozoDB's `~function_embedding:embedding_hnsw` index
+- **MCP Tool**: `find_similar_code` allows search by entity ID or natural language description
 
 ---
 
-## New MCP Tools (Post-Implementation)
+## New MCP Tools
 
-After implementation, expose these new capabilities:
-
-| Tool | Purpose |
-|------|---------|
-| `trace_data_flow` | Trace data from source to sink |
-| `get_side_effects` | List side effects of a function |
-| `find_patterns` | Find design patterns in code |
-| `get_error_paths` | Get error propagation paths |
-| `find_similar_code` | Find semantically similar functions |
-| `get_data_dependencies` | Get all data dependencies for a function |
-| `explain_function_behavior` | Rich explanation with all analyses |
+| Tool | Purpose | Status |
+|------|---------|--------|
+| `get_data_flow` | Get data flow analysis for a function | ✅ Implemented |
+| `get_side_effects` | List side effects of a function | ✅ Implemented |
+| `find_patterns` | Find design patterns in code | ✅ Implemented |
+| `get_pattern` | Get details of a specific pattern | ✅ Implemented |
+| `get_error_paths` | Get error propagation paths | ✅ Implemented |
+| `find_similar_code` | Find semantically similar functions | ✅ Implemented |
+| `trace_data_flow` | Trace data from source to sink | TODO |
+| `get_data_dependencies` | Get all data dependencies for a function | TODO |
+| `explain_function_behavior` | Rich explanation with all analyses | TODO |
 
 ---
 
@@ -1245,14 +1523,14 @@ After implementation, expose these new capabilities:
 
 ### Completeness Metrics
 
-| Capability | Current | Target |
-|------------|---------|--------|
-| "What does this function do?" | ✅ Basic | ✅ Rich with data flow |
-| "Where does this data go?" | ❌ No | ✅ Full trace |
-| "What side effects does this have?" | ❌ No | ✅ Categorized |
-| "What pattern is this?" | ❌ No | ✅ Detected |
-| "What similar code exists?" | ❌ No | ✅ Semantic search |
-| "What errors can this throw?" | ❌ No | ✅ Full paths |
+| Capability | Status | Implementation |
+|------------|--------|----------------|
+| "What does this function do?" | ✅ Implemented | Rich with data flow, parameters, returns |
+| "Where does this data go?" | ✅ Implemented | Data flow analysis (Phase 2) |
+| "What side effects does this have?" | ✅ Implemented | 12 categories, 80+ patterns (Phase 3) |
+| "What errors can this throw?" | ✅ Implemented | Error path analysis (Phase 1) |
+| "What pattern is this?" | ✅ Implemented | 8 detectors, heuristic-based detection (Phase 4) |
+| "What similar code exists?" | ✅ Implemented | Phase 6: Vector similarity with HNSW indices |
 
 ---
 
@@ -1300,6 +1578,30 @@ src/core/
 
 ---
 
+# Part 4: Technology Accelerator Strategy
+
+To implement these advanced capabilities quickly without reinventing the wheel, we should leverage existing open-source tools:
+
+## 1. Data Flow & Name Resolution
+*   **[stack-graphs](https://github.com/github/stack-graphs)** (GitHub):
+    *   *Role:* Solves the "Jump to Definition" and cross-file reference problem incrementally.
+    *   *Why:* Built on Tree-sitter, handles complex scope rules, extremely fast. Use this instead of custom semantic analyzers for Phase 2.2.
+*   **[tree-sitter-graph](https://github.com/tree-sitter/tree-sitter-graph)**:
+    *   *Role:* Construct arbitrary graphs from ASTs using a declarative DSL.
+    *   *Why:* Perfect for building Control Flow Graphs (CFG) and Data Flow Graphs (DFG) without writing custom traversal logic for every language.
+
+## 2. Vector Search (Embeddings)
+*   **[LanceDB](https://lancedb.com/)** or **[Chroma](https://www.trychroma.com/)**:
+    *   *Role:* Lightweight, embedded vector search for Phase 6.
+    *   *Why:* CozoDB has vector support, but dedicated embedded vector DBs offer better DX for multi-modal similarity (code + documentation).
+
+## 3. Static Analysis Standards
+*   **[SCIP](https://github.com/sourcegraph/scip)** (Source Code Intelligence Protocol):
+    *   *Role:* Standard format for code intelligence.
+    *   *Strategy:* Instead of inventing a custom graph schema, align our Data Flow nodes with SCIP for interoperability.
+
+---
+
 ## Conclusion
 
 This plan transforms Code-Synapse from a structural code index into a comprehensive "second brain" that understands:
@@ -1328,3 +1630,780 @@ The phased approach allows incremental delivery of value while building toward t
 ### Documentation Mining
 - Extract design rationale from README, ADRs, wiki
 - Cross-reference with entity justifications
+
+---
+
+# Part 4: Implementation Status
+
+## Phase 1: Enhanced Entity Semantics - IMPLEMENTED
+
+Phase 1 has been implemented with the following components:
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `src/core/analysis/interfaces.ts` | Interface definitions for all analyzers |
+| `src/core/analysis/index.ts` | Module exports |
+| `src/core/extraction/analyzers/parameter-analyzer.ts` | Parameter semantic analysis |
+| `src/core/extraction/analyzers/return-analyzer.ts` | Return value analysis |
+| `src/core/extraction/analyzers/error-analyzer.ts` | Error path analysis |
+| `src/core/extraction/analyzers/index.ts` | Analyzer exports |
+
+### Schema Additions (Version 6)
+
+The following tables were added to `src/core/graph/schema-definitions.ts`:
+
+```typescript
+// Node tables
+FunctionParameterSemantics  // Enhanced parameter info per function
+FunctionReturnSemantics     // Return value analysis per function
+ErrorPath                   // Individual error paths
+FunctionErrorAnalysis       // Error analysis summary per function
+
+// Relationship tables
+HAS_PARAMETER_SEMANTICS     // Function → FunctionParameterSemantics
+HAS_RETURN_SEMANTICS        // Function → FunctionReturnSemantics
+HAS_ERROR_ANALYSIS          // Function → FunctionErrorAnalysis
+HAS_ERROR_PATH              // Function → ErrorPath
+ERROR_PROPAGATES_TO         // ErrorPath → Function (cross-function)
+```
+
+### Interfaces
+
+**IParameterAnalyzer** - Analyzes function parameters:
+- Purpose classification (input, output, config, callback, context)
+- Usage tracking within function body
+- Validation rule extraction
+- Mutation detection
+
+**IReturnAnalyzer** - Analyzes return values:
+- All return points with conditions
+- Possible values for union types
+- Data source tracing
+- Transformation identification
+
+**IErrorAnalyzer** - Analyzes error handling:
+- Throw point detection
+- Try/catch block analysis
+- Error propagation paths
+- Handling strategy classification
+
+### Row Types Added
+
+```typescript
+// In src/core/extraction/types.ts
+ParameterSemanticsRow  // 16 columns
+ReturnSemanticsRow     // 14 columns
+ErrorPathRow           // 12 columns
+ErrorAnalysisRow       // 9 columns
+```
+
+### CozoBatch Extension
+
+```typescript
+// Added to CozoBatch interface
+parameterSemantics: ParameterSemanticsRow[]
+returnSemantics: ReturnSemanticsRow[]
+errorPaths: ErrorPathRow[]
+errorAnalysis: ErrorAnalysisRow[]
+```
+
+### Pipeline Integration
+
+The `EntityPipeline` class now includes:
+
+```typescript
+// Analyzer instances
+private parameterAnalyzer: ParameterAnalyzer;
+private returnAnalyzer: ReturnAnalyzer;
+private errorAnalyzer: ErrorAnalyzer;
+
+// Conversion methods for database rows
+convertParameterAnalysisToRows(result: ParameterAnalysisResult): ParameterSemanticsRow[]
+convertReturnAnalysisToRow(result: ReturnAnalysisResult): ReturnSemanticsRow
+convertErrorAnalysisToRows(result: ErrorAnalysisResult): { errorPaths, errorAnalysis }
+
+// Accessor methods for direct AST analysis
+getParameterAnalyzer(): ParameterAnalyzer
+getReturnAnalyzer(): ReturnAnalyzer
+getErrorAnalyzer(): ErrorAnalyzer
+```
+
+### Usage Example
+
+```typescript
+import { createEntityPipeline, type Node } from "./core/extraction/index.js";
+
+const pipeline = createEntityPipeline({
+  projectRoot: "/project",
+  semanticAnalysis: true
+});
+
+// Get analyzers for direct AST analysis
+const paramAnalyzer = pipeline.getParameterAnalyzer();
+const returnAnalyzer = pipeline.getReturnAnalyzer();
+const errorAnalyzer = pipeline.getErrorAnalyzer();
+
+// Analyze a function AST node
+const paramResult = paramAnalyzer.analyze(functionNode, functionBody, functionId);
+const returnResult = returnAnalyzer.analyze(functionNode, functionBody, functionId);
+const errorResult = errorAnalyzer.analyze(functionNode, functionBody, functionId);
+
+// Convert to database rows
+const paramRows = pipeline.convertParameterAnalysisToRows(paramResult);
+const returnRow = pipeline.convertReturnAnalysisToRow(returnResult);
+const { errorPaths, errorAnalysis } = pipeline.convertErrorAnalysisToRows(errorResult);
+
+// Add to batch
+batch.parameterSemantics.push(...paramRows);
+batch.returnSemantics.push(returnRow);
+batch.errorPaths.push(...errorPaths);
+batch.errorAnalysis.push(errorAnalysis);
+```
+
+### Architecture Notes
+
+The analyzers follow the **decoupling philosophy**:
+
+1. **Interfaces first** - All analyzers implement interfaces defined in `src/core/analysis/interfaces.ts`
+2. **No vendor lock-in** - Analyzers work with standard Tree-sitter `Node` objects
+3. **Storage-agnostic** - Row types can be stored in any backend via `IStorageAdapter`
+4. **Lazy evaluation ready** - Analyzers can be called on-demand (not at index time)
+
+### Integration Points
+
+The semantic analysis integrates at the **IndexerCoordinator** level where both:
+- Parsed AST nodes are available
+- Function entity IDs have been generated
+
+This allows running analysis after parsing but before or during entity extraction.
+
+### Completed Integration
+
+- [x] **Integrate analyzers into IndexerCoordinator** - `SemanticAnalysisService` bridges UCE entities with AST analyzers
+- [x] **Add database write operations** - `cozo-graph-store.ts` now writes Phase 1 tables
+- [x] **Create MCP tools** - `get_function_semantics` and `get_error_paths` tools added
+- [x] **Schema tables auto-generated** - Phase 1 tables included in `generateExecutableCozoScript()`
+
+### Enabling Semantic Analysis
+
+To enable Phase 1 semantic analysis during indexing:
+
+```typescript
+const coordinator = new IndexerCoordinator({
+  parser,
+  store,
+  project,
+  enableSemanticAnalysis: true,  // Enable Phase 1-3 (parameters, returns, errors, side effects)
+  semanticAnalysisOptions: {
+    analyzeParameters: true,
+    analyzeReturns: true,
+    analyzeErrors: true,
+    analyzeSideEffects: true,
+    timeoutPerFunction: 5000,
+  },
+});
+```
+
+### Enabling Pattern Detection
+
+To enable Phase 4 design pattern detection during indexing:
+
+```typescript
+const coordinator = new IndexerCoordinator({
+  parser,
+  store,
+  project,
+  enablePatternDetection: true,  // Enable Phase 4
+  patternDetectionOptions: {
+    minConfidence: 0.5,          // Minimum confidence threshold (0.0-1.0)
+    patternTypes: [              // Which patterns to detect (default: all)
+      "factory", "singleton", "observer", "repository",
+      "service", "builder", "strategy", "decorator"
+    ],
+    crossFileAnalysis: true,     // Analyze patterns across files
+    maxDepth: 3,                 // Max depth for relationship analysis
+  },
+});
+```
+
+### Enabling Both Semantic Analysis and Pattern Detection
+
+For comprehensive analysis, enable both:
+
+```typescript
+const coordinator = new IndexerCoordinator({
+  parser,
+  store,
+  project,
+  enableSemanticAnalysis: true,   // Phase 1-3
+  enablePatternDetection: true,   // Phase 4
+});
+```
+
+### MCP Tools Available
+
+| Tool | Description |
+|------|-------------|
+| `get_function_semantics` | Get parameter, return, and error analysis for a function |
+| `get_error_paths` | Get error propagation paths for a function |
+
+---
+
+## Phase 2: Data Flow Analysis - IMPLEMENTED
+
+Phase 2 has been implemented with the following components:
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `src/core/analysis/data-flow/interfaces.ts` | Interface definitions for data flow analysis |
+| `src/core/analysis/data-flow/intra-function.ts` | Intra-function data flow analyzer |
+| `src/core/analysis/data-flow/cross-function.ts` | Cross-function data flow analyzer |
+| `src/core/analysis/data-flow/cache.ts` | Lazy evaluation cache service |
+| `src/core/analysis/data-flow/index.ts` | Module exports |
+
+### Schema Additions (Version 7)
+
+The following tables were added to `src/core/graph/schema-definitions.ts`:
+
+```typescript
+// Node tables
+DataFlowCache          // Cached data flow analysis for a function (lazy evaluation)
+DataFlowNode           // Individual node in a data flow graph
+CrossFunctionFlow      // Data flow across function boundaries
+TaintSource            // Tracks external data sources that introduce taint
+
+// Relationship tables
+HAS_DATA_FLOW_CACHE    // Function → DataFlowCache
+DATA_FLOWS_TO          // DataFlowNode → DataFlowNode (data flow edge)
+HAS_CROSS_FLOW         // Function → CrossFunctionFlow
+HAS_TAINT_SOURCE       // Function → TaintSource
+TAINT_FLOWS_TO         // TaintSource → DataFlowNode
+```
+
+### Interfaces
+
+**IDataFlowAnalyzer** - Analyzes intra-function data flow:
+- Parameter to return tracing
+- Variable assignment tracking
+- Taint source detection
+- Side-effect identification
+- Pure function detection
+
+**ICrossFunctionAnalyzer** - Analyzes cross-function data flow:
+- Argument to parameter mapping
+- Return value usage tracking
+- Taint propagation across calls
+- Call graph data flow traversal
+
+**IDataFlowCache** - Lazy evaluation cache:
+- On-demand computation
+- File hash-based staleness detection
+- LRU eviction policy
+- Cache statistics
+
+### Data Flow Node Types
+
+```typescript
+type DataFlowNodeKind =
+  | "parameter"      // Function parameter
+  | "variable"       // Local variable
+  | "return"         // Return statement
+  | "call_result"    // Result of a function call
+  | "property"       // Object property access
+  | "literal"        // Literal value
+  | "external"       // External input
+  | "unknown";
+```
+
+### Data Flow Edge Types
+
+```typescript
+type DataFlowEdgeKind =
+  | "assign"         // Direct assignment (x = y)
+  | "transform"      // Transformation (x = f(y))
+  | "read"           // Read from property/variable
+  | "write"          // Write to property/variable
+  | "parameter"      // Passed as parameter to function
+  | "return"         // Returned from function
+  | "conditional"    // Conditionally flows
+  | "merge"          // Merge point (phi node)
+  | "propagate";     // Taint propagation
+```
+
+### Taint Source Categories
+
+```typescript
+type TaintSource =
+  | "user_input"     // User-provided data
+  | "network"        // Data from network requests
+  | "filesystem"     // Data read from files
+  | "database"       // Data from database queries
+  | "environment"    // Environment variables
+  | "time"           // Time-dependent values
+  | "random"         // Random/non-deterministic values
+  | "external_api"   // Third-party API responses
+  | "unknown";
+```
+
+### Row Types Added
+
+```typescript
+// In src/core/extraction/types.ts
+DataFlowCacheRow       // 17 columns
+DataFlowNodeRow        // 9 columns
+CrossFunctionFlowRow   // 10 columns
+TaintSourceRow         // 9 columns
+DataFlowsToRow         // 7 columns (relationship)
+HasCrossFlowRow        // 3 columns (relationship)
+TaintFlowsToRow        // 4 columns (relationship)
+```
+
+### CozoBatch Extension
+
+```typescript
+// Added to CozoBatch interface
+dataFlowCache: DataFlowCacheRow[]
+dataFlowNodes: DataFlowNodeRow[]
+crossFunctionFlows: CrossFunctionFlowRow[]
+taintSources: TaintSourceRow[]
+dataFlowsTo: DataFlowsToRow[]
+hasCrossFlow: HasCrossFlowRow[]
+taintFlowsTo: TaintFlowsToRow[]
+```
+
+### Usage Example
+
+```typescript
+import {
+  createDataFlowAnalyzer,
+  createCrossFunctionAnalyzer,
+  createDataFlowCache,
+  type Node
+} from "./core/analysis/index.js";
+
+// Create analyzers and cache
+const dataFlowAnalyzer = createDataFlowAnalyzer({ trackTaint: true });
+const crossFunctionAnalyzer = createCrossFunctionAnalyzer();
+const cache = createDataFlowCache({ maxEntries: 10000 });
+
+// Analyze a function (lazy evaluation)
+function analyzeFunction(functionNode: Node, functionBody: string, functionId: string, fileHash: string) {
+  // Check cache first
+  if (cache.isValid(functionId, fileHash)) {
+    return cache.get(functionId);
+  }
+
+  // Compute on demand
+  const dataFlow = dataFlowAnalyzer.analyzeFunction(functionNode, functionBody, functionId);
+
+  // Get summary
+  const summary = dataFlowAnalyzer.summarize(dataFlow);
+  console.log(`Pure function: ${summary.isPure}`);
+  console.log(`Has side effects: ${summary.hasSideEffects}`);
+  console.log(`Inputs affecting output: ${summary.inputsAffectingOutput.join(', ')}`);
+
+  // Detect taint flows
+  const taintFlows = dataFlowAnalyzer.detectTaintFlows(dataFlow);
+  for (const flow of taintFlows) {
+    console.log(`Taint from ${flow.source} flows to sink at ${flow.sinkNodeId}`);
+  }
+
+  // Cache for reuse
+  cache.setWithHash(functionId, dataFlow, fileId, fileHash);
+
+  return dataFlow;
+}
+
+// Trace data across functions
+function traceDataAcrossFunctions(
+  functionFlows: Map<string, FunctionDataFlow>,
+  callGraph: Map<string, string[]>
+) {
+  // Build cross-function flow graph
+  const crossFlows = crossFunctionAnalyzer.buildCrossFlowGraph(functionFlows, callGraph);
+
+  // Trace a specific parameter
+  const reachableFunctions = crossFunctionAnalyzer.traceDataFlow(
+    'fn-getUserInput-123',
+    'input',
+    functionFlows,
+    crossFlows
+  );
+
+  console.log(`User input reaches: ${reachableFunctions.join(', ')}`);
+}
+```
+
+### Lazy Evaluation Strategy
+
+The data flow analysis follows a **lazy evaluation** approach:
+
+1. **Index Time**: Only structural extraction (functions, classes, relationships)
+2. **Query Time**: When an agent requests data flow, compute on-demand
+3. **Cache**: Store computed results with file hash for staleness detection
+4. **Invalidation**: Invalidate cache when files change
+
+This avoids the "graph explosion" problem where eagerly computing data flow for every function would create ~50x more nodes and significantly slow indexing.
+
+### Architecture Notes
+
+The data flow analyzers follow the **decoupling philosophy**:
+
+1. **Interfaces first** - All analyzers implement interfaces in `src/core/analysis/data-flow/interfaces.ts`
+2. **No vendor lock-in** - Analyzers work with standard Tree-sitter `Node` objects
+3. **Storage-agnostic** - Row types can be stored in any backend via `IStorageAdapter`
+4. **Lazy evaluation** - Compute on-demand, cache for reuse
+5. **Taint tracking** - Built-in support for tracking data provenance
+
+### Integration Points
+
+The data flow analysis integrates with:
+
+1. **EntityPipeline** - Can be called after function extraction
+2. **IndexerCoordinator** - For on-demand analysis during queries
+3. **MCP Tools** - For exposing `trace_data_flow` and similar tools
+4. **GraphWriter** - For persisting cached analysis results
+
+### Completed Integration
+
+- [x] **Database write operations** - `cozo-graph-store.ts` writes all Phase 2 tables
+- [x] **Schema auto-generation** - Phase 2 tables included in schema (Version 7)
+- [x] **MCP tool created** - `get_data_flow` tool for querying data flow analysis
+- [x] **GraphWriter updated** - Entity/relationship counts include Phase 2 data
+
+### MCP Tools Available
+
+| Tool | Description |
+|------|-------------|
+| `get_function_semantics` | Get parameter, return, and error analysis for a function |
+| `get_error_paths` | Get error propagation paths for a function |
+| `get_data_flow` | Get data flow analysis for a function (lazy evaluated, cached) |
+
+### Future Enhancements
+
+- [ ] Implement batch data flow computation for initial indexing
+- [ ] Add visualization support in web viewer
+- [ ] Create `trace_data_flow` tool for cross-function tracing
+- [ ] Create `find_taint_paths` tool for security analysis
+
+---
+
+## Phase 3: Side-Effect Analysis - IMPLEMENTED
+
+Phase 3 has been fully implemented and integrated into the indexing pipeline. See the "Phase 3: Side-Effect Analysis" section above for detailed documentation.
+
+### Pipeline Integration
+
+Side-effect analysis runs automatically during indexing when `enableSemanticAnalysis: true` is set. The `SemanticAnalysisService` includes the `SideEffectAnalyzer` alongside the Phase 1 analyzers.
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `src/core/analysis/side-effects/interfaces.ts` | Interface definitions |
+| `src/core/analysis/side-effects/detector.ts` | `SideEffectAnalyzer` implementation |
+| `src/core/analysis/side-effects/categorizer.ts` | `SideEffectCategorizer` with 80+ patterns |
+| `src/core/analysis/side-effects/index.ts` | Module exports |
+
+### MCP Tools Available
+
+| Tool | Description |
+|------|-------------|
+| `get_side_effects` | Get side effects for a function with summary |
+
+---
+
+## Phase 4: Design Pattern Detection - IMPLEMENTED
+
+Phase 4 has been fully implemented and integrated into the indexing pipeline.
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `src/core/analysis/patterns/interfaces.ts` | All type definitions and interfaces |
+| `src/core/analysis/patterns/service.ts` | `PatternAnalysisService` orchestrator |
+| `src/core/analysis/patterns/uce-converter.ts` | UCE-to-PatternContext converter |
+| `src/core/analysis/patterns/detectors/base-detector.ts` | `BasePatternDetector` abstract class |
+| `src/core/analysis/patterns/detectors/factory-detector.ts` | Factory pattern detector |
+| `src/core/analysis/patterns/detectors/singleton-detector.ts` | Singleton pattern detector |
+| `src/core/analysis/patterns/detectors/observer-detector.ts` | Observer/Pub-Sub detector |
+| `src/core/analysis/patterns/detectors/repository-detector.ts` | Repository pattern detector |
+| `src/core/analysis/patterns/detectors/service-detector.ts` | Service pattern detector |
+| `src/core/analysis/patterns/detectors/builder-detector.ts` | Builder pattern detector |
+| `src/core/analysis/patterns/detectors/strategy-detector.ts` | Strategy pattern detector |
+| `src/core/analysis/patterns/detectors/decorator-detector.ts` | Decorator pattern detector |
+| `src/core/analysis/patterns/detectors/index.ts` | Detector exports |
+| `src/core/analysis/patterns/index.ts` | Module exports |
+
+### Pipeline Integration
+
+Pattern detection runs automatically during indexing when `enablePatternDetection: true` is set. The `IndexerCoordinator` calls `PatternAnalysisService` after semantic analysis and before writing to the database.
+
+**Integration flow:**
+1. Parse file → UCEFile (classes, functions, interfaces)
+2. Extract entities → CozoBatch
+3. Semantic analysis (if enabled) → Phase 1-3 results
+4. **Pattern detection (if enabled) → Phase 4 results**
+5. Write to database
+
+The `convertUCEToPatternContext()` function bridges UCE entities with the pattern analysis context format.
+
+### Schema (v9)
+
+```datalog
+:create design_pattern {
+  id: String,
+  =>
+  pattern_type: String,
+  name: String,
+  confidence: Float,
+  confidence_level: String,
+  evidence_json: Json,
+  file_paths_json: Json,
+  description: String?,
+  detected_at: Int
+}
+
+:create pattern_participant {
+  id: String,
+  =>
+  pattern_id: String,
+  entity_id: String,
+  role: String,
+  entity_type: String,
+  entity_name: String,
+  file_path: String,
+  evidence_json: Json
+}
+
+:create has_pattern {
+  from_id: String,
+  to_id: String,
+  =>
+  role: String
+}
+
+:create pattern_has_participant {
+  from_id: String,
+  to_id: String
+}
+```
+
+### MCP Tools Available
+
+| Tool | Description |
+|------|-------------|
+| `find_patterns` | Find design patterns with optional filtering by type, confidence, file |
+| `get_pattern` | Get full details of a specific pattern by ID |
+
+### Usage Example
+
+```typescript
+import {
+  createPatternAnalysisService,
+  convertUCEToPatternContext,
+} from "./core/analysis/index.js";
+
+// Create service
+const patternService = createPatternAnalysisService({ minConfidence: 0.5 });
+
+// Convert UCE entities to pattern context
+const context = convertUCEToPatternContext(
+  parsedFile.classes,
+  parsedFile.functions,
+  parsedFile.interfaces,
+  fileId,
+  filePath
+);
+
+// Run detection
+const result = patternService.analyze(context);
+
+console.log(`Found ${result.stats.totalPatterns} patterns:`);
+for (const pattern of result.patterns) {
+  console.log(`  ${pattern.patternType}: ${pattern.name} (${pattern.confidenceLevel})`);
+}
+```
+
+### Architecture Notes
+
+The pattern detection follows the **decoupling philosophy**:
+
+1. **Interfaces first** - All detectors implement `IPatternDetector` interface
+2. **No vendor lock-in** - Detectors work with generic `ClassInfo`, `FunctionInfo`, `InterfaceInfo` types
+3. **Storage-agnostic** - Row types can be stored in any backend
+4. **Heuristic-based** - Weighted confidence scoring with multiple signals
+5. **Extensible** - New detectors can be registered via `registerDetector()`
+
+### Detected Patterns
+
+| Pattern | Heuristics | Typical Confidence |
+|---------|------------|-------------------|
+| Factory | `create*/make*/build*` methods, `new` keyword, polymorphic returns | High |
+| Singleton | Private constructor, static `getInstance`, static instance property | High |
+| Observer | `subscribe/unsubscribe`, `on/off`, `emit/dispatch` methods | High |
+| Repository | CRUD methods (`find*/get*/create*/update*/delete*`), entity types | High |
+| Service | `*Service` naming, constructor injection, stateless design | Medium |
+| Builder | Method chaining returning `this`, `build()` method, fluent setters | High |
+| Strategy | Single-method interface, multiple implementations, context class | Medium |
+| Decorator | Wraps same interface, constructor with same-type parameter | Medium |
+
+---
+
+## Phase 5: Enhanced Business Justification - IMPLEMENTED
+
+Phase 5 enhances the justification system by integrating Phase 1-4 analysis results into the LLM context, providing richer semantic information for better business value inference.
+
+### Files Created/Modified
+
+| File | Purpose |
+|------|---------|
+| `src/core/justification/models/justification.ts` | Added `EnhancedAnalysisContext` and related types |
+| `src/core/justification/hierarchy/analysis-context-builder.ts` | **NEW**: Builds analysis context from Phase 1-4 results |
+| `src/core/justification/hierarchy/context-propagator.ts` | Integrated `AnalysisContextBuilder` |
+| `src/core/justification/prompts/justification-prompts.ts` | Added analysis context formatting in prompts |
+
+### New Types
+
+```typescript
+// src/core/justification/models/justification.ts
+
+interface SideEffectContext {
+  totalCount: number;
+  isPure: boolean;
+  categories: string[];
+  descriptions: string[];
+  riskLevel: "low" | "medium" | "high";
+}
+
+interface ErrorBehaviorContext {
+  canThrow: boolean;
+  errorTypes: string[];
+  allHandled: boolean;
+  escapingErrorTypes: string[];
+  summary: string;
+}
+
+interface DataFlowContext {
+  isAnalyzed: boolean;
+  isPure: boolean;
+  inputsAffectingOutput: string[];
+  accessesExternalState: boolean;
+  summary: string;
+}
+
+interface PatternContext {
+  patterns: Array<{
+    patternType: string;
+    role: string;
+    patternName: string;
+    confidenceLevel: "high" | "medium" | "low";
+  }>;
+}
+
+interface EnhancedAnalysisContext {
+  sideEffects?: SideEffectContext;
+  errorBehavior?: ErrorBehaviorContext;
+  dataFlow?: DataFlowContext;
+  patterns?: PatternContext;
+}
+```
+
+### JustificationContext Extension
+
+The `JustificationContext` interface now includes an optional `analysisContext` field:
+
+```typescript
+interface JustificationContext {
+  // ... existing fields ...
+
+  /** Enhanced analysis context (Phase 1-4 results) */
+  analysisContext?: EnhancedAnalysisContext;
+}
+```
+
+### Integration Flow
+
+1. **Context Building** (ContextPropagator.buildContext):
+   - Standard context (parent, siblings, children, callers, callees)
+   - **NEW**: Calls `AnalysisContextBuilder.buildContext()` in parallel
+
+2. **Analysis Context Building** (AnalysisContextBuilder):
+   - Queries Phase 3 side-effect summary from `function_side_effect_summary`
+   - Queries Phase 1 error analysis from `function_error_analysis`
+   - Queries Phase 2 data flow cache from `data_flow_cache`
+   - Queries Phase 4 patterns from `has_pattern` + `design_pattern`
+
+3. **Prompt Generation** (generateFunctionPrompt, generateClassPrompt):
+   - Formats analysis context as "## Code Behavior Analysis" section
+   - Includes side effects, error handling, data flow, design patterns
+   - Adds task guidance to consider analysis in assessment
+
+### Prompt Enhancement Example
+
+Functions now receive enhanced prompts like:
+
+```markdown
+## Code Behavior Analysis
+
+### Side Effects
+- **Side effects detected**: 3
+- **Risk level**: medium
+- **Categories**: io-database, io-network
+- **Details**:
+  - Writes user data to database
+  - Sends HTTP request to auth service
+
+### Error Handling
+- May throw ValidationError, AuthenticationError that propagate to callers
+- **Error types**: ValidationError, AuthenticationError
+- **Errors propagated to callers**: ValidationError, AuthenticationError
+
+### Data Flow
+- Accesses external state; output affected by: userId, sessionToken
+- **Inputs affecting output**: userId, sessionToken
+
+### Design Patterns
+- **service** pattern: Role = `service` in "AuthService" (high confidence)
+- **repository** pattern: Role = `dependency` in "UserRepository" (high confidence)
+
+## Your Task
+Analyze this function and determine:
+1. What is the PURPOSE of this function?
+2. What BUSINESS VALUE does it provide?
+3. What FEATURE or domain does it belong to?
+4. Consider the code behavior analysis above (side effects, error handling, data flow, patterns) in your assessment.
+```
+
+### Enabling Enhanced Justification Context
+
+The enhanced analysis context is enabled by default. To disable:
+
+```typescript
+const propagator = new ContextPropagator(graphStore, {
+  includeAnalysisContext: false,  // Disable Phase 5 enhancements
+});
+```
+
+### Architecture Notes
+
+The analysis context builder follows the **decoupling philosophy**:
+
+1. **Interfaces first** - Uses existing Phase 1-4 schema types
+2. **Non-blocking** - Analysis context fetching is parallel with other context
+3. **Graceful degradation** - Missing analysis data returns undefined (no errors)
+4. **Configurable** - Each analysis type can be enabled/disabled independently
+
+### Benefits
+
+| Before (Phases 1-4) | After (Phase 5) |
+|---------------------|-----------------|
+| LLM sees: code, parents, siblings, callers | LLM sees: code, parents, siblings, callers + **behavior analysis** |
+| "Function does X" | "Function does X, has side effects (writes to DB), throws errors, participates in Repository pattern" |
+| Context: structural | Context: structural + semantic + behavioral |
+| Justification confidence: ~0.6 | Justification confidence: ~0.8 (projected)
