@@ -241,6 +241,14 @@ export function detectLanguage(filePath: string): string | null {
     ".yml": "yaml",
     ".md": "markdown",
     ".sql": "sql",
+    ".dart": "dart",
+    ".ex": "elixir",
+    ".exs": "elixir",
+    ".lua": "lua",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".toml": "toml",
   };
 
   return languageMap[ext] ?? null;

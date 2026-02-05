@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   FolderTree,
-  Brain,
+
   GitBranch,
   Search,
   Settings,
@@ -26,13 +26,7 @@ const navItems: NavItem[] = [
     path: '/explorer',
     description: 'Browse files and entities',
   },
-  {
-    id: 'knowledge',
-    label: 'Knowledge',
-    icon: <Brain className="w-5 h-5" />,
-    path: '/knowledge',
-    description: 'View all entities and relationships',
-  },
+
   {
     id: 'graph',
     label: 'Graph',
@@ -85,11 +79,10 @@ export function Sidebar() {
             <button
               key={item.id}
               onClick={() => handleNavClick(item)}
-              className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${
-                isActive
-                  ? 'bg-slate-700 text-white border-l-2 border-blue-500'
-                  : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200 border-l-2 border-transparent'
-              }`}
+              className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${isActive
+                ? 'bg-slate-700 text-white border-l-2 border-blue-500'
+                : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200 border-l-2 border-transparent'
+                }`}
               title={item.description}
             >
               <span

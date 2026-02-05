@@ -34,6 +34,7 @@ export interface JustificationRow {
   entity_type: string;
   name: string;
   file_path: string;
+  file_hash: string;
   purpose_summary: string;
   business_value: string;
   feature_context: string;
@@ -111,19 +112,19 @@ export class JustificationStorage {
     const row = this.toRow(justification);
 
     const query = `
-      ?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      ?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, category, domain, architectural_pattern,
         parent_justification_id, hierarchy_depth, clarification_pending, pending_questions,
         last_confirmed_by_user, confirmed_by_user_id, created_at, updated_at, version] <- [[
-          $id, $entity_id, $entity_type, $name, $file_path, $purpose_summary, $business_value,
+          $id, $entity_id, $entity_type, $name, $file_path, $file_hash, $purpose_summary, $business_value,
           $feature_context, $detailed_description, $tags, $inferred_from, $confidence_score,
           $confidence_level, $reasoning, $evidence_sources, $category, $domain, $architectural_pattern,
           $parent_justification_id, $hierarchy_depth, $clarification_pending, $pending_questions,
           $last_confirmed_by_user, $confirmed_by_user_id, $created_at, $updated_at, $version
         ]]
       :put justification {
-        id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, category, domain, architectural_pattern,
         parent_justification_id, hierarchy_depth, clarification_pending, pending_questions,
@@ -161,19 +162,19 @@ export class JustificationStorage {
 
         // 1. Store the justification node
         const query = `
-          ?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          ?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
             confidence_level, reasoning, evidence_sources, category, domain, architectural_pattern,
             parent_justification_id, hierarchy_depth, clarification_pending, pending_questions,
             last_confirmed_by_user, confirmed_by_user_id, created_at, updated_at, version] <- [[
-              $id, $entity_id, $entity_type, $name, $file_path, $purpose_summary, $business_value,
+              $id, $entity_id, $entity_type, $name, $file_path, $file_hash, $purpose_summary, $business_value,
               $feature_context, $detailed_description, $tags, $inferred_from, $confidence_score,
               $confidence_level, $reasoning, $evidence_sources, $category, $domain, $architectural_pattern,
               $parent_justification_id, $hierarchy_depth, $clarification_pending, $pending_questions,
               $last_confirmed_by_user, $confirmed_by_user_id, $created_at, $updated_at, $version
             ]]
           :put justification {
-            id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+            id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
             confidence_level, reasoning, evidence_sources, category, domain, architectural_pattern,
             parent_justification_id, hierarchy_depth, clarification_pending, pending_questions,
@@ -338,12 +339,12 @@ export class JustificationStorage {
    */
   async getByEntityId(entityId: string): Promise<EntityJustification | null> {
     const result = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -362,12 +363,12 @@ export class JustificationStorage {
    */
   async getById(id: string): Promise<EntityJustification | null> {
     const result = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -395,12 +396,12 @@ export class JustificationStorage {
       const idList = batch.map((id) => `"${id}"`).join(", ");
 
       const queryResult = await this.graphStore.query<JustificationRow>(
-        `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
           confirmed_by_user_id, created_at, updated_at, version] :=
-          *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+          *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
             feature_context, detailed_description, tags, inferred_from, confidence_score,
             confidence_level, reasoning, evidence_sources, parent_justification_id,
             hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -424,12 +425,12 @@ export class JustificationStorage {
     const result = new Map<string, EntityJustification>();
 
     const queryResult = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -449,12 +450,12 @@ export class JustificationStorage {
    */
   async getByFilePath(filePath: string): Promise<EntityJustification[]> {
     const result = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -489,12 +490,12 @@ export class JustificationStorage {
    */
   async getEntitiesNeedingClarification(): Promise<EntityJustification[]> {
     const result = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -585,12 +586,12 @@ export class JustificationStorage {
   async searchByText(query: string, limit: number = 50): Promise<EntityJustification[]> {
     // Use full-text search on purpose_summary and business_value
     const result = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -617,12 +618,12 @@ export class JustificationStorage {
    */
   async getChildren(parentJustificationId: string): Promise<EntityJustification[]> {
     const result = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -706,12 +707,12 @@ export class JustificationStorage {
     limit: number = 100
   ): Promise<EntityJustification[]> {
     const result = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -734,12 +735,12 @@ export class JustificationStorage {
     limit: number = 100
   ): Promise<EntityJustification[]> {
     const result = await this.graphStore.query<JustificationRow>(
-      `?[id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+      `?[id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
         feature_context, detailed_description, tags, inferred_from, confidence_score,
         confidence_level, reasoning, evidence_sources, parent_justification_id,
         hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
         confirmed_by_user_id, created_at, updated_at, version] :=
-        *justification{id, entity_id, entity_type, name, file_path, purpose_summary, business_value,
+        *justification{id, entity_id, entity_type, name, file_path, file_hash, purpose_summary, business_value,
           feature_context, detailed_description, tags, inferred_from, confidence_score,
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
@@ -968,6 +969,7 @@ export class JustificationStorage {
       entity_type: j.entityType,
       name: j.name,
       file_path: j.filePath,
+      file_hash: j.fileHash || "",
       purpose_summary: j.purposeSummary,
       business_value: j.businessValue,
       feature_context: j.featureContext,
@@ -1003,6 +1005,7 @@ export class JustificationStorage {
       entityType: row.entity_type as EntityJustification["entityType"],
       name: row.name,
       filePath: row.file_path,
+      fileHash: row.file_hash || "",
       purposeSummary: row.purpose_summary,
       businessValue: row.business_value,
       featureContext: row.feature_context,

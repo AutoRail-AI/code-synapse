@@ -31,6 +31,8 @@ export type {
   TypeScriptParserOptions,
 } from "./typescript-parser.js";
 
+export type { ParsedFileWithTree } from "../interfaces/IParser.js";
+
 export type {
   FunctionCall,
   FileCallGraph,
@@ -42,6 +44,7 @@ export type {
 
 import type { ProjectConfig } from "../../types/index.js";
 import type { UCEFile } from "../../types/uce.js";
+import type { ParsedFileWithTree } from "../interfaces/IParser.js";
 import { TypeScriptParser } from "./typescript-parser.js";
 import { readFileWithEncoding } from "../../utils/fs.js";
 
@@ -92,6 +95,18 @@ export class Parser {
   async parseFile(filePath: string): Promise<UCEFile> {
     const content = await readFileWithEncoding(filePath);
     return this.tsParser.parse(filePath, content);
+  }
+
+  /**
+   * Parses a single file and returns both UCE format and the parse tree.
+   * This is needed for call extraction which requires access to the raw AST.
+   *
+   * @param filePath - Absolute path to the file
+   * @returns Parsed file with UCE format, tree, and source code
+   */
+  async parseFileWithTree(filePath: string): Promise<ParsedFileWithTree> {
+    const content = await readFileWithEncoding(filePath);
+    return this.tsParser.parseWithTree(filePath, content);
   }
 
   /**

@@ -45,6 +45,7 @@ export const migration: Migration = {
         entity_type: String,
         name: String,
         file_path: String,
+        file_hash: String,
         purpose_summary: String,
         business_value: String,
         feature_context: String,
@@ -55,6 +56,9 @@ export const migration: Migration = {
         confidence_level: String,
         reasoning: String?,
         evidence_sources: Json,
+        category: String?,
+        domain: String?,
+        architectural_pattern: String?,
         parent_justification_id: String?,
         hierarchy_depth: Int,
         clarification_pending: Bool,
@@ -123,49 +127,10 @@ export const migration: Migration = {
     `, undefined, tx);
 
     // =========================================================================
-    // V14: Classification Layer (PascalCase to match storage code)
+    // V14: Classification Layer (Unified into Justification)
     // =========================================================================
 
-    await db.execute(`
-      :create EntityClassification {
-        id: String
-        =>
-        entity_id: String,
-        entity_type: String,
-        entity_name: String,
-        file_path: String,
-        category: String,
-        domain_metadata: Json?,
-        infrastructure_metadata: Json?,
-        confidence: Float,
-        classification_method: String,
-        reasoning: String,
-        indicators: Json,
-        related_entities: Json,
-        depends_on: Json,
-        used_by: Json,
-        classified_at: Int,
-        classified_by: String,
-        last_updated: Int?,
-        version: Int
-      }
-    `, undefined, tx);
-
-    await db.execute(`
-      :create HasClassification {
-        from_id: String,
-        to_id: String
-      }
-    `, undefined, tx);
-
-    await db.execute(`
-      :create ClassificationDependsOn {
-        from_id: String,
-        to_id: String
-        =>
-        dependency_type: String
-      }
-    `, undefined, tx);
+    // Note: EntityClassification logic merged into Justification table
 
     // =========================================================================
     // V15: Change Ledger & Adaptive Indexing (PascalCase to match storage code)
@@ -359,9 +324,107 @@ export const migration: Migration = {
         to_id: String
       }
     `, undefined, tx);
+
+    // =========================================================================
+    // V17: Ledger Compaction (PascalCase to match storage code)
+    // =========================================================================
+
+    await db.execute(`
+      :create CompactedLedgerEntry {
+        id: String
+        =>
+        session_id: String,
+        timestamp_start: String,
+        timestamp_end: String,
+        source: String,
+        intent_summary: String,
+        intent_category: String,
+        user_prompts: Json,
+        mcp_queries: Json,
+        total_mcp_queries: Int,
+        unique_tools_used: Json,
+        code_accessed: Json,
+        code_changes: Json,
+        semantic_impact: Json,
+        index_updates: Json,
+        memory_updates: Json,
+        memory_rules_applied: Json,
+        raw_event_ids: Json,
+        raw_event_count: Int,
+        confidence_score: Float,
+        completeness: Float,
+        correlated_sessions: Json,
+        git_commit_sha: String?,
+        git_branch: String?,
+        content_hash: String?
+      }
+    `, undefined, tx);
+
+    // =========================================================================
+    // V19: Persistent Developer Memory (PascalCase to match storage code)
+    // =========================================================================
+
+    await db.execute(`
+      :create ProjectMemoryRule {
+        id: String
+        =>
+        created_at: String,
+        updated_at: String,
+        scope: String,
+        scope_target: String?,
+        category: String,
+        trigger_type: String,
+        trigger_pattern: String,
+        trigger_description: String?,
+        rule_text: String,
+        rule_explanation: String?,
+        examples: Json,
+        source: String,
+        source_event_id: String?,
+        source_session_id: String?,
+        confidence: Float,
+        validation_count: Int,
+        violation_count: Int,
+        last_validated_at: String?,
+        last_violated_at: String?,
+        embedding: <F32; 384>?,
+        is_active: Bool,
+        deprecated_at: String?,
+        deprecated_reason: String?
+      }
+    `, undefined, tx);
+
+    // =========================================================================
+    // Extensions (LLM Cache, Vector Indices)
+    // =========================================================================
+
+    await db.execute(`
+      :create llm_cache {
+        cache_key: String
+        =>
+        result: Json,
+        timestamp: Int
+      }
+    `, undefined, tx);
+
+    // FunctionEmbedding - HNSW index on embedding vector
+    await db.execute(`
+      ::hnsw create function_embedding:embedding_hnsw {
+        dim: 384,
+        fields: [embedding],
+        m: 16,
+        ef_construction: 200
+      }
+    `, undefined, tx);
   },
 
   async down(db: GraphDatabase, tx: Transaction): Promise<void> {
+    // V19 tables
+    try { await db.execute(`::remove ProjectMemoryRule`, undefined, tx); } catch { /* ignore */ }
+
+    // V17 tables
+    try { await db.execute(`::remove CompactedLedgerEntry`, undefined, tx); } catch { /* ignore */ }
+
     // V15 relationships
     const v15Rels = ["SessionChange", "SessionQuery", "CorrelationChange", "CorrelationQuery", "ChangeAffected", "QueryReturned"];
     for (const rel of v15Rels) {
@@ -369,16 +432,16 @@ export const migration: Migration = {
     }
 
     // V15 tables
-    const v15Tables = ["IndexingPriority", "AdaptiveReindexRequest", "SemanticCorrelation", "ObservedChange", "ObservedQuery", "AdaptiveSession", "LedgerEntry"];
+    const v15Tables = ["IndexingPriority", "AdaptiveReindexRequest", "SemanticCorrelation", "ObservedChange", "ObservedQuery", "AdaptiveSession", "LedgerEntry", "llm_cache"];
     for (const table of v15Tables) {
       try { await db.execute(`::remove ${table}`, undefined, tx); } catch { /* ignore */ }
     }
 
-    // V14 tables
-    const v14Tables = ["ClassificationDependsOn", "HasClassification", "EntityClassification"];
-    for (const table of v14Tables) {
-      try { await db.execute(`::remove ${table}`, undefined, tx); } catch { /* ignore */ }
-    }
+    // Remove vector indices
+    try { await db.execute(`::remove function_embedding:embedding_hnsw`, undefined, tx); } catch { /* ignore */ }
+
+    // V14 tables - Note: Classification was unified into Justification,
+    // so no separate classification tables exist to remove
 
     // V13 tables
     const v13Tables = ["has_clarification", "justification_hierarchy", "has_justification", "project_context", "clarification_question", "justification"];

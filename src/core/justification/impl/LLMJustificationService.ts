@@ -245,10 +245,22 @@ export class LLMJustificationService implements IJustificationService {
     }
 
     // Filter entities that need justification
+    // Step 0: Get file hashes for incremental check
+    const entityFileHashes = await this.getEntityFileHashes(entityIds);
+
+    // Filter entities that need justification
     const toProcess = entityIds.filter((id) => {
       if (opts.force) return true;
       const existing_j = existing.get(id);
-      return !existing_j || existing_j.confidenceScore < opts.minConfidence!;
+      if (!existing_j) return true;
+
+      // Check for file hash mismatch (incremental update)
+      const currentHash = entityFileHashes.get(id);
+      if (currentHash && existing_j.fileHash !== currentHash) {
+        return true; // File changed, re-justify
+      }
+
+      return existing_j.confidenceScore < opts.minConfidence!;
     });
 
     result.stats.skipped = entityIds.length - toProcess.length;
@@ -631,6 +643,9 @@ export class LLMJustificationService implements IJustificationService {
       ? inferenceResult.parsed as Map<string, any>
       : parseBatchResponse(inferenceResult.parsed ?? inferenceResult.content);
 
+    // Get file hashes for all entities in batch
+    const fileHashes = await this.getFileHashes(entities.map(e => e.filePath));
+
     // Create justifications for each entity
     const justifications: EntityJustification[] = [];
     const now = Date.now();
@@ -705,6 +720,7 @@ export class LLMJustificationService implements IJustificationService {
           pendingQuestions: clarificationQuestions,
           createdAt: now,
           updatedAt: now,
+          fileHash: fileHashes.get(entity.filePath) || "",
           ...(await this.calculateDependencyMetrics(entity.id, entityType)),
         });
       } else {
@@ -740,6 +756,7 @@ export class LLMJustificationService implements IJustificationService {
           ),
           createdAt: now,
           updatedAt: now,
+          fileHash: fileHashes.get(entity.filePath) || "",
           ...(await this.calculateDependencyMetrics(entity.id, entityType)),
         });
       }
@@ -990,6 +1007,7 @@ export class LLMJustificationService implements IJustificationService {
       entityType,
       name: context.entity.name,
       filePath: context.entity.filePath,
+      fileHash: (await this.getFileHashes([context.entity.filePath])).get(context.entity.filePath) || "",
       purposeSummary: llmResponse.purposeSummary,
       businessValue: llmResponse.businessValue,
       featureContext: llmResponse.featureContext,
@@ -2261,6 +2279,74 @@ export class LLMJustificationService implements IJustificationService {
     } catch (fsError) {
       logger.error({ err: fsError }, "Failed to write to llm_failures.log");
     }
+  }
+
+  /**
+   * Bulk get file hashes for multiple entities (for incremental updates)
+   */
+  private async getEntityFileHashes(entityIds: string[]): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    if (entityIds.length === 0) return result;
+
+    // Process in chunks to avoid query limits
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < entityIds.length; i += BATCH_SIZE) {
+      const batch = entityIds.slice(i, i + BATCH_SIZE);
+      try {
+        const queryResult = await this.graphStore.query<{ id: string; hash: string }>(
+          `?[id, hash] :=
+            id in $entityIds,
+            (
+              (*function{id, fileId}, *file{id: fileId, hash}) or
+              (*class{id, fileId}, *file{id: fileId, hash}) or
+              (*interface{id, fileId}, *file{id: fileId, hash}) or
+              (*type_alias{id, fileId}, *file{id: fileId, hash}) or
+              (*variable{id, fileId}, *file{id: fileId, hash}) or
+              (*file{id, hash})
+            )`,
+          { entityIds: batch }
+        );
+
+        for (const row of queryResult.rows) {
+          if (row.hash) {
+            result.set(row.id, row.hash);
+          }
+        }
+      } catch (error) {
+        logger.warn({ error }, "Failed to fetch entity file hashes");
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Get hashes for file paths
+   */
+  private async getFileHashes(filePaths: string[]): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    if (filePaths.length === 0) return result;
+
+    const uniquePaths = [...new Set(filePaths)];
+    const BATCH_SIZE = 500;
+
+    for (let i = 0; i < uniquePaths.length; i += BATCH_SIZE) {
+      const batch = uniquePaths.slice(i, i + BATCH_SIZE);
+      try {
+        const queryResult = await this.graphStore.query<{ path: string; hash: string }>(
+          `?[path, hash] := *file{path, hash}, path in $paths`,
+          { paths: batch }
+        );
+
+        for (const row of queryResult.rows) {
+          if (row.hash) {
+            result.set(row.path, row.hash);
+          }
+        }
+      } catch (error) {
+        logger.warn({ error }, "Failed to fetch file hashes");
+      }
+    }
+    return result;
   }
 }
 

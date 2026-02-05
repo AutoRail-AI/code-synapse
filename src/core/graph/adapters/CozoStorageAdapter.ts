@@ -126,11 +126,7 @@ export class CozoStorageAdapter implements IStorageAdapter {
    * Register fields that should be deserialized as JSON
    */
   private registerJsonFields(): void {
-    // EntityClassification
-    this.jsonFields.set("EntityClassification", new Set([
-      "indicators", "relatedEntities", "dependsOn", "usedBy",
-      "domainMetadata", "infrastructureMetadata"
-    ]));
+    // Note: EntityClassification was merged into Justification table
 
     // LedgerEntry
     this.jsonFields.set("LedgerEntry", new Set([
@@ -142,9 +138,17 @@ export class CozoStorageAdapter implements IStorageAdapter {
       "tags", "pendingQuestions", "evidenceSources"
     ]));
 
-    // ProjectMemoryRule
+    // CompactedLedgerEntry (V17)
+    this.jsonFields.set("CompactedLedgerEntry", new Set([
+      "user_prompts", "mcp_queries", "unique_tools_used",
+      "code_accessed", "code_changes", "semantic_impact",
+      "index_updates", "memory_updates", "memory_rules_applied",
+      "raw_event_ids", "correlated_sessions"
+    ]));
+
+    // ProjectMemoryRule (V19)
     this.jsonFields.set("ProjectMemoryRule", new Set([
-      "tags", "appliedToEntities", "examples"
+      "examples"
     ]));
   }
 

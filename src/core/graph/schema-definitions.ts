@@ -20,7 +20,7 @@
  * Current schema version. Increment when making breaking changes.
  * Used by the migration system to track schema evolution.
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 4;
 
 // =============================================================================
 // Property Type Definitions
@@ -252,6 +252,7 @@ export const SCHEMA = {
       entityType: { type: "STRING" }, // 'file' | 'function' | 'class' | 'interface' | 'module'
       name: { type: "STRING", index: true },
       filePath: { type: "STRING" },
+      fileHash: { type: "STRING" }, // For incremental updates - invalidates justification if file content changes
       purposeSummary: { type: "STRING", fulltext: true },
       businessValue: { type: "STRING", fulltext: true },
       featureContext: { type: "STRING", index: true },
@@ -311,36 +312,7 @@ export const SCHEMA = {
       updatedAt: { type: "TIMESTAMP" },
     },
 
-    // =========================================================================
-    // Classification Layer (V14) - Domain vs Infrastructure
-    // =========================================================================
 
-    /**
-     * EntityClassification - stores domain/infrastructure classification
-     */
-    EntityClassification: {
-      id: { type: "STRING", primary: true },
-      entityId: { type: "STRING", index: true },
-      entityType: { type: "STRING" }, // 'function' | 'class' | 'interface' | 'type' | 'variable' | 'module' | 'file'
-      entityName: { type: "STRING", index: true },
-      filePath: { type: "STRING", index: true },
-      category: { type: "STRING", index: true }, // 'domain' | 'infrastructure' | 'unknown'
-      // Domain metadata (JSON for flexibility)
-      domainMetadata: { type: "JSON", nullable: true },
-      // Infrastructure metadata (JSON for flexibility)
-      infrastructureMetadata: { type: "JSON", nullable: true },
-      confidence: { type: "FLOAT" },
-      classificationMethod: { type: "STRING" }, // 'llm' | 'pattern' | 'dependency' | 'heuristic' | 'user'
-      reasoning: { type: "STRING", fulltext: true },
-      indicators: { type: "JSON" }, // string[]
-      relatedEntities: { type: "JSON" }, // string[]
-      dependsOn: { type: "JSON" }, // string[]
-      usedBy: { type: "JSON" }, // string[]
-      classifiedAt: { type: "TIMESTAMP" },
-      classifiedBy: { type: "STRING" },
-      lastUpdated: { type: "TIMESTAMP", nullable: true },
-      version: { type: "INT32" },
-    },
 
     // =========================================================================
     // Change Ledger (V14) - Observability Layer
@@ -773,6 +745,41 @@ export const SCHEMA = {
       filePath: { type: "STRING", index: true },
       evidenceJson: { type: "JSON" }, // string[] - why this entity has this role
     },
+
+    // =========================================================================
+    // Persistent Developer Memory (V19)
+    // =========================================================================
+
+    /**
+     * ProjectMemoryRule - learned coding rules and conventions
+     * Part of V19: Persistent Developer Memory
+     */
+    ProjectMemoryRule: {
+      id: { type: "STRING", primary: true },
+      createdAt: { type: "STRING", index: true },
+      updatedAt: { type: "STRING", index: true },
+      scope: { type: "STRING", index: true }, // 'global' | 'module' | 'domain' | 'file' | 'entity'
+      scopeTarget: { type: "STRING", nullable: true }, // Module path, domain name, etc.
+      category: { type: "STRING", index: true }, // 'naming' | 'structure' | 'pattern' | 'anti-pattern' | 'style' | 'dependency' | 'testing' | 'documentation'
+      triggerType: { type: "STRING", index: true }, // 'file-pattern' | 'entity-type' | 'symbol-name' | 'import-pattern' | 'domain' | 'always'
+      triggerPattern: { type: "STRING" }, // Pattern to match
+      triggerDescription: { type: "STRING", nullable: true },
+      ruleText: { type: "STRING", fulltext: true }, // Human-readable rule
+      ruleExplanation: { type: "STRING", nullable: true }, // Why this rule exists
+      examples: { type: "JSON" }, // { bad: string, good: string, explanation?: string }[]
+      source: { type: "STRING", index: true }, // 'user-correction' | 'build-failure' | 'manual-refactor' | 'explicit-instruction' | 'inferred-pattern'
+      sourceEventId: { type: "STRING", nullable: true }, // Link to ledger event
+      sourceSessionId: { type: "STRING", nullable: true },
+      confidence: { type: "FLOAT", index: true }, // 0-1 confidence score
+      validationCount: { type: "INT32" }, // Times rule was validated
+      violationCount: { type: "INT32" }, // Times rule was violated
+      lastValidatedAt: { type: "STRING", nullable: true },
+      lastViolatedAt: { type: "STRING", nullable: true },
+      embedding: { type: "VECTOR_384", nullable: true }, // Semantic search embedding
+      isActive: { type: "BOOLEAN", index: true },
+      deprecatedAt: { type: "STRING", nullable: true },
+      deprecatedReason: { type: "STRING", nullable: true },
+    },
   },
 
   relationships: {
@@ -796,7 +803,7 @@ export const SCHEMA = {
       properties: {
         lineNumber: { type: "INT32" },
         isDirectCall: { type: "BOOLEAN" },
-        isAsync: { type: "BOOLEAN" },
+        isAwait: { type: "BOOLEAN" },
       },
     },
 
@@ -929,31 +936,17 @@ export const SCHEMA = {
     },
 
     // =========================================================================
-    // Classification Relationships (V14)
+    // NOTE: Classification was unified into Justification table (V14)
+    // The following relationships were removed as EntityClassification
+    // no longer exists as a separate node:
+    // - HAS_CLASSIFICATION
+    // - CLASSIFICATION_DEPENDS_ON
+    // Classification fields (category, domain, architecturalPattern) are
+    // now stored directly in the Justification node.
     // =========================================================================
 
-    /**
-     * HAS_CLASSIFICATION - Entity has a domain/infrastructure classification
-     */
-    HAS_CLASSIFICATION: {
-      from: ["File", "Function", "Class", "Interface", "TypeAlias", "Variable", "Module"],
-      to: ["EntityClassification"],
-      properties: {},
-    },
-
-    /**
-     * CLASSIFICATION_DEPENDS_ON - Classification depends on another entity
-     */
-    CLASSIFICATION_DEPENDS_ON: {
-      from: ["EntityClassification"],
-      to: ["EntityClassification"],
-      properties: {
-        dependencyType: { type: "STRING" }, // 'imports' | 'calls' | 'extends' | 'uses'
-      },
-    },
-
     // =========================================================================
-    // Adaptive Indexing Relationships (V14)
+    // Adaptive Indexing Relationships (V15)
     // =========================================================================
 
     /**

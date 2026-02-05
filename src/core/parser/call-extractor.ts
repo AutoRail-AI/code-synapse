@@ -436,12 +436,26 @@ export class CallExtractor {
 
   /**
    * Walks the syntax tree, calling the visitor for each node.
+   * Uses iterative approach to avoid stack overflow on deep ASTs.
    */
   private walkNode(node: SyntaxNode, visitor: (node: SyntaxNode) => boolean): void {
-    if (!visitor(node)) return;
+    const stack: SyntaxNode[] = [node];
 
-    for (const child of node.children) {
-      this.walkNode(child, visitor);
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+
+      // If visitor returns false, don't process children
+      if (!visitor(current)) {
+        continue;
+      }
+
+      // Add children in reverse order so they're processed in original order
+      for (let i = current.children.length - 1; i >= 0; i--) {
+        const child = current.children[i];
+        if (child) {
+          stack.push(child);
+        }
+      }
     }
   }
 

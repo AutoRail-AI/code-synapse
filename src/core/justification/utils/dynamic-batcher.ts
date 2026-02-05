@@ -157,14 +157,23 @@ export function getTokenBatchConfig(
     return { ...DEFAULT_TOKEN_BATCH_CONFIG, ...overrides };
   }
 
+  // 500k is strict safety limit for standard 1M context
+  const MAX_CONTEXT_TOKENS = 500000;
+  // 32k is standard output limit for newer models (Gemini 1.5 Pro) regarding single req
+  const MAX_OUTPUT_TOKENS = 32000;
+
+  // Hard cap to prevent massive parallel batches regardless of token/context fit
+  // Increased to 20 to utilize more context as requested
+  const SAFE_BATCH_SIZE_HARD_LIMIT = 20;
+
   const config: TokenBatchConfig = {
-    // Reduce capacity to 50% to prevent timeouts and truncation
-    maxContextTokens: Math.floor(modelConfig.contextWindow * 0.5),
-    maxOutputTokens: Math.floor(modelConfig.maxOutputTokens * 0.5),
+    // Increase capacity to 80-90% to maximize throughput
+    maxContextTokens: Math.floor(Math.min(modelConfig.contextWindow * 0.8, MAX_CONTEXT_TOKENS)),
+    maxOutputTokens: Math.floor(Math.min(modelConfig.maxOutputTokens * 0.9, MAX_OUTPUT_TOKENS)),
     systemPromptTokens: 500,
-    outputTokensPerEntity: 500,
-    safetyMargin: 0.80, // Increased to 80% as requested by user
-    maxEntitiesPerBatch: 25, // Hard limit to prevent massive batches
+    outputTokensPerEntity: 1024, // Increased to 1024 as requested to ensure maximum detail
+    safetyMargin: 0.85, // Utilizing 85% of capacity (15% safety margin)
+    maxEntitiesPerBatch: SAFE_BATCH_SIZE_HARD_LIMIT,
   };
 
   logger.debug(

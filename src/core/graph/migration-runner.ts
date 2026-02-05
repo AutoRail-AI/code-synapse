@@ -196,12 +196,26 @@ export class MigrationRunner {
         appliedMigrations,
       };
     } catch (error) {
+      // Handle various error types from CozoDB
+      let errorObj: Error;
+      if (error instanceof Error) {
+        errorObj = error;
+      } else if (typeof error === 'object' && error !== null) {
+        // CozoDB errors may be plain objects with 'message' or 'display' fields
+        const errObj = error as Record<string, unknown>;
+        const errMsg = 'message' in errObj ? String(errObj.message) :
+                       'display' in errObj ? String(errObj.display) :
+                       JSON.stringify(error);
+        errorObj = new Error(errMsg);
+      } else {
+        errorObj = new Error(String(error));
+      }
       return {
         success: false,
         fromVersion: currentVersion,
         toVersion: await this.getCurrentVersion(),
         appliedMigrations,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: errorObj,
       };
     }
   }

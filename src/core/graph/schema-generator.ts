@@ -269,12 +269,11 @@ export function generateCozoScript(): string[] {
  * Excluding them from generateExecutableCozoScript() to avoid naming conflicts.
  */
 const V13_PLUS_TABLES = new Set([
-  // V13 - Justification Layer
+  // V13 - Justification Layer (includes unified classification fields)
   "Justification",
   "ClarificationQuestion",
   "ProjectContext",
-  // V14 - Classification Layer
-  "EntityClassification",
+  // Note: EntityClassification was merged into Justification table
   // V15 - Ledger & Adaptive Indexing
   "LedgerEntry",
   "AdaptiveSession",
@@ -283,6 +282,10 @@ const V13_PLUS_TABLES = new Set([
   "SemanticCorrelation",
   "AdaptiveReindexRequest",
   "IndexingPriority",
+  // V17 - Ledger Compaction (uses PascalCase table name)
+  "CompactedLedgerEntry",
+  // V19 - Persistent Developer Memory (uses PascalCase table name)
+  "ProjectMemoryRule",
 ]);
 
 /**
@@ -293,9 +296,8 @@ const V13_PLUS_RELATIONSHIPS = new Set([
   "HAS_JUSTIFICATION",
   "JUSTIFICATION_HIERARCHY",
   "HAS_CLARIFICATION",
-  // V14 - Classification Layer
-  "HAS_CLASSIFICATION",
-  "CLASSIFICATION_DEPENDS_ON",
+  // Note: HAS_CLASSIFICATION and CLASSIFICATION_DEPENDS_ON were removed
+  // as classification is now unified into Justification
   // V15 - Adaptive Indexing
   "QUERY_RETURNED",
   "CHANGE_AFFECTED",

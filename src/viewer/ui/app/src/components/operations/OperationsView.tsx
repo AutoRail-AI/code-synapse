@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Settings,
   Brain,
@@ -9,6 +9,7 @@ import {
   Loader2,
   FolderSync,
   Cpu,
+  Clock,
 } from 'lucide-react';
 import {
   triggerReindex,
@@ -22,7 +23,8 @@ import {
 interface OperationStatus {
   status: 'idle' | 'running' | 'success' | 'error';
   message?: string;
-  startTime?: Date;
+  startTime?: number;
+  endTime?: number;
 }
 
 export function OperationsView() {
@@ -58,48 +60,55 @@ export function OperationsView() {
       .catch(console.error);
   }, []);
 
-  const handleReindex = async () => {
-    setReindexStatus({ status: 'running', startTime: new Date() });
+  const handleReindex = useCallback(async () => {
+    setReindexStatus({ status: 'running', startTime: Date.now() });
     try {
       const result = await triggerReindex();
-      setReindexStatus({ status: 'success', message: result.message });
+      setReindexStatus({ status: 'success', message: result.message, endTime: Date.now() });
+      // Refresh all stats after reindex
+      getJustificationStats().then(setJustStats).catch(console.error);
+      getClassificationStats().then(setClassStats).catch(console.error);
     } catch (err) {
       setReindexStatus({
         status: 'error',
         message: err instanceof Error ? err.message : 'Unknown error',
+        endTime: Date.now(),
       });
     }
-  };
+  }, []);
 
-  const handleJustify = async () => {
-    setJustifyStatus({ status: 'running', startTime: new Date() });
+  const handleJustify = useCallback(async () => {
+    setJustifyStatus({ status: 'running', startTime: Date.now() });
     try {
       const result = await triggerJustify();
-      setJustifyStatus({ status: 'success', message: result.message });
+      setJustifyStatus({ status: 'success', message: result.message, endTime: Date.now() });
       // Refresh stats
       getJustificationStats().then(setJustStats).catch(console.error);
+      getClassificationStats().then(setClassStats).catch(console.error);
     } catch (err) {
       setJustifyStatus({
         status: 'error',
         message: err instanceof Error ? err.message : 'Unknown error',
+        endTime: Date.now(),
       });
     }
-  };
+  }, []);
 
-  const handleClassify = async () => {
-    setClassifyStatus({ status: 'running', startTime: new Date() });
+  const handleClassify = useCallback(async () => {
+    setClassifyStatus({ status: 'running', startTime: Date.now() });
     try {
       const result = await triggerClassify();
-      setClassifyStatus({ status: 'success', message: result.message });
+      setClassifyStatus({ status: 'success', message: result.message, endTime: Date.now() });
       // Refresh stats
       getClassificationStats().then(setClassStats).catch(console.error);
     } catch (err) {
       setClassifyStatus({
         status: 'error',
         message: err instanceof Error ? err.message : 'Unknown error',
+        endTime: Date.now(),
       });
     }
-  };
+  }, []);
 
   return (
     <div className="h-full overflow-auto custom-scrollbar">
@@ -280,6 +289,30 @@ function OperationCard({
   onRun: () => void;
 }) {
   const isRunning = status.status === 'running';
+  const [elapsed, setElapsed] = useState(0);
+
+  // Update elapsed time while running
+  useEffect(() => {
+    if (status.status !== 'running' || !status.startTime) {
+      if (status.startTime && status.endTime) {
+        setElapsed(Math.floor((status.endTime - status.startTime) / 1000));
+      }
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - status.startTime!) / 1000));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [status.status, status.startTime, status.endTime]);
+
+  const formatTime = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${secs}s`;
+  };
 
   return (
     <div className="panel">
@@ -294,28 +327,43 @@ function OperationCard({
 
         {status.status !== 'idle' && (
           <div
-            className={`text-sm p-2 rounded mb-3 ${
+            className={`text-sm p-3 rounded mb-3 ${
               status.status === 'running'
-                ? 'bg-blue-500/10 text-blue-400'
+                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                 : status.status === 'success'
-                  ? 'bg-green-500/10 text-green-400'
-                  : 'bg-red-500/10 text-red-400'
+                  ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
             }`}
           >
-            <div className="flex items-center gap-2">
-              {status.status === 'running' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : status.status === 'success' ? (
-                <CheckCircle className="w-4 h-4" />
-              ) : (
-                <AlertCircle className="w-4 h-4" />
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {status.status === 'running' ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : status.status === 'success' ? (
+                  <CheckCircle className="w-4 h-4" />
+                ) : (
+                  <AlertCircle className="w-4 h-4" />
+                )}
+                <span>
+                  {status.status === 'running'
+                    ? 'Processing...'
+                    : status.message || (status.status === 'success' ? 'Completed' : 'Failed')}
+                </span>
+              </div>
+              {(status.status === 'running' || status.endTime) && (
+                <div className="flex items-center gap-1 text-xs opacity-75">
+                  <Clock className="w-3 h-3" />
+                  {formatTime(elapsed)}
+                </div>
               )}
-              <span>
-                {status.status === 'running'
-                  ? 'Running...'
-                  : status.message || (status.status === 'success' ? 'Completed' : 'Failed')}
-              </span>
             </div>
+
+            {/* Progress bar animation for running state */}
+            {status.status === 'running' && (
+              <div className="mt-2 h-1 bg-blue-900/50 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 rounded-full animate-progress" />
+              </div>
+            )}
           </div>
         )}
 

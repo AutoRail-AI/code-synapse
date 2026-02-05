@@ -117,28 +117,28 @@ const FRAMEWORK_DETECTION: Array<{
   packages: string[];
   priority: number;
 }> = [
-  // Full-stack frameworks (higher priority)
-  { framework: "nextjs", packages: ["next"], priority: 10 },
-  { framework: "remix", packages: ["@remix-run/react", "@remix-run/node"], priority: 10 },
-  { framework: "nuxt", packages: ["nuxt", "nuxt3"], priority: 10 },
-  { framework: "astro", packages: ["astro"], priority: 10 },
+    // Full-stack frameworks (higher priority)
+    { framework: "nextjs", packages: ["next"], priority: 10 },
+    { framework: "remix", packages: ["@remix-run/react", "@remix-run/node"], priority: 10 },
+    { framework: "nuxt", packages: ["nuxt", "nuxt3"], priority: 10 },
+    { framework: "astro", packages: ["astro"], priority: 10 },
 
-  // Frontend frameworks
-  { framework: "react", packages: ["react", "react-dom"], priority: 5 },
-  { framework: "vue", packages: ["vue"], priority: 5 },
-  { framework: "angular", packages: ["@angular/core"], priority: 5 },
-  { framework: "svelte", packages: ["svelte"], priority: 5 },
+    // Frontend frameworks
+    { framework: "react", packages: ["react", "react-dom"], priority: 5 },
+    { framework: "vue", packages: ["vue"], priority: 5 },
+    { framework: "angular", packages: ["@angular/core"], priority: 5 },
+    { framework: "svelte", packages: ["svelte"], priority: 5 },
 
-  // Backend frameworks
-  { framework: "nestjs", packages: ["@nestjs/core"], priority: 8 },
-  { framework: "express", packages: ["express"], priority: 3 },
-  { framework: "fastify", packages: ["fastify"], priority: 3 },
-  { framework: "koa", packages: ["koa"], priority: 3 },
-  { framework: "hono", packages: ["hono"], priority: 3 },
+    // Backend frameworks
+    { framework: "nestjs", packages: ["@nestjs/core"], priority: 8 },
+    { framework: "express", packages: ["express"], priority: 3 },
+    { framework: "fastify", packages: ["fastify"], priority: 3 },
+    { framework: "koa", packages: ["koa"], priority: 3 },
+    { framework: "hono", packages: ["hono"], priority: 3 },
 
-  // Desktop
-  { framework: "electron", packages: ["electron"], priority: 6 },
-];
+    // Desktop
+    { framework: "electron", packages: ["electron"], priority: 6 },
+  ];
 
 /**
  * Source patterns by framework
@@ -206,9 +206,9 @@ const SOURCE_PATTERNS: Record<DetectedFramework, string[]> = {
     "renderer/**/*.{ts,tsx,js,jsx}",
   ],
   unknown: [
-    "src/**/*.{ts,tsx,js,jsx}",
-    "lib/**/*.{ts,tsx,js,jsx}",
-    "**/*.{ts,tsx,js,jsx}",
+    "src/**/*.{ts,tsx,js,jsx,py,go,rs,java,c,cpp,h,hpp,cs,kt,swift,rb,php,scala,dart,ex,exs,lua,sh}",
+    "lib/**/*.{ts,tsx,js,jsx,py,go,rs,java,c,cpp,h,hpp,cs,kt,swift,rb,php,scala,dart,ex,exs,lua,sh}",
+    "**/*.{ts,tsx,js,jsx,py,go,rs,java,c,cpp,h,hpp,cs,kt,swift,rb,php,scala,dart,ex,exs,lua,sh,json,yaml,yml,toml}",
   ],
 };
 
@@ -359,7 +359,7 @@ export const DEFAULT_IGNORE_PATTERNS = [
  * ```
  */
 export class ProjectDetector {
-  constructor(private rootPath: string) {}
+  constructor(private rootPath: string) { }
 
   /**
    * Detects the project configuration.

@@ -2,7 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
 import { ExplorerView } from './components/explorer/ExplorerView';
-import { KnowledgeView } from './components/knowledge/KnowledgeView';
+
 import { GraphView } from './components/graph/GraphView';
 import { SearchView } from './components/search/SearchView';
 import { OperationsView } from './components/operations/OperationsView';
@@ -24,7 +24,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/explorer" replace />} />
             <Route path="/explorer/*" element={<ExplorerView />} />
-            <Route path="/knowledge/*" element={<KnowledgeView />} />
+
             <Route path="/graph/*" element={<GraphView />} />
             <Route path="/search/*" element={<SearchView />} />
             <Route path="/operations/*" element={<OperationsView />} />

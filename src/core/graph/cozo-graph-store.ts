@@ -33,7 +33,7 @@ import { migrations } from "./migrations/index.js";
  * but CozoDB doesn't support multi-statement transactions with rollback anyway.
  */
 class CozoTransaction implements ITransaction {
-  constructor(private db: GraphDatabase) {}
+  constructor(private db: GraphDatabase) { }
 
   async writeBatch(batch: CozoBatch): Promise<void> {
     // Execute immediately - no tx accumulation due to param limitations
@@ -110,14 +110,55 @@ export class CozoGraphStore implements IGraphStore {
 
     await this.db.initialize();
 
-    // Run migrations if enabled
-    if (this.config.runMigrations) {
-      const runner = new MigrationRunner(this.db);
-      runner.registerMigrations(migrations);
-      await runner.migrate();
+    // Check if schema exists by looking for a core table
+    const hasSchema = await this.db.relationExists("file");
+
+    if (!hasSchema) {
+      // Create all tables directly (simpler than migrations for development)
+      await this.createSchema();
     }
 
     this.initialized = true;
+  }
+
+  /**
+   * Creates all schema tables directly.
+   * Used for fresh database initialization during development.
+   */
+  private async createSchema(): Promise<void> {
+    const { migration: initialMigration } = await import("./migrations/001_initial_schema.js");
+    const { SCHEMA_VERSION } = await import("./schema-definitions.js");
+
+    // Create schema_version table first
+    await this.db.execute(`
+      :create schema_version {
+        id: String
+        =>
+        version: Int,
+        updated_at: Float
+      }
+    `);
+
+    // Initialize version
+    await this.db.execute(`
+      ?[id, version, updated_at] <- [['version', ${SCHEMA_VERSION}, now()]]
+      :put schema_version {id => version, updated_at}
+    `);
+
+    // Use the migration's up() function which creates all tables
+    const tx = { id: "init", active: false, _statements: [] as string[] };
+    await initialMigration.up(this.db, tx);
+
+    // Create vector indices
+    try {
+      await this.db.execute(`
+        ::hnsw create function_embedding:embedding_hnsw {
+          embedding
+        }
+      `);
+    } catch (e) {
+      // Ignore if already exists
+    }
   }
 
   async close(): Promise<void> {

@@ -7,7 +7,7 @@ import ora from "ora";
 import {
   fileExists,
   getConfigPath,
-  
+
   getGraphDbPath,
   readJson,
   createLogger,
@@ -110,7 +110,15 @@ export async function indexCommand(options: IndexOptions): Promise<void> {
 
     // Run indexing
     spinner.text = "Scanning project files...";
-    const result = await indexer.indexProject();
+
+    let result;
+    if (options.force) {
+      logger.info("Force flag detected, running full re-index");
+      result = await indexer.indexProject();
+    } else {
+      logger.info("Running incremental index");
+      result = await indexer.indexProjectIncremental();
+    }
 
     const duration = (Date.now() - startTime) / 1000;
 

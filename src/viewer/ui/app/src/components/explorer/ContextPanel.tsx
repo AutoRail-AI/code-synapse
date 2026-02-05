@@ -11,29 +11,40 @@ import {
 import { EntitySummary, getDependencyGraph, GraphData } from '../../api/client';
 
 interface ContextPanelProps {
-    filePath: string | null;
+    path: string | null;
     entities: EntitySummary[];
 }
 
-type Tab = 'ast' | 'deps' | 'knowledge';
+type Tab = 'ast' | 'deps' | 'knowledge' | 'stats';
 
-export function ContextPanel({ filePath, entities }: ContextPanelProps) {
-    const [activeTab, setActiveTab] = useState<Tab>('ast');
+export function ContextPanel({ path, entities }: ContextPanelProps) {
+    const isFolder = path ? !path.split('/').pop()?.includes('.') : false;
+    const [activeTab, setActiveTab] = useState<Tab>(isFolder ? 'stats' : 'ast');
+
+    // Switch to stats tab if folder is selected
+    useEffect(() => {
+        if (isFolder) {
+            setActiveTab('stats');
+        } else if (activeTab === 'stats') {
+            setActiveTab('ast');
+        }
+    }, [isFolder]);
+
     const [dependencyData, setDependencyData] = useState<GraphData | null>(null);
     const [loadingDeps, setLoadingDeps] = useState(false);
 
     // Load dependencies when tab is active and file changes
     useEffect(() => {
-        if (activeTab === 'deps' && filePath) {
+        if (activeTab === 'deps' && path && !isFolder) {
             setLoadingDeps(true);
-            getDependencyGraph(filePath)
+            getDependencyGraph(path)
                 .then(setDependencyData)
                 .catch(console.error)
                 .finally(() => setLoadingDeps(false));
         }
-    }, [activeTab, filePath]);
+    }, [activeTab, path, isFolder]);
 
-    if (!filePath) {
+    if (!path) {
         return (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm p-4 text-center">
                 Select a file to view context
@@ -45,24 +56,36 @@ export function ContextPanel({ filePath, entities }: ContextPanelProps) {
         <div className="h-full flex flex-col bg-slate-900 border-l border-slate-700">
             {/* Tabs */}
             <div className="flex border-b border-slate-700">
-                <TabButton
-                    active={activeTab === 'ast'}
-                    onClick={() => setActiveTab('ast')}
-                    icon={<Network className="w-4 h-4" />}
-                    label="Structure"
-                />
-                <TabButton
-                    active={activeTab === 'deps'}
-                    onClick={() => setActiveTab('deps')}
-                    icon={<Share2 className="w-4 h-4" />}
-                    label="Deps"
-                />
-                <TabButton
-                    active={activeTab === 'knowledge'}
-                    onClick={() => setActiveTab('knowledge')}
-                    icon={<Lightbulb className="w-4 h-4" />}
-                    label="Insights"
-                />
+                {!isFolder && (
+                    <>
+                        <TabButton
+                            active={activeTab === 'ast'}
+                            onClick={() => setActiveTab('ast')}
+                            icon={<Network className="w-4 h-4" />}
+                            label="Structure"
+                        />
+                        <TabButton
+                            active={activeTab === 'deps'}
+                            onClick={() => setActiveTab('deps')}
+                            icon={<Share2 className="w-4 h-4" />}
+                            label="Deps"
+                        />
+                        <TabButton
+                            active={activeTab === 'knowledge'}
+                            onClick={() => setActiveTab('knowledge')}
+                            icon={<Lightbulb className="w-4 h-4" />}
+                            label="Insights"
+                        />
+                    </>
+                )}
+                {isFolder && (
+                    <TabButton
+                        active={activeTab === 'stats'}
+                        onClick={() => setActiveTab('stats')}
+                        icon={<Layers className="w-4 h-4" />}
+                        label="Overview"
+                    />
+                )}
             </div>
 
             {/* Content */}
@@ -70,6 +93,7 @@ export function ContextPanel({ filePath, entities }: ContextPanelProps) {
                 {activeTab === 'ast' && <StructureView entities={entities} />}
                 {activeTab === 'deps' && <DependenciesView data={dependencyData} loading={loadingDeps} />}
                 {activeTab === 'knowledge' && <InsightsView entities={entities} />}
+                {activeTab === 'stats' && <StatsView entities={entities} />}
             </div>
         </div>
     );
@@ -80,8 +104,8 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
         <button
             onClick={onClick}
             className={`flex-1 flex items-center justify-center gap-2 py-3 text-xs font-medium border-b-2 transition-colors ${active
-                    ? 'border-blue-500 text-blue-400 bg-slate-800/50'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                ? 'border-blue-500 text-blue-400 bg-slate-800/50'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                 }`}
         >
             {icon}
@@ -167,6 +191,63 @@ function InsightsView({ entities }: { entities: EntitySummary[] }) {
                     </div>
                 </div>
             ))}
+        </div>
+    );
+}
+
+function StatsView({ entities }: { entities: EntitySummary[] }) {
+    const byKind = entities.reduce((acc, e) => {
+        acc[e.kind] = (acc[e.kind] || 0) + 1;
+        return acc;
+    }, {} as Record<string, number>);
+
+    const byClass = entities.reduce((acc, e) => {
+        const key = e.classification || 'Unclassified';
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+    }, {} as Record<string, number>);
+
+    return (
+        <div className="p-4 space-y-6">
+            <div>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Folder Stats</h3>
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-sm text-slate-300">Total Entities</span>
+                        <span className="text-lg font-bold text-white">{entities.length}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">By Type</h3>
+                <div className="space-y-2">
+                    {Object.entries(byKind).map(([kind, count]) => (
+                        <div key={kind} className="flex items-center justify-between text-sm">
+                            <span className="text-slate-400 capitalize flex items-center gap-2">
+                                <EntityIcon kind={kind} />
+                                {kind}
+                            </span>
+                            <span className="text-slate-200">{count}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Distribution</h3>
+                <div className="space-y-2">
+                    {Object.entries(byClass).map(([cls, count]) => (
+                        <div key={cls} className="flex items-center justify-between text-sm">
+                            <span className={`px-2 py-0.5 rounded text-xs ${cls === 'domain' ? 'bg-indigo-900/50 text-indigo-300' : 'text-slate-400'
+                                }`}>
+                                {cls}
+                            </span>
+                            <span className="text-slate-200">{count}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
         </div>
     );
 }

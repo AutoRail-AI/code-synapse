@@ -34,10 +34,8 @@ import {
 import {
   getAllProviderIds,
 } from "../../core/models/Registry.js";
-import type { ModelVendor } from "../../core/models/interfaces/IModel.js";
 import {
   getProviderDisplay,
-  formatProviderName,
 } from "../provider-display.js";
 
 const logger = createLogger("config");

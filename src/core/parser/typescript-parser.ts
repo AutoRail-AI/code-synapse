@@ -10,7 +10,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { LanguageParser, UCEFile } from "../../types/uce.js";
-import type { IParser } from "../interfaces/IParser.js";
+import type { IParser, ParsedFileWithTree } from "../interfaces/IParser.js";
 import { ParserManager, type SupportedLanguage } from "./parser-manager.js";
 import { ASTTransformer, type TransformOptions } from "./ast-transformer.js";
 
@@ -25,6 +25,9 @@ export interface TypeScriptParserOptions {
   /** AST transformation options */
   transformOptions?: TransformOptions;
 }
+
+// Re-export ParsedFileWithTree from the interface
+export type { ParsedFileWithTree } from "../interfaces/IParser.js";
 
 // =============================================================================
 // TypeScript Parser Class
@@ -112,9 +115,32 @@ export class TypeScriptParser implements IParser, LanguageParser {
   }
 
   /**
+   * Parses a file from disk and returns both UCE format and the parse tree.
+   * Implements IParser.parseFileWithTree()
+   */
+  async parseFileWithTree(filePath: string): Promise<ParsedFileWithTree> {
+    this.ensureInitialized();
+
+    // Read file content
+    const content = await fs.readFile(filePath, "utf-8");
+
+    // Use parseWithTree to get both UCE and tree
+    return this.parseWithTree(filePath, content);
+  }
+
+  /**
    * Parses a source file into UCE format.
    */
   async parse(filePath: string, content: string): Promise<UCEFile> {
+    const result = await this.parseWithTree(filePath, content);
+    return result.uceFile;
+  }
+
+  /**
+   * Parses a source file and returns both UCE format and the parse tree.
+   * This is needed for call extraction which requires access to the raw AST.
+   */
+  async parseWithTree(filePath: string, content: string): Promise<ParsedFileWithTree> {
     this.ensureInitialized();
 
     // Detect language from extension
@@ -135,7 +161,11 @@ export class TypeScriptParser implements IParser, LanguageParser {
       uceLanguage
     );
 
-    return uceFile;
+    return {
+      uceFile,
+      tree: parseResult.tree,
+      sourceCode: content,
+    };
   }
 
   /**

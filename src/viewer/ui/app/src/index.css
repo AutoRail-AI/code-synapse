@@ -143,3 +143,22 @@
     overflow: hidden;
   }
 }
+
+/* Progress animation for operations */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+    width: 30%;
+  }
+  50% {
+    width: 50%;
+  }
+  100% {
+    transform: translateX(400%);
+    width: 30%;
+  }
+}
+
+.animate-progress {
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}

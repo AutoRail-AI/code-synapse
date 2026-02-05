@@ -9,13 +9,10 @@
 import type { Migration } from "../migration-runner.js";
 import { migration as migration001 } from "./001_initial_schema.js";
 
-import { migration as migration002 } from "./002_add_vector_indices.js";
-import { migration as migration003 } from "./003_llm_cache.js";
-
 /**
  * All registered migrations in version order.
  */
-export const migrations: Migration[] = [migration001, migration002, migration003];
+export const migrations: Migration[] = [migration001];
 
 /**
  * Gets a migration by version number.

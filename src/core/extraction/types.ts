@@ -150,7 +150,7 @@ export type ContainsRow = [string, string, number];
 
 /**
  * Row data for CALLS relation (populated in Pass 2).
- * Order: from_id, to_id, line_number, is_direct_call, is_async
+ * Order: from_id, to_id, line_number, is_direct_call, is_await
  */
 export type CallsRow = [string, string, number, boolean, boolean];
 

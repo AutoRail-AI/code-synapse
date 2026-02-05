@@ -64,6 +64,9 @@ export interface EntityJustification {
   /** File path where entity is defined */
   filePath: string;
 
+  /** Content hash of the file (for incremental updates) */
+  fileHash?: string;
+
   // === Semantic Content ===
 
   /** One-line summary of what this code does */
@@ -508,6 +511,7 @@ export function createEntityJustification(
     category: "unknown",
     domain: "unknown",
     architecturalPattern: "unknown",
+    fileHash: "",
     ...partial,
   };
 }

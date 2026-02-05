@@ -11,6 +11,7 @@
  */
 
 import * as path from "node:path";
+import type { Tree } from "web-tree-sitter";
 import type { UCEFile } from "../../types/uce.js";
 import {
   type CozoBatch,
@@ -22,6 +23,7 @@ import {
   type EmbeddingChunk,
   type FileRow,
   type ContainsRow,
+  type CallsRow,
   type ParameterSemanticsRow,
   type ReturnSemanticsRow,
   type ErrorPathRow,
@@ -33,6 +35,7 @@ import { FunctionExtractor } from "./function-extractor.js";
 import { ClassExtractor } from "./class-extractor.js";
 import { InterfaceExtractor } from "./interface-extractor.js";
 import { ImportExtractor } from "./import-extractor.js";
+import { CallExtractor, type FunctionCall } from "../parser/call-extractor.js";
 import { ParameterAnalyzer } from "./analyzers/parameter-analyzer.js";
 import { ReturnAnalyzer } from "./analyzers/return-analyzer.js";
 import { ErrorAnalyzer } from "./analyzers/error-analyzer.js";
@@ -41,6 +44,9 @@ import type {
   ReturnAnalysisResult,
   ErrorAnalysisResult,
 } from "../analysis/interfaces.js";
+import { createLogger } from "../../utils/logger.js";
+
+const logger = createLogger("extraction-pipeline");
 
 // =============================================================================
 // Pipeline Options
@@ -90,6 +96,7 @@ export class EntityPipeline {
   private classExtractor: ClassExtractor;
   private interfaceExtractor: InterfaceExtractor;
   private importExtractor: ImportExtractor;
+  private callExtractor: CallExtractor;
   private parameterAnalyzer: ParameterAnalyzer;
   private returnAnalyzer: ReturnAnalyzer;
   private errorAnalyzer: ErrorAnalyzer;
@@ -107,6 +114,7 @@ export class EntityPipeline {
     this.classExtractor = new ClassExtractor();
     this.interfaceExtractor = new InterfaceExtractor();
     this.importExtractor = new ImportExtractor(options.projectRoot);
+    this.callExtractor = new CallExtractor();
 
     // Phase 1: Enhanced Entity Semantics analyzers
     this.parameterAnalyzer = new ParameterAnalyzer();
@@ -121,12 +129,16 @@ export class EntityPipeline {
    * @param fileHash - Content hash for change detection
    * @param fileSize - File size in bytes
    * @param framework - Detected framework (optional)
+   * @param tree - Optional Tree-sitter parse tree for call extraction
+   * @param sourceCode - Optional source code (required if tree is provided)
    */
   async extract(
     uceFile: UCEFile,
     fileHash: string,
     fileSize: number,
-    framework: string | null = null
+    framework: string | null = null,
+    tree?: Tree,
+    sourceCode?: string
   ): Promise<ExtractionResult> {
     const batch = createEmptyBatch();
     const errors: ExtractionError[] = [];
@@ -380,6 +392,99 @@ export class EntityPipeline {
     }
 
     // ===========================================================================
+    // 7. Function Calls (if tree is provided)
+    // ===========================================================================
+    if (tree && sourceCode && this.options.trackCalls) {
+      try {
+        // Extract raw calls from the AST using tree-walking (more reliable than position matching)
+        const callGraph = this.callExtractor.extractFromTree(tree, sourceCode, filePath);
+        const rawCalls = callGraph.calls;
+
+        // Debug: log raw call count for first few files
+        if (rawCalls.length > 0) {
+          logger.debug({ filePath, rawCallCount: rawCalls.length }, "Raw calls extracted");
+        }
+
+        // Build a map of function names to their IDs for resolution
+        // Include top-level functions
+        const nameToId = new Map<string, string>();
+        for (const fn of uceFile.functions) {
+          const fnId = generateEntityId(filePath, "function", fn.name, "", String(fn.location.startLine));
+          nameToId.set(fn.name, fnId);
+        }
+
+        // Include class methods with "ClassName.methodName" format
+        for (const cls of uceFile.classes) {
+          for (const method of cls.methods) {
+            const methodId = generateEntityId(filePath, "function", method.name, cls.name, String(method.location.startLine));
+            nameToId.set(`${cls.name}.${method.name}`, methodId);
+            // Also try just the method name for this.method() calls within the class
+            if (!nameToId.has(method.name)) {
+              nameToId.set(method.name, methodId);
+            }
+          }
+          // Constructor
+          if (cls.constructor) {
+            const ctorId = generateEntityId(filePath, "function", "constructor", cls.name, String(cls.constructor.location.startLine));
+            nameToId.set(`${cls.name}.constructor`, ctorId);
+          }
+        }
+
+        // Resolve calls to CallsRow entries
+        for (const call of rawCalls) {
+          // Try to resolve caller ID
+          let callerId: string | null = null;
+          if (call.callerName === "<module>") {
+            callerId = fileId; // Module-level call, caller is the file
+          } else {
+            callerId = nameToId.get(call.callerName) ?? null;
+          }
+
+          // Try to resolve callee ID
+          const calleeId = nameToId.get(call.calleeName) ?? null;
+
+          if (callerId && calleeId) {
+            // Both resolved - create a CallsRow
+            const callsRow: CallsRow = [
+              callerId,
+              calleeId,
+              call.lineNumber,
+              call.isDirectCall,
+              call.isAwait,
+            ];
+            batch.calls.push(callsRow);
+          } else {
+            // Store as unresolved for Pass 2 cross-file resolution
+            unresolvedCalls.push({
+              callerId: callerId ?? `${filePath}:${call.callerName}`,
+              calleeName: call.calleeName,
+              modulePath: null, // TODO: Extract module path for imported calls
+              lineNumber: call.lineNumber,
+              isDirectCall: call.isDirectCall,
+              isAsync: call.isAwait,
+            });
+          }
+        }
+
+        // Log resolution stats
+        if (rawCalls.length > 0) {
+          logger.debug({
+            filePath,
+            rawCalls: rawCalls.length,
+            resolvedCalls: batch.calls.length,
+            unresolvedCalls: unresolvedCalls.length
+          }, "Call resolution stats");
+        }
+      } catch (e) {
+        errors.push({
+          kind: "calls",
+          name: filePath,
+          error: String(e),
+        });
+      }
+    }
+
+    // ===========================================================================
     // Build Statistics
     // ===========================================================================
     const stats: ExtractionStats = {
@@ -613,27 +718,22 @@ export class EntityPipeline {
   }
 
   /**
-   * Get the parameter analyzer instance.
-   * Use this to run analysis on AST nodes directly.
+   * Runs Pass 2 to resolve cross-file function calls.
+   *
+   * @param results - Extraction results from Pass 1
+   * @param store - Graph store instance
+   * @returns Resolved call rows ready for insertion
    */
-  getParameterAnalyzer(): ParameterAnalyzer {
-    return this.parameterAnalyzer;
-  }
+  async runPass2(
+    results: ExtractionResult[],
+    store: any // Using any to avoid circular dependency with IGraphStore
+  ): Promise<CallsRow[]> {
+    // Dynamic import to avoid circular dependency
+    const { createCallGraphLinker } = await import("./call-graph-linker.js");
+    const linker = createCallGraphLinker(store);
 
-  /**
-   * Get the return analyzer instance.
-   * Use this to run analysis on AST nodes directly.
-   */
-  getReturnAnalyzer(): ReturnAnalyzer {
-    return this.returnAnalyzer;
-  }
-
-  /**
-   * Get the error analyzer instance.
-   * Use this to run analysis on AST nodes directly.
-   */
-  getErrorAnalyzer(): ErrorAnalyzer {
-    return this.errorAnalyzer;
+    const result = await linker.linkCalls(results);
+    return result.resolvedCalls;
   }
 }
 

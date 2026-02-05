@@ -121,6 +121,20 @@ export {
 } from "./pipeline.js";
 
 // =============================================================================
+// Call Graph Linker (Pass 2: Cross-File Resolution)
+// =============================================================================
+
+export {
+  CallGraphLinker,
+  createCallGraphLinker,
+  type GlobalSymbolRegistry,
+  type ExportInfo,
+  type FileImportMap,
+  type ImportedSymbol,
+  type LinkingResult,
+} from "./call-graph-linker.js";
+
+// =============================================================================
 // Analyzers (Phase 1: Enhanced Entity Semantics)
 // =============================================================================
 

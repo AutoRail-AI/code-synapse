@@ -47,6 +47,7 @@ export interface TrivialCheckResult {
 }
 
 // Patterns for trivial function names
+// Stricter: must START with these
 const GETTER_PATTERN = /^(get|is|has)[A-Z]/;
 const SETTER_PATTERN = /^set[A-Z]/;
 const SIMPLE_ACCESSOR_NAMES = [
@@ -58,6 +59,24 @@ const SIMPLE_ACCESSOR_NAMES = [
   "equals",
   "hashCode",
   "compareTo",
+];
+
+// Sensitive name patterns - if found, NEVER trivial regardless of size
+const SENSITIVE_NAME_PATTERNS = [
+  /auth/i,
+  /security/i,
+  /validate/i,
+  /verify/i,
+  /credential/i,
+  /password/i,
+  /secret/i,
+  /token/i,
+  /permission/i,
+  /role/i,
+  /check/i, // Often implies validation
+  /guard/i,
+  /encrypt/i,
+  /decrypt/i,
 ];
 
 // Patterns for trivial file names
@@ -90,17 +109,27 @@ export function checkTrivialEntity(entity: EntityInfo): TrivialCheckResult {
  * Check if a function/method is trivial
  */
 function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
-  const { name, lineCount } = entity;
+  const { name, lineCount, signature } = entity;
 
-  // Simple getter - identified by name pattern (code snippet may not be available)
+  // SAFETY CHECK: Never mark sensitive functions as trivial
+  for (const pattern of SENSITIVE_NAME_PATTERNS) {
+    if (pattern.test(name)) {
+      return { isTrivial: false };
+    }
+  }
+
+  // Simple getter - identified by name pattern
   if (GETTER_PATTERN.test(name)) {
-    // Short getters (<=5 lines) are likely just property access
-    if (!lineCount || lineCount <= 5) {
+    // STRICTER: Short getters (<=3 lines, was 5)
+    if (!lineCount || lineCount <= 3) {
+      const propertyName = name.replace(/^(get|is|has)/, "");
+      const propertyFormatted = propertyName.charAt(0).toLowerCase() + propertyName.slice(1);
+
       return {
         isTrivial: true,
         reason: "simple_getter",
         defaultJustification: {
-          purposeSummary: `Getter method that returns the ${name.replace(/^(get|is|has)/, "").toLowerCase()} property`,
+          purposeSummary: `Getter method that returns the ${propertyFormatted} property${signature ? ` (${signature})` : ""}`,
           businessValue: "Provides read access to internal state",
           featureContext: "Data access",
           tags: ["getter", "accessor"],
@@ -112,13 +141,16 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
 
   // Simple setter - identified by name pattern
   if (SETTER_PATTERN.test(name)) {
-    // Short setters (<=5 lines) are likely just property assignment
-    if (!lineCount || lineCount <= 5) {
+    // STRICTER: Short setters (<=3 lines, was 5)
+    if (!lineCount || lineCount <= 3) {
+      const propertyName = name.replace(/^set/, "");
+      const propertyFormatted = propertyName.charAt(0).toLowerCase() + propertyName.slice(1);
+
       return {
         isTrivial: true,
         reason: "simple_setter",
         defaultJustification: {
-          purposeSummary: `Setter method that updates the ${name.replace(/^set/, "").toLowerCase()} property`,
+          purposeSummary: `Setter method that updates the ${propertyFormatted} property${signature ? ` (${signature})` : ""}`,
           businessValue: "Provides write access to internal state",
           featureContext: "Data access",
           tags: ["setter", "mutator"],
@@ -134,7 +166,7 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
       isTrivial: true,
       reason: "standard_accessor",
       defaultJustification: {
-        purposeSummary: `Standard ${name} implementation`,
+        purposeSummary: `Standard ${name} implementation${signature ? ` (${signature})` : ""}`,
         businessValue: "Provides standard object behavior",
         featureContext: "Object utilities",
         tags: ["utility", name.toLowerCase()],
@@ -145,7 +177,8 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
 
   // Constructor - typically trivial if short
   if (name === "constructor") {
-    if (!lineCount || lineCount <= 15) {
+    // STRICTER: <= 5 lines (was 15)
+    if (!lineCount || lineCount <= 5) {
       return {
         isTrivial: true,
         reason: "simple_constructor",
@@ -160,14 +193,14 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
     }
   }
 
-  // Only very short functions (<=3 lines) are truly trivial
-  // Most real functions need LLM analysis for business context
-  if (lineCount && lineCount <= 3) {
+  // Generic VERY short functions
+  // STRICTER: Only 1-liners (was <= 3)
+  if (lineCount && lineCount <= 1) {
     return {
       isTrivial: true,
       reason: "very_short_function",
       defaultJustification: {
-        purposeSummary: `Simple helper: ${name}`,
+        purposeSummary: `Simple helper: ${name}${signature ? ` (${signature})` : ""}`,
         businessValue: "Provides simple utility functionality",
         featureContext: "Utilities",
         tags: ["utility", "helper"],
@@ -177,8 +210,6 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
   }
 
   // Only truly trivial function patterns - these rarely have business logic
-  // IMPORTANT: Most functions with meaningful names should go through LLM
-  // to understand their business context properly
   const trivialNamePatterns = [
     /^noop$/, // no-op function
     /^identity$/, // identity function
@@ -191,7 +222,7 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
         isTrivial: true,
         reason: "trivial_utility",
         defaultJustification: {
-          purposeSummary: `Internal utility: ${name}`,
+          purposeSummary: `Internal utility: ${name}${signature ? ` (${signature})` : ""}`,
           businessValue: "Provides internal utility functionality",
           featureContext: "Utilities",
           tags: ["utility", "internal"],
@@ -211,9 +242,8 @@ function checkTrivialFunction(entity: EntityInfo): TrivialCheckResult {
 function checkTrivialClass(entity: EntityInfo): TrivialCheckResult {
   const { name, lineCount } = entity;
 
-  // Only very small classes (<=5 lines) are trivial - likely just type containers
-  // Most classes have business meaning and should go through LLM
-  if (lineCount && lineCount <= 5) {
+  // STRICTER: <= 3 lines (was 5)
+  if (lineCount && lineCount <= 3) {
     return {
       isTrivial: true,
       reason: "minimal_class",
@@ -227,7 +257,7 @@ function checkTrivialClass(entity: EntityInfo): TrivialCheckResult {
     };
   }
 
-  // Error classes
+  // Error classes - generally structural
   if (name.endsWith("Error") || name.endsWith("Exception")) {
     return {
       isTrivial: true,
@@ -242,7 +272,9 @@ function checkTrivialClass(entity: EntityInfo): TrivialCheckResult {
     };
   }
 
-  // Data classes / DTOs / Models
+  // Data classes / DTOs / Models - ONLY if small enough
+  // NOTE: Logic retained but stricter line count above handles most cases. 
+  // We keep this specific check but verify line count isn't HUGE.
   if (
     name.endsWith("Data") ||
     name.endsWith("DTO") ||
@@ -251,17 +283,22 @@ function checkTrivialClass(entity: EntityInfo): TrivialCheckResult {
     name.endsWith("Record") ||
     name.endsWith("State")
   ) {
-    return {
-      isTrivial: true,
-      reason: "data_class",
-      defaultJustification: {
-        purposeSummary: `Data container class: ${name}`,
-        businessValue: "Provides data structure",
-        featureContext: "Data models",
-        tags: ["class", "data", "model"],
-        confidenceScore: 0.85,
-      },
-    };
+    // If it's a DTO but 100 lines long, it might have logic. 
+    // Let's rely on standard LLM for larger DTOs.
+    // Filter only if <= 10 lines (moderate size data bag)
+    if (lineCount && lineCount <= 10) {
+      return {
+        isTrivial: true,
+        reason: "data_class",
+        defaultJustification: {
+          purposeSummary: `Data container class: ${name}`,
+          businessValue: "Provides data structure",
+          featureContext: "Data models",
+          tags: ["class", "data", "model"],
+          confidenceScore: 0.85,
+        },
+      };
+    }
   }
 
   return { isTrivial: false };
@@ -274,9 +311,8 @@ function checkTrivialClass(entity: EntityInfo): TrivialCheckResult {
 function checkTrivialInterface(entity: EntityInfo): TrivialCheckResult {
   const { name, lineCount } = entity;
 
-  // Only very small interfaces (<=5 lines) are trivial
-  // Larger interfaces define important contracts that need LLM analysis
-  if (lineCount && lineCount <= 5) {
+  // STRICTER: <= 3 lines (was 5)
+  if (lineCount && lineCount <= 3) {
     return {
       isTrivial: true,
       reason: "minimal_interface",
@@ -291,6 +327,7 @@ function checkTrivialInterface(entity: EntityInfo): TrivialCheckResult {
   }
 
   // Props/Options/Config interfaces - always trivial regardless of size
+  // These are purely data definitions usually
   if (
     name.endsWith("Props") ||
     name.endsWith("Options") ||
@@ -355,7 +392,7 @@ function checkTrivialFile(entity: EntityInfo): TrivialCheckResult {
     };
   }
 
-  // Test files
+  // Test files - ALWAYS trivial/ignored for justification purposes
   if (TEST_FILE_PATTERN.test(fileName)) {
     return {
       isTrivial: true,

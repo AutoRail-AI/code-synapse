@@ -11,11 +11,12 @@ import type { IParser } from "../interfaces/IParser.js";
 import type { IGraphStore } from "../interfaces/IGraphStore.js";
 import type { DetectedProject } from "./project-detector.js";
 import type { FileInfo } from "./scanner.js";
-import type { ExtractionResult as _ExtractionResult } from "../extraction/types.js";
+import type { ExtractionResult, CallsRow } from "../extraction/types.js";
 import type { WriteResult, GraphFileInfo } from "../graph-builder/index.js";
 
 import { FileScanner } from "./scanner.js";
 import { EntityPipeline } from "../extraction/pipeline.js";
+import { CallGraphLinker } from "../extraction/call-graph-linker.js";
 import { GraphWriter, IncrementalUpdater } from "../graph-builder/index.js";
 import { createLogger } from "../../utils/logger.js";
 import { mapConcurrent } from "../../utils/async.js";
@@ -101,6 +102,7 @@ export interface IndexingCoordinatorResult {
     parsing: { files: number; durationMs: number };
     extracting: { files: number; durationMs: number };
     writing: { files: number; durationMs: number };
+    linking?: { files: number; durationMs: number };
   };
 }
 
@@ -167,8 +169,11 @@ export class IndexerCoordinator {
   private pipeline: EntityPipeline;
   private writer: GraphWriter;
   private updater: IncrementalUpdater;
+  private callGraphLinker: CallGraphLinker;
   private semanticAnalyzer: SemanticAnalysisService | null = null;
   private patternAnalyzer: PatternAnalysisService | null = null;
+  /** Collected extraction results for Pass 2 cross-file linking */
+  private extractionResults: ExtractionResult[] = [];
   private options: Required<Omit<IndexerCoordinatorOptions, "onProgress" | "onError" | "semanticAnalysisOptions" | "patternDetectionOptions">> & {
     onProgress?: (event: IndexingProgressEvent) => void;
     onError?: (error: IndexingError) => void;
@@ -201,6 +206,7 @@ export class IndexerCoordinator {
     this.pipeline = new EntityPipeline({ projectRoot: this.project.rootPath });
     this.writer = new GraphWriter(this.store);
     this.updater = new IncrementalUpdater(this.store);
+    this.callGraphLinker = new CallGraphLinker(this.store);
 
     // Initialize semantic analyzer if enabled
     if (this.options.enableSemanticAnalysis) {
@@ -231,10 +237,14 @@ export class IndexerCoordinator {
       parsing: { files: 0, durationMs: 0 },
       extracting: { files: 0, durationMs: 0 },
       writing: { files: 0, durationMs: 0 },
+      linking: { files: 0, durationMs: 0 },
     };
 
     let totalEntitiesWritten = 0;
     let totalRelationshipsWritten = 0;
+
+    // Clear extraction results for Pass 2
+    this.extractionResults = [];
 
     try {
       // Phase 1: Scanning
@@ -270,6 +280,42 @@ export class IndexerCoordinator {
         }
 
         processedFiles += batch.length;
+      }
+
+      // Phase 5: Cross-file call linking (Pass 2)
+      logger.debug({ extractionResultsCount: this.extractionResults.length }, "Starting cross-file call linking");
+      if (this.extractionResults.length > 0) {
+        this.emitProgress("writing", files.length, files.length, 95, "Linking cross-file calls...");
+        const linkStart = Date.now();
+
+        const totalUnresolved = this.extractionResults.reduce((sum, r) => sum + r.unresolvedCalls.length, 0);
+        logger.debug({ totalUnresolved, filesWithUnresolved: this.extractionResults.length }, "Unresolved calls to link");
+
+        try {
+          // Use pipeline's orchestrated Pass 2
+          const resolvedCalls = await this.pipeline.runPass2(this.extractionResults, this.store);
+
+          // Write resolved calls to database
+          if (resolvedCalls.length > 0) {
+            await this.writeCalls(resolvedCalls);
+            totalRelationshipsWritten += resolvedCalls.length;
+          }
+
+          phaseStats.linking = {
+            files: this.extractionResults.length,
+            durationMs: Date.now() - linkStart,
+          };
+
+          logger.info({
+            resolved: resolvedCalls.length,
+            durationMs: phaseStats.linking.durationMs,
+          }, "Cross-file call linking complete");
+        } catch (linkError) {
+          logger.warn({ error: linkError }, "Cross-file call linking failed (continuing)");
+        }
+
+        // Clear extraction results to free memory
+        this.extractionResults = [];
       }
 
       this.emitProgress("complete", files.length, files.length, 100, "Indexing complete");
@@ -309,10 +355,14 @@ export class IndexerCoordinator {
       parsing: { files: 0, durationMs: 0 },
       extracting: { files: 0, durationMs: 0 },
       writing: { files: 0, durationMs: 0 },
+      linking: { files: 0, durationMs: 0 },
     };
 
     let totalEntitiesWritten = 0;
     let totalRelationshipsWritten = 0;
+
+    // Clear extraction results for Pass 2
+    this.extractionResults = [];
 
     try {
       // Phase 1: Scanning
@@ -393,6 +443,38 @@ export class IndexerCoordinator {
         processedFiles += batch.length;
       }
 
+      // Phase 5: Cross-file call linking (Pass 2)
+      if (this.extractionResults.length > 0) {
+        this.emitProgress("writing", filesToIndex.length, filesToIndex.length, 95, "Linking cross-file calls...");
+        const linkStart = Date.now();
+
+        try {
+          // Use pipeline's orchestrated Pass 2
+          const resolvedCalls = await this.pipeline.runPass2(this.extractionResults, this.store);
+
+          // Write resolved calls to database
+          if (resolvedCalls.length > 0) {
+            await this.writeCalls(resolvedCalls);
+            totalRelationshipsWritten += resolvedCalls.length;
+          }
+
+          phaseStats.linking = {
+            files: this.extractionResults.length,
+            durationMs: Date.now() - linkStart,
+          };
+
+          logger.info({
+            resolved: resolvedCalls.length,
+            durationMs: phaseStats.linking.durationMs,
+          }, "Cross-file call linking complete");
+        } catch (linkError) {
+          logger.warn({ error: linkError }, "Cross-file call linking failed (continuing)");
+        }
+
+        // Clear extraction results to free memory
+        this.extractionResults = [];
+      }
+
       this.emitProgress("complete", filesToIndex.length, filesToIndex.length, 100, "Indexing complete");
 
       return this.buildResult(
@@ -430,11 +512,18 @@ export class IndexerCoordinator {
         return null;
       }
 
-      // Parse
-      const parsed = await this.parser.parseFile(filePath);
+      // Parse with tree for call extraction
+      const { uceFile, tree, sourceCode } = await this.parser.parseFileWithTree(filePath);
 
-      // Extract
-      const extracted = await this.pipeline.extract(parsed, fileInfo.hash, fileInfo.size);
+      // Extract (pass tree for call extraction)
+      const extracted = await this.pipeline.extract(
+        uceFile,
+        fileInfo.hash,
+        fileInfo.size,
+        null, // framework
+        tree,
+        sourceCode
+      );
 
       // Write
       const result = await this.writer.writeFile(extracted);
@@ -481,6 +570,26 @@ export class IndexerCoordinator {
   // ===========================================================================
 
   /**
+   * Writes resolved calls to the database.
+   */
+  private async writeCalls(calls: CallsRow[]): Promise<void> {
+    if (calls.length === 0) return;
+
+    // Write calls in batches to avoid overwhelming the database
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < calls.length; i += BATCH_SIZE) {
+      const batch = calls.slice(i, i + BATCH_SIZE);
+      for (const [fromId, toId, lineNumber, isDirectCall, isAwait] of batch) {
+        await this.store.execute(
+          `?[from_id, to_id, line_number, is_direct_call, is_await] <- [[$fromId, $toId, $lineNumber, $isDirectCall, $isAwait]]
+          :put calls {from_id, to_id => line_number, is_direct_call, is_await}`,
+          { fromId, toId, lineNumber, isDirectCall, isAwait }
+        );
+      }
+    }
+  }
+
+  /**
    * Scans the project for files.
    */
   private async scanFiles(): Promise<FileInfo[]> {
@@ -516,15 +625,22 @@ export class IndexerCoordinator {
           const parseStart = Date.now();
           this.emitProgress("parsing", overallProcessed, totalFiles, percentage, `Parsing ${file.relativePath}`);
 
-          const parsed = await this.parser.parseFile(file.absolutePath);
+          const { uceFile: parsed, tree, sourceCode } = await this.parser.parseFileWithTree(file.absolutePath);
           phaseStats.parsing.files++;
           phaseStats.parsing.durationMs += Date.now() - parseStart;
 
-          // Phase 3: Extracting
+          // Phase 3: Extracting (with call extraction)
           const extractStart = Date.now();
           this.emitProgress("extracting", overallProcessed, totalFiles, percentage, `Extracting ${file.relativePath}`);
 
-          const extracted = await this.pipeline.extract(parsed, file.hash, file.size);
+          const extracted = await this.pipeline.extract(
+            parsed,
+            file.hash,
+            file.size,
+            null, // framework
+            tree,
+            sourceCode
+          );
           phaseStats.extracting.files++;
           phaseStats.extracting.durationMs += Date.now() - extractStart;
 
@@ -677,6 +793,10 @@ export class IndexerCoordinator {
               );
             }
           }
+
+          // Store extraction result for Pass 2 cross-file call linking
+          // We need ALL results to build the global symbol registry
+          this.extractionResults.push(extracted);
 
           // Phase 5: Writing
           const writeStart = Date.now();

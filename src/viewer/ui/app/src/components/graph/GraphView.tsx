@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   GitBranch,
   Maximize2,
@@ -7,6 +7,10 @@ import {
   RefreshCw,
   Filter,
   Target,
+  Search,
+  Download,
+  Focus,
+  X,
 } from 'lucide-react';
 import { useGraphStore, useUIStore } from '../../store';
 import { getGraphData } from '../../api/client';
@@ -28,7 +32,12 @@ export function GraphView() {
     new Map()
   );
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [hoveredEdge, setHoveredEdge] = useState<{ source: string; target: string; type: string } | null>(null);
   const [filterKinds, setFilterKinds] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<string[]>([]);
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusDepth, setFocusDepth] = useState(2);
 
   // Load graph data
   useEffect(() => {
@@ -44,6 +53,121 @@ export function GraphView() {
         setLoading(false);
       });
   }, [setGraphData]);
+
+  // Search functionality
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    const query = searchQuery.toLowerCase();
+    const results = nodes
+      .filter((n) => n.label.toLowerCase().includes(query))
+      .map((n) => n.id);
+    setSearchResults(results);
+  }, [searchQuery, nodes]);
+
+  // Get nodes within N hops of focused node (for focus mode)
+  const nodesInFocusRange = useMemo(() => {
+    if (!focusMode || !focusedNode) return null;
+
+    const visited = new Set<string>();
+    const queue: { id: string; depth: number }[] = [{ id: focusedNode, depth: 0 }];
+    visited.add(focusedNode);
+
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!;
+      if (depth >= focusDepth) continue;
+
+      // Find all connected nodes (both directions)
+      edges.forEach((edge) => {
+        if (edge.source === id && !visited.has(edge.target)) {
+          visited.add(edge.target);
+          queue.push({ id: edge.target, depth: depth + 1 });
+        }
+        if (edge.target === id && !visited.has(edge.source)) {
+          visited.add(edge.source);
+          queue.push({ id: edge.source, depth: depth + 1 });
+        }
+      });
+    }
+
+    return visited;
+  }, [focusMode, focusedNode, focusDepth, edges]);
+
+  // Zoom to fit all visible nodes
+  const handleZoomToFit = useCallback(() => {
+    if (nodePositions.size === 0) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Get visible nodes based on current filters
+    const visibleNodeIds = focusMode && nodesInFocusRange
+      ? nodesInFocusRange
+      : new Set(
+        filterKinds.length > 0
+          ? nodes.filter((n) => filterKinds.includes(n.kind)).map((n) => n.id)
+          : nodes.map((n) => n.id)
+      );
+
+    // Calculate bounding box
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const [id, pos] of nodePositions) {
+      if (!visibleNodeIds.has(id)) continue;
+      minX = Math.min(minX, pos.x);
+      maxX = Math.max(maxX, pos.x);
+      minY = Math.min(minY, pos.y);
+      maxY = Math.max(maxY, pos.y);
+    }
+
+    if (minX === Infinity) return;
+
+    const padding = 50;
+    const graphWidth = maxX - minX + padding * 2;
+    const graphHeight = maxY - minY + padding * 2;
+
+    const scaleX = canvas.width / graphWidth;
+    const scaleY = canvas.height / graphHeight;
+    const newZoom = Math.min(scaleX, scaleY, 2); // Cap at 2x zoom
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    setZoom(newZoom);
+    setPan({
+      x: canvas.width / 2 - centerX * newZoom,
+      y: canvas.height / 2 - centerY * newZoom,
+    });
+  }, [nodePositions, nodes, filterKinds, focusMode, nodesInFocusRange]);
+
+  // Export canvas as PNG
+  const handleExport = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const link = document.createElement('a');
+    link.download = 'knowledge-graph.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  }, []);
+
+  // Focus on a specific node from search
+  const handleFocusNode = useCallback((nodeId: string) => {
+    setFocusedNode(nodeId);
+    setSearchQuery('');
+    setSearchResults([]);
+
+    // Center view on the node
+    const pos = nodePositions.get(nodeId);
+    if (pos && canvasRef.current) {
+      const canvas = canvasRef.current;
+      setPan({
+        x: canvas.width / 2 - pos.x * zoom,
+        y: canvas.height / 2 - pos.y * zoom,
+      });
+    }
+  }, [nodePositions, zoom, setFocusedNode]);
 
   // Calculate tree/hierarchy layout
   const calculateTreeLayout = useCallback(() => {
@@ -192,16 +316,20 @@ export function GraphView() {
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
 
-    // Filter nodes
-    const visibleNodes =
+    // Filter nodes by kind
+    let visibleNodes =
       filterKinds.length > 0
         ? nodes.filter((n) => filterKinds.includes(n.kind))
         : nodes;
+
+    // Apply focus mode filter
+    if (focusMode && nodesInFocusRange) {
+      visibleNodes = visibleNodes.filter((n) => nodesInFocusRange.has(n.id));
+    }
+
     const visibleNodeIds = new Set(visibleNodes.map((n) => n.id));
 
     // Draw edges
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1;
     edges.forEach((edge) => {
       if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) return;
 
@@ -209,10 +337,56 @@ export function GraphView() {
       const to = nodePositions.get(edge.target);
       if (!from || !to) return;
 
+      const isHoveredEdge = hoveredEdge?.source === edge.source && hoveredEdge?.target === edge.target;
+
+      // Edge color based on type
+      let edgeColor = '#475569';
+      if (edge.type === 'calls') edgeColor = '#3b82f6';
+      else if (edge.type === 'imports') edgeColor = '#10b981';
+      else if (edge.type === 'extends') edgeColor = '#f59e0b';
+      else if (edge.type === 'implements') edgeColor = '#8b5cf6';
+
+      ctx.strokeStyle = isHoveredEdge ? '#ffffff' : edgeColor;
+      ctx.lineWidth = isHoveredEdge ? 2 : 1;
+
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
       ctx.lineTo(to.x, to.y);
       ctx.stroke();
+
+      // Draw arrow head
+      const angle = Math.atan2(to.y - from.y, to.x - from.x);
+      const arrowLength = 8;
+      const arrowX = to.x - 12 * Math.cos(angle); // Offset from node center
+      const arrowY = to.y - 12 * Math.sin(angle);
+
+      ctx.beginPath();
+      ctx.moveTo(arrowX, arrowY);
+      ctx.lineTo(
+        arrowX - arrowLength * Math.cos(angle - Math.PI / 6),
+        arrowY - arrowLength * Math.sin(angle - Math.PI / 6)
+      );
+      ctx.moveTo(arrowX, arrowY);
+      ctx.lineTo(
+        arrowX - arrowLength * Math.cos(angle + Math.PI / 6),
+        arrowY - arrowLength * Math.sin(angle + Math.PI / 6)
+      );
+      ctx.stroke();
+
+      // Draw edge type label on hover
+      if (isHoveredEdge) {
+        const midX = (from.x + to.x) / 2;
+        const midY = (from.y + to.y) / 2;
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(midX - 25, midY - 10, 50, 20);
+        ctx.strokeStyle = '#475569';
+        ctx.strokeRect(midX - 25, midY - 10, 50, 20);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(edge.type, midX, midY);
+      }
     });
 
     // Draw nodes
@@ -222,7 +396,8 @@ export function GraphView() {
 
       const isHovered = hoveredNode === node.id;
       const isFocused = focusedNode === node.id;
-      const radius = isHovered || isFocused ? 12 : 8;
+      const isSearchResult = searchResults.includes(node.id);
+      const radius = isHovered || isFocused || isSearchResult ? 12 : 8;
 
       // Node color based on kind
       const color =
@@ -233,6 +408,15 @@ export function GraphView() {
             : node.kind === 'interface'
               ? '#06b6d4'
               : '#6b7280';
+
+      // Draw search result highlight ring
+      if (isSearchResult) {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, radius + 6, 0, Math.PI * 2);
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
 
       // Draw node circle
       ctx.beginPath();
@@ -264,23 +448,28 @@ export function GraphView() {
         ctx.stroke();
       }
 
-      if (isHovered || isFocused) {
+      if (isHovered || isFocused || isSearchResult) {
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 2;
         ctx.stroke();
       }
 
-      // Draw label for hovered/focused nodes
-      if (isHovered || isFocused) {
-        ctx.fillStyle = '#ffffff';
+      // Draw label for hovered/focused/search result nodes
+      if (isHovered || isFocused || isSearchResult) {
+        // Draw label background for better visibility
         ctx.font = '12px sans-serif';
+        const labelWidth = ctx.measureText(node.label).width;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.fillRect(pos.x - labelWidth / 2 - 4, pos.y - radius - 22, labelWidth + 8, 16);
+
+        ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'center';
-        ctx.fillText(node.label, pos.x, pos.y - radius - 8);
+        ctx.fillText(node.label, pos.x, pos.y - radius - 10);
       }
     });
 
     ctx.restore();
-  }, [nodes, edges, nodePositions, zoom, pan, hoveredNode, focusedNode, filterKinds]);
+  }, [nodes, edges, nodePositions, zoom, pan, hoveredNode, hoveredEdge, focusedNode, filterKinds, focusMode, nodesInFocusRange, searchResults]);
 
   // Handle canvas resize
   useEffect(() => {
@@ -308,18 +497,50 @@ export function GraphView() {
       const y = (e.clientY - rect.top - pan.y) / zoom;
 
       // Find node under cursor
-      let found: string | null = null;
+      let foundNode: string | null = null;
       for (const [id, pos] of nodePositions) {
         const dx = pos.x - x;
         const dy = pos.y - y;
         if (Math.sqrt(dx * dx + dy * dy) < 12) {
-          found = id;
+          foundNode = id;
           break;
         }
       }
-      setHoveredNode(found);
+      setHoveredNode(foundNode);
+
+      // Find edge under cursor (if no node is hovered)
+      if (!foundNode) {
+        let foundEdge: { source: string; target: string; type: string } | null = null;
+        const threshold = 8; // Distance threshold for edge hover
+
+        for (const edge of edges) {
+          const from = nodePositions.get(edge.source);
+          const to = nodePositions.get(edge.target);
+          if (!from || !to) continue;
+
+          // Calculate distance from point to line segment
+          const dx = to.x - from.x;
+          const dy = to.y - from.y;
+          const lengthSq = dx * dx + dy * dy;
+
+          if (lengthSq === 0) continue;
+
+          const t = Math.max(0, Math.min(1, ((x - from.x) * dx + (y - from.y) * dy) / lengthSq));
+          const projX = from.x + t * dx;
+          const projY = from.y + t * dy;
+          const distance = Math.sqrt((x - projX) * (x - projX) + (y - projY) * (y - projY));
+
+          if (distance < threshold) {
+            foundEdge = edge;
+            break;
+          }
+        }
+        setHoveredEdge(foundEdge);
+      } else {
+        setHoveredEdge(null);
+      }
     },
-    [nodePositions, zoom, pan]
+    [nodePositions, edges, zoom, pan]
   );
 
   const handleCanvasClick = useCallback(() => {
@@ -397,8 +618,61 @@ export function GraphView() {
           </div>
         </div>
 
-        {/* Controls */}
+        {/* Controls Row 1: Search and Zoom */}
         <div className="flex items-center gap-4 mt-4">
+          {/* Search box */}
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search nodes..."
+              className="w-full pl-9 pr-8 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => { setSearchQuery(''); setSearchResults([]); }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+            {/* Search results dropdown */}
+            {searchResults.length > 0 && searchQuery && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50">
+                {searchResults.slice(0, 10).map((nodeId) => {
+                  const node = nodes.find((n) => n.id === nodeId);
+                  if (!node) return null;
+                  return (
+                    <button
+                      key={nodeId}
+                      onClick={() => handleFocusNode(nodeId)}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-700 flex items-center gap-2"
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{
+                          backgroundColor:
+                            node.kind === 'function' ? '#3b82f6' :
+                              node.kind === 'class' ? '#a855f7' :
+                                node.kind === 'interface' ? '#06b6d4' : '#6b7280'
+                        }}
+                      />
+                      <span className="text-slate-200">{node.label}</span>
+                      <span className="text-slate-500 text-xs ml-auto">{node.kind}</span>
+                    </button>
+                  );
+                })}
+                {searchResults.length > 10 && (
+                  <div className="px-3 py-2 text-xs text-slate-500">
+                    +{searchResults.length - 10} more results
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Zoom controls */}
           <div className="flex items-center gap-1 bg-slate-700 rounded-lg p-1">
             <button
@@ -425,8 +699,47 @@ export function GraphView() {
             >
               <Maximize2 className="w-4 h-4" />
             </button>
+            <button
+              onClick={handleZoomToFit}
+              className="p-1.5 hover:bg-slate-600 rounded text-slate-400 hover:text-white"
+              title="Zoom to Fit"
+            >
+              <Target className="w-4 h-4" />
+            </button>
           </div>
 
+          {/* Focus mode toggle */}
+          <div className="flex items-center gap-2 bg-slate-700 rounded-lg p-1">
+            <button
+              onClick={() => setFocusMode(!focusMode)}
+              className={`p-1.5 rounded flex items-center gap-1.5 text-sm ${focusMode
+                ? 'bg-blue-600 text-white'
+                : 'text-slate-400 hover:bg-slate-600 hover:text-white'
+                }`}
+              title={focusMode ? 'Disable Focus Mode' : 'Enable Focus Mode'}
+              disabled={!focusedNode}
+            >
+              <Focus className="w-4 h-4" />
+              <span className="text-xs">Focus</span>
+            </button>
+            {focusMode && (
+              <select
+                value={focusDepth}
+                onChange={(e) => setFocusDepth(Number(e.target.value))}
+                className="bg-slate-600 border-none rounded px-2 py-1 text-xs text-slate-200"
+                title="Depth of connections to show"
+              >
+                <option value="1">1 hop</option>
+                <option value="2">2 hops</option>
+                <option value="3">3 hops</option>
+                <option value="4">4 hops</option>
+              </select>
+            )}
+          </div>
+        </div>
+
+        {/* Controls Row 2: Filters and Actions */}
+        <div className="flex items-center gap-4 mt-3">
           {/* Kind filters */}
           <div className="flex items-center gap-2">
             <Filter className="w-4 h-4 text-slate-500" />
@@ -450,6 +763,18 @@ export function GraphView() {
             />
           </div>
 
+          <div className="flex-1" />
+
+          {/* Export */}
+          <button
+            onClick={handleExport}
+            className="btn btn-secondary flex items-center gap-2"
+            title="Export as PNG"
+          >
+            <Download className="w-4 h-4" />
+            Export
+          </button>
+
           {/* Refresh */}
           <button
             onClick={() => window.location.reload()}
@@ -471,6 +796,9 @@ export function GraphView() {
           style={{ cursor: hoveredNode ? 'pointer' : 'crosshair' }}
         />
 
+        {/* Legend */}
+
+
         {/* Focused node info */}
         {focusedNode && (
           <div className="absolute bottom-4 left-4 bg-slate-800 border border-slate-700 rounded-lg p-4 shadow-lg max-w-sm">
@@ -479,29 +807,107 @@ export function GraphView() {
               <span className="font-medium text-white">
                 {nodes.find((n) => n.id === focusedNode)?.label}
               </span>
+              <span className="text-xs text-slate-500 px-1.5 py-0.5 bg-slate-700 rounded">
+                {nodes.find((n) => n.id === focusedNode)?.kind}
+              </span>
             </div>
-            <div className="text-sm text-slate-400">
-              Connected to{' '}
-              {edges.filter((e) => e.source === focusedNode || e.target === focusedNode).length}{' '}
-              nodes
+            <div className="text-sm text-slate-400 space-y-1">
+              <div>
+                Connected to{' '}
+                {edges.filter((e) => e.source === focusedNode || e.target === focusedNode).length}{' '}
+                nodes
+              </div>
+              {/* Show connection breakdown */}
+              <div className="flex flex-wrap gap-2 mt-2">
+                {(() => {
+                  const outgoing = edges.filter((e) => e.source === focusedNode);
+                  const incoming = edges.filter((e) => e.target === focusedNode);
+                  return (
+                    <>
+                      {outgoing.length > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 bg-slate-700 rounded text-green-400">
+                          {outgoing.length} outgoing
+                        </span>
+                      )}
+                      {incoming.length > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 bg-slate-700 rounded text-blue-400">
+                          {incoming.length} incoming
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
             </div>
-            <button
-              onClick={() => setFocusedNode(null)}
-              className="mt-2 text-xs text-slate-500 hover:text-slate-300"
-            >
-              Clear selection
-            </button>
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={() => { setFocusedNode(null); setFocusMode(false); }}
+                className="text-xs text-slate-500 hover:text-slate-300"
+              >
+                Clear selection
+              </button>
+              {!focusMode && (
+                <button
+                  onClick={() => setFocusMode(true)}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  Focus mode
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Hovered edge info */}
+        {hoveredEdge && !hoveredNode && (
+          <div className="absolute top-20 left-4 bg-slate-800 border border-slate-700 rounded-lg p-3 shadow-lg">
+            <div className="text-xs text-slate-500 mb-1">Edge</div>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-slate-200">{nodes.find((n) => n.id === hoveredEdge.source)?.label || 'Unknown'}</span>
+              <span className="text-slate-500">→</span>
+              <span
+                className="px-1.5 py-0.5 rounded text-xs font-medium"
+                style={{
+                  backgroundColor:
+                    hoveredEdge.type === 'calls' ? 'rgba(59, 130, 246, 0.2)' :
+                      hoveredEdge.type === 'imports' ? 'rgba(16, 185, 129, 0.2)' :
+                        hoveredEdge.type === 'extends' ? 'rgba(245, 158, 11, 0.2)' :
+                          'rgba(107, 114, 128, 0.2)',
+                  color:
+                    hoveredEdge.type === 'calls' ? '#3b82f6' :
+                      hoveredEdge.type === 'imports' ? '#10b981' :
+                        hoveredEdge.type === 'extends' ? '#f59e0b' :
+                          '#6b7280'
+                }}
+              >
+                {hoveredEdge.type}
+              </span>
+              <span className="text-slate-500">→</span>
+              <span className="text-slate-200">{nodes.find((n) => n.id === hoveredEdge.target)?.label || 'Unknown'}</span>
+            </div>
           </div>
         )}
 
         {/* Legend */}
         <div className="absolute bottom-4 right-4 bg-slate-800/90 border border-slate-700 rounded-lg p-3">
-          <div className="text-xs text-slate-500 mb-2">Legend</div>
+          <div className="text-xs text-slate-500 mb-2">Nodes</div>
           <div className="flex flex-col gap-1.5">
             <LegendItem color="#3b82f6" label="Function" />
             <LegendItem color="#a855f7" label="Class" />
             <LegendItem color="#06b6d4" label="Interface" />
             <LegendItem color="#6b7280" label="Other" />
+          </div>
+          <div className="text-xs text-slate-500 mb-2 mt-3">Edges</div>
+          <div className="flex flex-col gap-1.5">
+            <LegendItem color="#3b82f6" label="Calls" isEdge />
+            <LegendItem color="#10b981" label="Imports" isEdge />
+            <LegendItem color="#f59e0b" label="Extends" isEdge />
+            <LegendItem color="#8b5cf6" label="Implements" isEdge />
+          </div>
+          <div className="text-xs text-slate-500 mb-2 mt-3">Classification</div>
+          <div className="flex flex-col gap-1.5">
+            <LegendItem color="#10b981" label="Domain" isDashed />
+            <LegendItem color="#f59e0b" label="Infrastructure" isDashed />
           </div>
         </div>
       </div>
@@ -540,10 +946,29 @@ function FilterButton({
   );
 }
 
-function LegendItem({ color, label }: { color: string; label: string }) {
+function LegendItem({
+  color,
+  label,
+  isEdge,
+  isDashed,
+}: {
+  color: string;
+  label: string;
+  isEdge?: boolean;
+  isDashed?: boolean;
+}) {
   return (
     <div className="flex items-center gap-2">
-      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+      {isEdge ? (
+        <div className="w-4 h-0.5" style={{ backgroundColor: color }} />
+      ) : isDashed ? (
+        <div
+          className="w-3 h-3 rounded-full border-2"
+          style={{ borderColor: color, borderStyle: 'dashed' }}
+        />
+      ) : (
+        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+      )}
       <span className="text-xs text-slate-400">{label}</span>
     </div>
   );

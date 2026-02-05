@@ -11,6 +11,19 @@ import type { UCEFile } from "../../types/uce.js";
 import type { Node as SyntaxNode, Tree } from "web-tree-sitter";
 
 /**
+ * Result of parsing that includes both UCE and raw tree.
+ * Used for call extraction which needs access to the AST.
+ */
+export interface ParsedFileWithTree {
+  /** Parsed file in UCE format */
+  uceFile: UCEFile;
+  /** Raw Tree-sitter parse tree */
+  tree: Tree;
+  /** Original source code */
+  sourceCode: string;
+}
+
+/**
  * Parser interface for converting source code to UCE format.
  *
  * @example
@@ -33,6 +46,15 @@ export interface IParser {
    * @throws UnsupportedLanguageError if language not supported
    */
   parseFile(filePath: string): Promise<UCEFile>;
+
+  /**
+   * Parse a file from disk and return both UCE and the parse tree.
+   * This is needed for call extraction which requires access to the raw AST.
+   * @param filePath - Absolute path to source file
+   * @throws FileNotFoundError if file doesn't exist
+   * @throws UnsupportedLanguageError if language not supported
+   */
+  parseFileWithTree(filePath: string): Promise<ParsedFileWithTree>;
 
   /**
    * Parse source code string

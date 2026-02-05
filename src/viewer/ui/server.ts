@@ -1439,17 +1439,37 @@ export class ViewerServer {
     _params: RouteParams
   ): Promise<void> {
     try {
+      // Get all justifications to count by category
+      const justifications = await this.viewer.listJustifications({ limit: 10000 });
       const stats = await this.viewer.getJustificationStats();
 
-      // Transform generic stats to classification structure
+      // Count by category
+      const byCategory: Record<string, number> = {
+        domain: 0,
+        infrastructure: 0,
+        unknown: 0,
+      };
+
+      const bySubCategory: Record<string, number> = {};
+
+      for (const j of justifications) {
+        const category = j.category || "unknown";
+        byCategory[category] = (byCategory[category] || 0) + 1;
+
+        // Count subcategories (domain areas or architectural patterns)
+        const subCategory = j.category === "domain" ? j.domain : j.architecturalPattern;
+        if (subCategory) {
+          bySubCategory[subCategory] = (bySubCategory[subCategory] || 0) + 1;
+        }
+      }
+
+      // Add unclassified entities
+      byCategory.unknown = stats.totalEntities - justifications.length;
+
       this.sendJSON(res, {
-        total: stats.justifiedEntities,
-        byCategory: {
-          domain: 0,
-          infrastructure: 0,
-          unknown: stats.totalEntities - stats.justifiedEntities,
-        },
-        bySubCategory: {},
+        total: justifications.length,
+        byCategory,
+        bySubCategory,
       });
     } catch (error) {
       this.sendError(res, 500, "Failed to get classification stats", error);
