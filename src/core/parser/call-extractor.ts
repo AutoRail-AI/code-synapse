@@ -199,6 +199,12 @@ export class CallExtractor {
     this.walkNode(node, (child) => {
       // Track when entering a function
       if (this.isFunctionNode(child)) {
+        // Avoid infinite recursion: if we're visiting the node we started with (which is a function),
+        // we should proceed to walk its children instead of recurring on itself.
+        if (child.id === node.id) {
+          return true;
+        }
+
         const fnName = this.getFunctionName(child) || "<anonymous>";
         calls.push(...this.extractCalls(child, child, fnName));
         return false; // Don't recurse, we handled it

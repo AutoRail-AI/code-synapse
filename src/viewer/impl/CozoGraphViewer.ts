@@ -2054,6 +2054,250 @@ export class CozoGraphViewer implements IGraphViewer {
     }
   }
 
+  // ===========================================================================
+  // Graph Structure (New)
+  // ===========================================================================
+
+  async getGraphStructure(options?: {
+    centerNodeId?: string;
+    depth?: number;
+    nodeKinds?: string[];
+    edgeKinds?: string[];
+    limit?: number;
+  }): Promise<{
+    nodes: Array<{
+      id: string;
+      label: string;
+      kind: string;
+      properties?: Record<string, any>;
+    }>;
+    edges: Array<{
+      source: string;
+      target: string;
+      kind: string;
+      weight?: number;
+    }>;
+  }> {
+    const limit = options?.limit ?? 1000;
+    const nodeKinds = options?.nodeKinds ?? ["file", "function", "class", "interface"];
+    const edgeKinds = options?.edgeKinds ?? ["calls", "imports", "extends", "implements", "contains"];
+
+    const nodes: Array<{
+      id: string;
+      label: string;
+      kind: string;
+      properties?: Record<string, any>;
+    }> = [];
+
+    const edges: Array<{
+      source: string;
+      target: string;
+      kind: string;
+      weight?: number;
+    }> = [];
+
+    try {
+      // 1. Fetch Nodes
+      const nodePromises: Promise<any>[] = [];
+
+      if (nodeKinds.includes("file")) {
+        nodePromises.push(
+          this.store.query<{ id: string; relative_path: string }>(
+            `?[id, relative_path] := *file{id, relative_path} :limit ${limit}`
+          ).then(r => r.rows.map(row => ({
+            id: row.id,
+            label: row.relative_path,
+            kind: "file"
+          })))
+        );
+      }
+
+      if (nodeKinds.includes("function")) {
+        nodePromises.push(
+          this.store.query<{ id: string; name: string }>(
+            `?[id, name] := *function{id, name} :limit ${limit}`
+          ).then(r => r.rows.map(row => ({
+            id: row.id,
+            label: row.name,
+            kind: "function"
+          })))
+        );
+      }
+
+      if (nodeKinds.includes("class")) {
+        nodePromises.push(
+          this.store.query<{ id: string; name: string }>(
+            `?[id, name] := *class{id, name} :limit ${limit}`
+          ).then(r => r.rows.map(row => ({
+            id: row.id,
+            label: row.name,
+            kind: "class"
+          })))
+        );
+      }
+
+      if (nodeKinds.includes("interface")) {
+        nodePromises.push(
+          this.store.query<{ id: string; name: string }>(
+            `?[id, name] := *interface{id, name} :limit ${limit}`
+          ).then(r => r.rows.map(row => ({
+            id: row.id,
+            label: row.name,
+            kind: "interface"
+          })))
+        );
+      }
+
+      const nodeResults = await Promise.all(nodePromises);
+      nodeResults.forEach(batch => nodes.push(...batch));
+
+
+      // 2. Fetch Edges
+      const edgePromises: Promise<any>[] = [];
+
+      if (edgeKinds.includes("calls")) {
+        edgePromises.push(
+          this.store.query<{ from_id: string; to_id: string }>(
+            `?[from_id, to_id] := *calls{from_id, to_id} :limit ${limit * 5}`
+          ).then(r => r.rows.map(row => ({
+            source: row.from_id,
+            target: row.to_id,
+            kind: "calls"
+          })))
+        );
+      }
+
+      if (edgeKinds.includes("imports")) {
+        edgePromises.push(
+          this.store.query<{ from_id: string; to_id: string }>(
+            `?[from_id, to_id] := *imports{from_id, to_id} :limit ${limit * 5}`
+          ).then(r => r.rows.map(row => ({
+            source: row.from_id,
+            target: row.to_id,
+            kind: "imports"
+          })))
+        );
+      }
+
+      if (edgeKinds.includes("extends")) {
+        edgePromises.push(
+          this.store.query<{ from_id: string; to_id: string }>(
+            `?[from_id, to_id] := *extends{from_id, to_id} :limit ${limit * 5}`
+          ).then(r => r.rows.map(row => ({
+            source: row.from_id,
+            target: row.to_id,
+            kind: "extends"
+          })))
+        );
+      }
+
+      if (edgeKinds.includes("implements")) {
+        edgePromises.push(
+          this.store.query<{ from_id: string; to_id: string }>(
+            `?[from_id, to_id] := *implements{from_id, to_id} :limit ${limit * 5}`
+          ).then(r => r.rows.map(row => ({
+            source: row.from_id,
+            target: row.to_id,
+            kind: "implements"
+          })))
+        );
+      }
+
+      // 'Contains' relationship (file -> function/class)
+      if (edgeKinds.includes("contains")) {
+        edgePromises.push(
+          this.store.query<{ id: string; file_id: string }>(
+            `?[id, file_id] := *function{id, file_id} :limit ${limit}`
+          ).then(r => r.rows.map(row => ({
+            source: row.file_id,
+            target: row.id,
+            kind: "contains"
+          })))
+        );
+        edgePromises.push(
+          this.store.query<{ id: string; file_id: string }>(
+            `?[id, file_id] := *class{id, file_id} :limit ${limit}`
+          ).then(r => r.rows.map(row => ({
+            source: row.file_id,
+            target: row.id,
+            kind: "contains"
+          })))
+        );
+      }
+
+      const edgeResults = await Promise.all(edgePromises);
+      edgeResults.forEach(batch => edges.push(...batch));
+
+      // Filter edges to ensure both source and target exist in nodes
+      // (Optimization: Map for O(1) lookup)
+      const nodeIds = new Set(nodes.map(n => n.id));
+      const validEdges = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+
+      // 3. Enrich nodes with justification data for Knowledge Explorer
+      const nodeIdList = nodes.map(n => n.id);
+      const justificationMap = new Map<string, {
+        purposeSummary?: string;
+        featureContext?: string;
+        classification?: string;
+        confidence?: number;
+        businessValue?: string;
+      }>();
+
+      if (nodeIdList.length > 0) {
+        try {
+          const justResult = await this.store.query<{
+            entity_id: string;
+            purpose_summary: string;
+            feature_context: string;
+            category: string;
+            business_value: string;
+            confidence_score: number;
+          }>(
+            `?[entity_id, purpose_summary, feature_context, category, business_value, confidence_score] :=
+              *justification{entity_id, purpose_summary, feature_context, category, business_value, confidence_score},
+              entity_id in $ids`,
+            { ids: nodeIdList }
+          );
+
+          for (const row of justResult.rows) {
+            justificationMap.set(row.entity_id, {
+              purposeSummary: row.purpose_summary,
+              featureContext: row.feature_context,
+              classification: row.category, // category is the classification (domain/infrastructure)
+              confidence: row.confidence_score,
+              businessValue: row.business_value,
+            });
+          }
+        } catch (justErr) {
+          // Justification data is optional; log but continue
+          console.warn("Could not enrich nodes with justification data:", justErr);
+        }
+      }
+
+      // Merge justification data into nodes
+      const enrichedNodes = nodes.map(node => {
+        const justData = justificationMap.get(node.id);
+        return {
+          ...node,
+          purposeSummary: justData?.purposeSummary,
+          featureContext: justData?.featureContext,
+          classification: justData?.classification,
+          confidence: justData?.confidence,
+          businessValue: justData?.businessValue,
+        };
+      });
+
+      return {
+        nodes: enrichedNodes,
+        edges: validEdges
+      };
+
+    } catch (error) {
+      console.error("Failed to get graph structure", error);
+      return { nodes: [], edges: [] };
+    }
+  }
+
   /**
    * Get ancestors (parent chain) of a justification
    */

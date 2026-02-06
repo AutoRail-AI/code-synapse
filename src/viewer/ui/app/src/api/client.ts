@@ -120,6 +120,11 @@ export interface EntitySummary {
   justification?: string;
   classification?: 'domain' | 'infrastructure';
   subCategory?: string;
+  // Additional justification fields for rich display
+  businessValue?: string;
+  featureContext?: string;
+  detailedDescription?: string;
+  tags?: string[];
 }
 
 export interface EntityDetail extends EntitySummary {
@@ -214,6 +219,7 @@ export interface GraphData {
     kind: string;
     confidence?: number;
     classification?: string;
+    direction?: 'root' | 'outgoing' | 'incoming';
   }>;
   edges: Array<{
     source: string;

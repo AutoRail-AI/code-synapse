@@ -432,6 +432,17 @@ export class ParserManager implements AsyncDisposable {
   }
 
   /**
+   * Gets the language object for a specific language.
+   */
+  getLanguage(language: SupportedLanguage): Language {
+    const lang = this.languages.get(language);
+    if (!lang) {
+      throw new Error(`Language grammar not loaded for: ${language}. The grammar may not have a pre-built WASM file.`);
+    }
+    return lang;
+  }
+
+  /**
    * Checks if a language parser is available.
    */
   hasParser(language: SupportedLanguage): boolean {

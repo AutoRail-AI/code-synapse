@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { Tree, Node } from "web-tree-sitter";
+import Parser, { type Tree, type Node, type Language, Query } from "web-tree-sitter";
 import type {
   UCEFile,
   UCEFunction,
@@ -29,6 +29,7 @@ import type {
   UCEParseError,
   UCEVisibility,
 } from "../../types/uce.js";
+import { IMPORT_QUERIES } from "./queries.js";
 
 // =============================================================================
 // Types
@@ -148,7 +149,7 @@ const INTERFACE_NODE_TYPES: Record<string, string[]> = {
  * Language-specific node type mappings for import extraction
  * Note: Prefixed with underscore as currently unused but kept for reference
  */
-const _IMPORT_NODE_TYPES: Record<string, string[]> = {
+const IMPORT_NODE_TYPES: Record<string, string[]> = {
   typescript: ["import_statement"],
   javascript: ["import_statement"],
   tsx: ["import_statement"],
@@ -226,6 +227,7 @@ export class ASTTransformer {
   private sourceCode: string = "";
   private filePath: string = "";
   private language: string = "";
+  private grammarLanguage: Language | null = null;
 
   constructor(options: TransformOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -238,11 +240,13 @@ export class ASTTransformer {
     tree: Tree,
     sourceCode: string,
     filePath: string,
-    language: string
+    language: string,
+    grammarLanguage?: Language
   ): UCEFile {
     this.sourceCode = sourceCode;
     this.filePath = filePath;
     this.language = language;
+    this.grammarLanguage = grammarLanguage ?? null;
 
     const rootNode = tree.rootNode;
     const errors: UCEParseError[] = this.collectErrors(rootNode);
@@ -4923,9 +4927,19 @@ export class ASTTransformer {
    * Extracts all import statements.
    */
   private extractImports(rootNode: SyntaxNode): UCEImport[] {
+    // Try query-based extraction first
+    if (this.grammarLanguage && IMPORT_QUERIES[this.language]) {
+      const queryImports = this.tryQueryExtraction(rootNode);
+      if (queryImports && queryImports.length > 0) {
+        return queryImports;
+      }
+    }
+
+    // Fallback to manual traversal for JS/TS/others without queries
     const imports: UCEImport[] = [];
 
-    this.findNodes(rootNode, ["import_statement"]).forEach((node) => {
+    const nodeTypes = IMPORT_NODE_TYPES[this.language] ?? IMPORT_NODE_TYPES["typescript"] ?? [];
+    this.findNodes(rootNode, nodeTypes).forEach((node) => {
       const imp = this.parseImportNode(node);
       if (imp) {
         imports.push(imp);
@@ -4933,6 +4947,100 @@ export class ASTTransformer {
     });
 
     return imports;
+  }
+
+  /**
+   * Tries to extract imports using Tree-sitter queries.
+   */
+  private tryQueryExtraction(rootNode: SyntaxNode): UCEImport[] | null {
+    if (!this.grammarLanguage) return null;
+
+    const queryString = IMPORT_QUERIES[this.language];
+    if (!queryString) return null;
+
+    try {
+      // Use Query constructor
+      const query = new Query(this.grammarLanguage, queryString);
+      const matches = query.matches(rootNode);
+      const imports: UCEImport[] = [];
+
+      for (const match of matches) {
+        let source = "";
+        const specifiers: UCEImportSpecifier[] = [];
+        let location = this.getLocation(rootNode); // Default fallback
+
+        for (const capture of match.captures) {
+          if (capture.name === "import") {
+            location = this.getLocation(capture.node);
+          } else if (capture.name === "import_source") {
+            source = this.stripQuotes(capture.node.text);
+          } else if (capture.name === "import_name") {
+            // Heuristic for simple imports: capture text is the name
+            specifiers.push({
+              local: capture.node.text,
+              imported: capture.node.text, // Assume simple import for now
+              type: "named",
+            });
+            // If we don't have a source yet (like in Java fully qualified name), derive it
+            if (!source && this.language === "java") {
+              // java: import com.example.Foo; -> source: com.example, import: Foo ?
+              // Actually Java import IS the source + name. 
+              // For Java, let's treat the whole text as source if not separated.
+              // But our query was (scoped_identifier) @import_name.
+              // And we want to support import com.example.UserService;
+              // In UCE, source is usually the module path. Java doesn't strictly have module paths like JS.
+              // We can use the full package name as source? 
+              // Or follow JS convention: source = package/file, specifiers = class.
+
+              // Better: UCEImport.source = "com.example.service.UserService"
+              // specifiers = [{ local: "UserService", imported: "UserService", ... }]
+
+              const text = capture.node.text;
+              source = text;
+
+              const parts = text.split('.');
+              const className = parts[parts.length - 1];
+              if (className) {
+                const lastSpec = specifiers[specifiers.length - 1];
+                if (lastSpec) {
+                  lastSpec.local = className;
+                  lastSpec.imported = className;
+                }
+              }
+            }
+          }
+        }
+
+        // Post-processing for Java if source is empty but we have specifiers
+        if (this.language === "java" && !source && specifiers.length > 0 && specifiers[0]) {
+          // Our query captures the whole scoped_identifier as @import_name
+          // e.g. com.example.service.UserService
+          const fullName = specifiers[0].local;
+          source = fullName; // Treat the full name as the source resource
+          const parts = fullName.split('.');
+          const className = parts[parts.length - 1];
+          if (className) {
+            specifiers[0].local = className;
+            specifiers[0].imported = className;
+          }
+        }
+
+        if (source) {
+          imports.push({
+            kind: "import",
+            source,
+            specifiers,
+            isTypeOnly: false,
+            isSideEffect: specifiers.length === 0,
+            location,
+          });
+        }
+      }
+      return imports;
+    } catch (e) {
+      console.error(`Failed to execute query for ${this.language}`, e);
+      return null;
+    }
   }
 
   /**

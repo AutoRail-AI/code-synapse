@@ -100,13 +100,32 @@ export function MonacoViewer({
         const codeLensProvider = monaco.languages.registerCodeLensProvider(language, {
             provideCodeLenses: () => {
                 const lenses = entities.map((entity) => {
-                    const confidence = entity.confidence
-                        ? `${Math.round(entity.confidence * 100)}% confidence`
-                        : 'Not analyzed';
-                    const classification = entity.classification
-                        ? `${entity.classification}`
-                        : '';
-                    const label = [confidence, classification].filter(Boolean).join(' • ');
+                    // Build informative label
+                    const parts: string[] = [];
+
+                    // Confidence indicator
+                    if (entity.confidence) {
+                        const pct = Math.round(entity.confidence * 100);
+                        const icon = pct >= 80 ? '✓' : pct >= 50 ? '~' : '?';
+                        parts.push(`${icon} ${pct}%`);
+                    } else {
+                        parts.push('?');
+                    }
+
+                    // Classification with sub-category
+                    if (entity.classification) {
+                        const category = entity.subCategory
+                            ? `${entity.classification}/${entity.subCategory}`
+                            : entity.classification;
+                        parts.push(category);
+                    }
+
+                    // Feature context (shortened)
+                    if (entity.featureContext && entity.featureContext.length <= 30) {
+                        parts.push(`"${entity.featureContext}"`);
+                    }
+
+                    const label = parts.join(' • ');
 
                     return {
                         range: new monaco.Range(entity.startLine, 1, entity.startLine, 1),
@@ -238,23 +257,50 @@ export function MonacoViewer({
                     const callers = relationships.filter(r => r.type === 'called_by').length;
                     const callees = relationships.filter(r => r.type === 'calls').length;
 
+                    // Build header with name, kind, and classification badge
+                    const classificationBadge = entity.classification
+                        ? ` • \`${entity.classification}\``
+                        : '';
+                    const confidenceBadge = entity.confidence
+                        ? ` • ${Math.round(entity.confidence * 100)}% confidence`
+                        : '';
+
                     const contents = [
-                        { value: `**${entity.name}** \`${entity.kind}\`` },
+                        { value: `**${entity.name}** \`${entity.kind}\`${classificationBadge}${confidenceBadge}` },
                     ];
 
+                    // Purpose Summary (main justification)
                     if (entity.justification) {
-                        contents.push({ value: `> ${entity.justification}` });
+                        contents.push({ value: `---\n**Purpose:** ${entity.justification}` });
                     }
 
-                    if (entity.classification) {
-                        contents.push({ value: `Classification: **${entity.classification}**` });
+                    // Business Value
+                    if (entity.businessValue) {
+                        contents.push({ value: `**Business Value:** ${entity.businessValue}` });
                     }
 
+                    // Feature Context
+                    if (entity.featureContext) {
+                        contents.push({ value: `**Feature:** ${entity.featureContext}` });
+                    }
+
+                    // Sub-category (domain type or architectural pattern)
+                    if (entity.subCategory) {
+                        contents.push({ value: `**Category:** ${entity.subCategory}` });
+                    }
+
+                    // Tags
+                    if (entity.tags && entity.tags.length > 0) {
+                        contents.push({ value: `**Tags:** ${entity.tags.join(', ')}` });
+                    }
+
+                    // Relationships
                     if (callers > 0 || callees > 0) {
-                        contents.push({ value: `📊 ${callers} callers • ${callees} callees` });
+                        contents.push({ value: `---\n📊 **${callers}** callers • **${callees}** callees` });
                     }
 
-                    contents.push({ value: `_Press F12 to go to definition, Shift+F12 for references_` });
+                    // Navigation hint
+                    contents.push({ value: `---\n_F12: go to definition • Shift+F12: find references_` });
 
                     return {
                         range: new monaco.Range(

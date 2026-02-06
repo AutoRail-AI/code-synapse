@@ -209,20 +209,29 @@ export const useSearchStore = create<SearchState>()(
 );
 
 // Graph view state
+export type GraphLens = 'structure' | 'business' | 'infra' | 'pattern';
+
 interface GraphState {
   nodes: Array<{
     id: string;
     label: string;
     kind: string;
     confidence?: number; // 0-1
-    classification?: 'domain' | 'infrastructure' | 'unknown';
+    classification?: 'domain' | 'infrastructure' | 'test' | 'config' | 'unknown';
+    // New fields for Explorer
+    featureContext?: string;
+    businessValue?: string;
+    purposeSummary?: string;
+    complexity?: number;
+    owner?: string;
   }>;
   edges: Array<{ source: string; target: string; type: string }>;
   setGraphData: (nodes: GraphState['nodes'], edges: GraphState['edges']) => void;
   focusedNode: string | null;
   setFocusedNode: (id: string | null) => void;
-  layout: 'force' | 'hierarchy' | 'radial';
-  setLayout: (layout: GraphState['layout']) => void;
+  // Replace layout with Lens
+  activeLens: GraphLens;
+  setActiveLens: (lens: GraphLens) => void;
 }
 
 export const useGraphStore = create<GraphState>()(
@@ -233,8 +242,8 @@ export const useGraphStore = create<GraphState>()(
       setGraphData: (nodes, edges) => set({ nodes, edges }),
       focusedNode: null,
       setFocusedNode: (id) => set({ focusedNode: id }),
-      layout: 'force',
-      setLayout: (layout) => set({ layout: layout }),
+      activeLens: 'structure',
+      setActiveLens: (lens) => set({ activeLens: lens }),
     }),
     { name: 'code-synapse-graph' }
   )

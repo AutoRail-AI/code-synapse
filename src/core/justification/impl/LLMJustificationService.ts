@@ -248,24 +248,52 @@ export class LLMJustificationService implements IJustificationService {
     // Step 0: Get file hashes for incremental check
     const entityFileHashes = await this.getEntityFileHashes(entityIds);
 
+    // Track reasons for justification
+    const reasons = { new: 0, hashMismatch: 0, lowConfidence: 0, forced: 0 };
+    const sampleHashMismatch: { id: string; old: string; new: string }[] = [];
+
     // Filter entities that need justification
     const toProcess = entityIds.filter((id) => {
-      if (opts.force) return true;
+      if (opts.force) {
+        reasons.forced++;
+        return true;
+      }
       const existing_j = existing.get(id);
-      if (!existing_j) return true;
+      if (!existing_j) {
+        reasons.new++;
+        return true;
+      }
 
       // Check for file hash mismatch (incremental update)
       const currentHash = entityFileHashes.get(id);
       if (currentHash && existing_j.fileHash !== currentHash) {
+        reasons.hashMismatch++;
+        if (sampleHashMismatch.length < 3) {
+          sampleHashMismatch.push({ id, old: existing_j.fileHash || "", new: currentHash });
+        }
         return true; // File changed, re-justify
       }
 
-      return existing_j.confidenceScore < opts.minConfidence!;
+      if (existing_j.confidenceScore < opts.minConfidence!) {
+        reasons.lowConfidence++;
+        return true;
+      }
+
+      return false;
     });
 
     result.stats.skipped = entityIds.length - toProcess.length;
 
-    logger.debug({ total: entityIds.length, toProcess: toProcess.length }, "Starting justification");
+    logger.info(
+      {
+        total: entityIds.length,
+        toProcess: toProcess.length,
+        skipped: result.stats.skipped,
+        reasons,
+        sampleHashMismatch: sampleHashMismatch.length > 0 ? sampleHashMismatch : undefined
+      },
+      "Starting justification analysis"
+    );
 
     // Step 1: Bulk fetch entity types (major optimization - single query instead of N*7 queries)
     const entityTypeMap = await this.getEntityTypes(toProcess);
@@ -341,6 +369,7 @@ export class LLMJustificationService implements IJustificationService {
             evidenceSources: [entity.filePath],
             createdAt: now,
             updatedAt: now,
+            fileHash: entityFileHashes.get(entity.id) || "",
             ...(await this.calculateDependencyMetrics(entity.id, entityType)),
           });
 
@@ -471,9 +500,10 @@ export class LLMJustificationService implements IJustificationService {
             );
 
             // Fallback to single processing for this batch
+            const fallbackHashes = await this.getFileHashes(batchEntities.map(e => e.filePath));
             for (const entity of batchEntities) {
               try {
-                const justification = await this.justifyEntity(entity.id, existing, opts);
+                const justification = await this.justifyEntity(entity.id, existing, opts, fallbackHashes.get(entity.filePath));
                 if (justification.clarificationPending) {
                   result.needingClarification.push(justification);
                   result.stats.pendingClarification++;
@@ -509,7 +539,7 @@ export class LLMJustificationService implements IJustificationService {
               });
             }
 
-            const justification = await this.justifyEntity(entity.id, existing, opts);
+            const justification = await this.justifyEntity(entity.id, existing, opts, entityFileHashes.get(entity.id));
 
             if (justification.clarificationPending) {
               result.needingClarification.push(justification);
@@ -937,7 +967,8 @@ export class LLMJustificationService implements IJustificationService {
   private async justifyEntity(
     entityId: string,
     existingJustifications: Map<string, EntityJustification>,
-    options: JustifyOptions
+    options: JustifyOptions,
+    fileHash?: string
   ): Promise<EntityJustification> {
     // Determine entity type
     const entityType = await this.getEntityType(entityId);
@@ -1007,7 +1038,7 @@ export class LLMJustificationService implements IJustificationService {
       entityType,
       name: context.entity.name,
       filePath: context.entity.filePath,
-      fileHash: (await this.getFileHashes([context.entity.filePath])).get(context.entity.filePath) || "",
+      fileHash: fileHash || (await this.getFileHashes([context.entity.filePath])).get(context.entity.filePath) || "",
       purposeSummary: llmResponse.purposeSummary,
       businessValue: llmResponse.businessValue,
       featureContext: llmResponse.featureContext,
@@ -1019,7 +1050,7 @@ export class LLMJustificationService implements IJustificationService {
       reasoning: llmResponse.reasoning,
       evidenceSources: [context.entity.filePath],
       parentJustificationId: context.parentContext?.justification?.id || null,
-      hierarchyDepth: context.parentContext ? context.parentContext.justification!.hierarchyDepth + 1 : 0,
+      hierarchyDepth: context.parentContext?.justification ? context.parentContext.justification.hierarchyDepth + 1 : 0,
       clarificationPending: llmResponse.needsClarification,
       category: llmResponse.category,
       domain: llmResponse.domain,
@@ -2297,11 +2328,11 @@ export class LLMJustificationService implements IJustificationService {
           `?[id, hash] :=
             id in $entityIds,
             (
-              (*function{id, fileId}, *file{id: fileId, hash}) or
-              (*class{id, fileId}, *file{id: fileId, hash}) or
-              (*interface{id, fileId}, *file{id: fileId, hash}) or
-              (*type_alias{id, fileId}, *file{id: fileId, hash}) or
-              (*variable{id, fileId}, *file{id: fileId, hash}) or
+              (*function{id, file_id: fileId}, *file{id: fileId, hash}) or
+              (*class{id, file_id: fileId}, *file{id: fileId, hash}) or
+              (*interface{id, file_id: fileId}, *file{id: fileId, hash}) or
+              (*type_alias{id, file_id: fileId}, *file{id: fileId, hash}) or
+              (*variable{id, file_id: fileId}, *file{id: fileId, hash}) or
               (*file{id, hash})
             )`,
           { entityIds: batch }
@@ -2332,14 +2363,14 @@ export class LLMJustificationService implements IJustificationService {
     for (let i = 0; i < uniquePaths.length; i += BATCH_SIZE) {
       const batch = uniquePaths.slice(i, i + BATCH_SIZE);
       try {
-        const queryResult = await this.graphStore.query<{ path: string; hash: string }>(
-          `?[path, hash] := *file{path, hash}, path in $paths`,
+        const queryResult = await this.graphStore.query<{ relative_path: string; hash: string }>(
+          `?[relative_path, hash] := *file{relative_path, hash}, relative_path in $paths`,
           { paths: batch }
         );
 
         for (const row of queryResult.rows) {
           if (row.hash) {
-            result.set(row.path, row.hash);
+            result.set(row.relative_path, row.hash);
           }
         }
       } catch (error) {

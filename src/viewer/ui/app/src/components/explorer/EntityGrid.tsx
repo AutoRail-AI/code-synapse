@@ -143,9 +143,19 @@ function GroupButton({ active, onClick, label }: { active: boolean; onClick: () 
 }
 
 function EntityRow({ entity, isSelected, onClick, indented }: { entity: EntitySummary; isSelected: boolean; onClick: () => void; indented?: boolean }) {
+    // Build tooltip content
+    const tooltipParts: string[] = [];
+    if (entity.justification) tooltipParts.push(`Purpose: ${entity.justification}`);
+    if (entity.businessValue) tooltipParts.push(`Business Value: ${entity.businessValue}`);
+    if (entity.featureContext) tooltipParts.push(`Feature: ${entity.featureContext}`);
+    if (entity.subCategory) tooltipParts.push(`Category: ${entity.subCategory}`);
+    if (entity.tags?.length) tooltipParts.push(`Tags: ${entity.tags.join(', ')}`);
+    const tooltipText = tooltipParts.join('\n\n') || 'No insights available';
+
     return (
         <tr
             onClick={onClick}
+            title={tooltipText}
             className={`cursor-pointer transition-colors ${isSelected
                 ? 'bg-blue-900/40 border-l-2 border-blue-500'
                 : 'hover:bg-slate-800/50 border-l-2 border-transparent'
@@ -154,9 +164,16 @@ function EntityRow({ entity, isSelected, onClick, indented }: { entity: EntitySu
             <td className={`p-3 ${indented ? 'pl-8' : ''}`}>
                 <div className="flex items-center gap-2">
                     <EntityIcon kind={entity.kind} />
-                    <span className={`text-sm ${isSelected ? 'text-blue-200' : 'text-slate-300'}`}>
-                        {entity.name}
-                    </span>
+                    <div className="flex flex-col min-w-0">
+                        <span className={`text-sm ${isSelected ? 'text-blue-200' : 'text-slate-300'}`}>
+                            {entity.name}
+                        </span>
+                        {entity.justification && (
+                            <span className="text-[10px] text-slate-500 truncate max-w-[200px]">
+                                {entity.justification}
+                            </span>
+                        )}
+                    </div>
                 </div>
             </td>
             <td className="p-3">
@@ -181,14 +198,21 @@ function EntityRow({ entity, isSelected, onClick, indented }: { entity: EntitySu
                 </div>
             </td>
             <td className="p-3">
-                {entity.classification && (
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${entity.classification === 'domain'
-                        ? 'bg-indigo-900/50 text-indigo-300 border border-indigo-700/50'
-                        : 'bg-slate-700 text-slate-300'
-                        }`}>
-                        {entity.classification}
-                    </span>
-                )}
+                <div className="flex items-center gap-1.5">
+                    {entity.classification && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${entity.classification === 'domain'
+                            ? 'bg-indigo-900/50 text-indigo-300 border border-indigo-700/50'
+                            : 'bg-slate-700 text-slate-300'
+                            }`}>
+                            {entity.classification}
+                        </span>
+                    )}
+                    {entity.subCategory && (
+                        <span className="text-[10px] text-slate-500">
+                            {entity.subCategory}
+                        </span>
+                    )}
+                </div>
             </td>
         </tr>
     );

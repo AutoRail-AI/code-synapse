@@ -102,19 +102,79 @@ export function EntityInsightsPanel({
                     />
                 </div>
 
-                {/* Business Justification */}
-                <div className="bg-slate-800/40 rounded-xl p-4 border border-slate-700/50">
-                    <h4 className="text-xs font-semibold text-slate-500 uppercase mb-3 flex items-center gap-2">
+                {/* Business Context Section */}
+                <div className="bg-slate-800/40 rounded-xl p-4 border border-slate-700/50 space-y-4">
+                    <h4 className="text-xs font-semibold text-slate-500 uppercase flex items-center gap-2">
                         <Brain className="w-3 h-3" />
                         Business Context
                     </h4>
-                    <p className="text-sm text-slate-300 leading-relaxed">
-                        {entity.justification || (
-                            <span className="text-slate-600 italic">
-                                No business justification extracted. Run indexing to analyze context.
-                            </span>
-                        )}
-                    </p>
+
+                    {/* Purpose Summary */}
+                    <div>
+                        <div className="text-xs text-slate-500 mb-1">Purpose</div>
+                        <p className="text-sm text-slate-300 leading-relaxed">
+                            {entity.justification || (
+                                <span className="text-slate-600 italic">
+                                    No purpose summary extracted. Run <code className="bg-slate-900 px-1 rounded text-[10px]">code-synapse justify</code> to analyze.
+                                </span>
+                            )}
+                        </p>
+                    </div>
+
+                    {/* Business Value */}
+                    {entity.businessValue && (
+                        <div>
+                            <div className="text-xs text-slate-500 mb-1">Business Value</div>
+                            <p className="text-sm text-slate-400 leading-relaxed">
+                                {entity.businessValue}
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Feature Context */}
+                    {entity.featureContext && (
+                        <div>
+                            <div className="text-xs text-slate-500 mb-1">Feature</div>
+                            <div className="text-sm text-blue-400 bg-blue-400/10 px-2 py-1 rounded inline-block">
+                                {entity.featureContext}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Sub-category */}
+                    {entity.subCategory && (
+                        <div>
+                            <div className="text-xs text-slate-500 mb-1">Category</div>
+                            <div className="text-sm text-slate-300">
+                                {entity.classification && <span className="text-slate-500">{entity.classification} / </span>}
+                                {entity.subCategory}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Detailed Description */}
+                    {entity.detailedDescription && (
+                        <div>
+                            <div className="text-xs text-slate-500 mb-1">Details</div>
+                            <p className="text-sm text-slate-400 leading-relaxed">
+                                {entity.detailedDescription}
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Tags */}
+                    {entity.tags && entity.tags.length > 0 && (
+                        <div>
+                            <div className="text-xs text-slate-500 mb-1">Tags</div>
+                            <div className="flex flex-wrap gap-1.5">
+                                {entity.tags.map((tag, i) => (
+                                    <span key={i} className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">
+                                        {tag}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Location Info */}

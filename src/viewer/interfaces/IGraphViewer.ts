@@ -605,6 +605,35 @@ export interface IGraphViewer {
   getExternalDependencies(): Promise<ExternalDependency[]>;
 
   // ===========================================================================
+  // Graph Structure (New)
+  // ===========================================================================
+
+  /**
+   * Get the raw graph structure (nodes and edges)
+   * Designed for efficient bulk retrieval for visualization
+   */
+  getGraphStructure(options?: {
+    centerNodeId?: string;
+    depth?: number;
+    nodeKinds?: string[];
+    edgeKinds?: string[];
+    limit?: number;
+  }): Promise<{
+    nodes: Array<{
+      id: string;
+      label: string;
+      kind: string;
+      properties?: Record<string, any>;
+    }>;
+    edges: Array<{
+      source: string;
+      target: string;
+      kind: string;
+      weight?: number;
+    }>;
+  }>;
+
+  // ===========================================================================
   // Health
   // ===========================================================================
 

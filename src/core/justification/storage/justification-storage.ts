@@ -500,7 +500,7 @@ export class JustificationStorage {
           confidence_level, reasoning, evidence_sources, parent_justification_id,
           hierarchy_depth, clarification_pending, pending_questions, last_confirmed_by_user,
           confirmed_by_user_id, created_at, updated_at, version},
-        or(clarification_pending = true, confidence_score < 0.5)
+        clarification_pending = true || confidence_score < 0.5
       :order hierarchy_depth, -confidence_score`
     );
 

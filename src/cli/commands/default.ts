@@ -345,12 +345,20 @@ async function runJustification(
       console.log();
       console.log(chalk.yellow(`There are ${result.stats.pendingClarification} entities that need clarification.`));
 
+      // Pause logging briefly to let any async logs flush
+      await new Promise(resolve => setTimeout(resolve, 100));
+
       const rl = createReadlineInterface();
       const answer = await askQuestion(rl, chalk.white("Do you want to answer clarification questions now? (Y/n) "));
       rl.close();
 
       if (answer.toLowerCase() !== 'n' && answer.toLowerCase() !== 'no') {
-        await runInteractiveClarification(justificationService, false);
+        try {
+          await runInteractiveClarification(justificationService, false);
+        } catch (clarificationError) {
+          logger.error({ err: clarificationError }, "Interactive clarification failed");
+          console.error(chalk.red(`\nCLARIFICATION ERROR: ${clarificationError instanceof Error ? clarificationError.message : String(clarificationError)}\n`));
+        }
       }
     }
 

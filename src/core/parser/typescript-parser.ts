@@ -154,11 +154,13 @@ export class TypeScriptParser implements IParser, LanguageParser {
 
     // Transform to UCE
     const uceLanguage = this.mapLanguage(language);
+    const grammarLanguage = this.parserManager.getLanguage(language);
     const uceFile = this.transformer.transform(
       parseResult.tree,
       content,
       filePath,
-      uceLanguage
+      uceLanguage,
+      grammarLanguage
     );
 
     return {
@@ -191,12 +193,14 @@ export class TypeScriptParser implements IParser, LanguageParser {
 
     const parseResult = await this.parserManager.parseCode(code, supportedLang);
     const uceLanguage = this.mapLanguage(supportedLang);
+    const grammarLanguage = this.parserManager.getLanguage(supportedLang);
 
     return this.transformer.transform(
       parseResult.tree,
       code,
       "<inline>",
-      uceLanguage
+      uceLanguage,
+      grammarLanguage
     );
   }
 

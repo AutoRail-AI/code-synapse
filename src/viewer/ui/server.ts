@@ -576,7 +576,8 @@ export class ViewerServer {
       const classes = await this.viewer.listClasses({ limit: 1000 });
       const interfaces = await this.viewer.listInterfaces({ limit: 1000 });
 
-      const entities = [
+      // Build base entities and enhance with justification data
+      const rawEntities = [
         ...functions.map(f => ({
           id: f.id,
           name: f.name,
@@ -602,6 +603,30 @@ export class ViewerServer {
           endLine: i.endLine,
         })),
       ];
+
+      // Enhance with justification data
+      const entities = await Promise.all(
+        rawEntities.map(async (entity) => {
+          const justification = await this.viewer.getJustification(entity.id).catch((err) => {
+            logger.debug({ error: err, entityId: entity.id }, "Failed to get justification for entity");
+            return null;
+          });
+          return {
+            ...entity,
+            confidence: justification?.confidenceScore,
+            justification: justification?.purposeSummary,
+            classification: justification?.category,
+            subCategory: justification?.category === 'domain'
+              ? justification?.domain
+              : justification?.architecturalPattern,
+            // Additional justification fields for rich display
+            businessValue: justification?.businessValue,
+            featureContext: justification?.featureContext,
+            detailedDescription: justification?.detailedDescription,
+            tags: justification?.tags,
+          };
+        })
+      );
 
       this.sendJSON(res, entities);
     } catch (error) {
@@ -1025,51 +1050,21 @@ export class ViewerServer {
     res: http.ServerResponse,
     params: RouteParams
   ): Promise<void> {
-    const center = params.query.get("center");
+    const center = params.query.get("center") || undefined;
     const depth = parseInt(params.query.get("depth") || "2", 10);
-    const kinds = params.query.get("kinds")?.split(",") || [];
+    const kinds = params.query.get("kinds")?.split(",").filter(k => k.length > 0) || undefined;
+    const limit = parseInt(params.query.get("limit") || "1000", 10);
 
     try {
-      // Get entities and relationships to build graph
-      const [functions, classes, interfaces] = await Promise.all([
-        this.viewer.listFunctions({ limit: 500 }),
-        this.viewer.listClasses({ limit: 200 }),
-        this.viewer.listInterfaces({ limit: 200 }),
-      ]);
+      const graphData = await this.viewer.getGraphStructure({
+        centerNodeId: center,
+        depth,
+        nodeKinds: kinds,
+        edgeKinds: ["calls", "imports", "extends", "implements", "contains"],
+        limit
+      });
 
-      const nodes: Array<{ id: string; label: string; kind: string }> = [];
-      const edges: Array<{ source: string; target: string; type: string }> = [];
-
-      // Add function nodes
-      if (kinds.length === 0 || kinds.includes("function")) {
-        for (const fn of functions) {
-          nodes.push({ id: fn.id, label: fn.name, kind: "function" });
-        }
-      }
-
-      // Add class nodes
-      if (kinds.length === 0 || kinds.includes("class")) {
-        for (const cls of classes) {
-          nodes.push({ id: cls.id, label: cls.name, kind: "class" });
-        }
-      }
-
-      // Add interface nodes
-      if (kinds.length === 0 || kinds.includes("interface")) {
-        for (const iface of interfaces) {
-          nodes.push({ id: iface.id, label: iface.name, kind: "interface" });
-        }
-      }
-
-      // Get call relationships for functions
-      for (const fn of functions.slice(0, 100)) {
-        const callees = await this.viewer.getCallees(fn.id);
-        for (const callee of callees) {
-          edges.push({ source: fn.id, target: callee.id, type: "calls" });
-        }
-      }
-
-      this.sendJSON(res, { nodes, edges });
+      this.sendJSON(res, graphData);
     } catch (error) {
       this.sendError(res, 500, "Failed to generate graph data", error);
     }
@@ -1129,26 +1124,66 @@ export class ViewerServer {
     }
 
     try {
-      const importGraph = await this.viewer.getImportGraph(id, 2);
+      // The id parameter could be a file path or a file ID
+      // First, try to resolve it to a file ID if it looks like a path
+      let fileId = id;
+
+      if (id.includes('/') || id.includes('.')) {
+        // Looks like a path, try to find the file
+        const files = await this.viewer.listFiles({ limit: 10000 });
+        const file = files.find(f => f.relativePath === id || f.path === id);
+        if (file) {
+          fileId = file.id;
+        } else {
+          // File not found, return empty result
+          this.sendJSON(res, { nodes: [], edges: [] });
+          return;
+        }
+      }
+
+      const importGraph = await this.viewer.getImportGraph(fileId, 2);
 
       // Convert import graph to nodes and edges format
-      const nodes: Array<{ id: string; label: string; kind: string }> = [];
+      const nodes: Array<{ id: string; label: string; kind: string; direction?: string }> = [];
       const edges: Array<{ source: string; target: string; type: string }> = [];
       const visited = new Set<string>();
 
-      const traverse = (node: typeof importGraph) => {
-        if (visited.has(node.id)) return;
-        visited.add(node.id);
+      // Add root node
+      nodes.push({
+        id: importGraph.id,
+        label: importGraph.relativePath,
+        kind: "file",
+        direction: "root"
+      });
+      visited.add(importGraph.id);
 
-        nodes.push({ id: node.id, label: node.relativePath, kind: "file" });
-
-        for (const imp of node.imports) {
-          edges.push({ source: node.id, target: imp.id, type: "imports" });
-          traverse(imp);
+      // Add imports (files this file imports)
+      for (const imp of importGraph.imports) {
+        if (!visited.has(imp.id)) {
+          visited.add(imp.id);
+          nodes.push({
+            id: imp.id,
+            label: imp.relativePath,
+            kind: "file",
+            direction: "outgoing"
+          });
         }
-      };
+        edges.push({ source: importGraph.id, target: imp.id, type: "imports" });
+      }
 
-      traverse(importGraph);
+      // Add importers (files that import this file)
+      for (const importer of importGraph.importedBy) {
+        if (!visited.has(importer.id)) {
+          visited.add(importer.id);
+          nodes.push({
+            id: importer.id,
+            label: importer.relativePath,
+            kind: "file",
+            direction: "incoming"
+          });
+        }
+        edges.push({ source: importer.id, target: importGraph.id, type: "imports" });
+      }
 
       this.sendJSON(res, { nodes, edges });
     } catch (error) {
