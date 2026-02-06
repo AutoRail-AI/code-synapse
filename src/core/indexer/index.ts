@@ -207,11 +207,12 @@ export class Indexer {
       this.embeddingService.initialize(),
     ]);
 
-    // Create the coordinator for incremental indexing
+    // Create the coordinator for incremental indexing (with embedding service for Phase 1 hybrid search)
     this.coordinator = new IndexerCoordinator({
       parser: this.parser as unknown as import("../interfaces/IParser.js").IParser,
       store: this.graphStore,
       project: this.detectedProject,
+      embeddingService: this.embeddingService,
     });
 
     this.initialized = true;

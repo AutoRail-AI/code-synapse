@@ -47,5 +47,8 @@ Thumbs.db
 .code-synapse
 .code-synapse/*
 
+# Zoekt binaries (optional, from scripts/setup-zoekt.sh)
+bin/
+
 ./examples
 ./examples/**

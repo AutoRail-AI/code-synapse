@@ -224,7 +224,7 @@ export interface GraphData {
   edges: Array<{
     source: string;
     target: string;
-    type: string;
+    kind: string;  // API returns 'kind' not 'type'
   }>;
 }
 

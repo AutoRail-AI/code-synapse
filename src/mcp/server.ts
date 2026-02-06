@@ -17,6 +17,7 @@ import {
   ErrorCode,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
+import * as path from "node:path";
 import type { ProjectConfig } from "../types/index.js";
 import { createIndexer, type Indexer } from "../core/index.js";
 import { createStorageAdapter, type GraphDatabase } from "../core/graph/index.js";
@@ -85,6 +86,12 @@ import {
   type IEmbeddingService,
   type ISimilarityService,
 } from "../core/embeddings/index.js";
+import type { IGraphStore } from "../core/interfaces/IGraphStore.js";
+import {
+  ZoektManager,
+  ZOEKT_REINDEX_DEBOUNCE_MS,
+  HybridSearchService,
+} from "../core/search/index.js";
 
 const logger = createLogger("mcp-server");
 
@@ -105,6 +112,9 @@ let justificationService: IJustificationService | null = null;
 let changeLedger: IChangeLedger | null = null;
 let embeddingService: IEmbeddingService | null = null;
 let similarityService: ISimilarityService | null = null;
+let zoektManager: ZoektManager | null = null;
+let zoektReindexTimer: ReturnType<typeof setTimeout> | null = null;
+let hybridSearchService: HybridSearchService | null = null;
 
 /**
  * Extended config that includes LLM settings
@@ -510,6 +520,54 @@ export const TOOL_DEFINITIONS = [
       required: ["patternId"],
     },
   },
+  // Phase 2: Zoekt lexical search (Hybrid Search)
+  {
+    name: "search_code_exact",
+    description:
+      "Exact or regex code search using Zoekt. Use for finding exact symbols, strings, or patterns in source files. Supports regex. Returns file paths and matching lines.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query (literal or regex)",
+        },
+        filePattern: {
+          type: "string",
+          description: "Optional file glob pattern to restrict search",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results (default: 20)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  // Phase 3: Hybrid search (semantic + lexical + optional business context)
+  {
+    name: "hybrid_search",
+    description:
+      "Combined semantic and lexical code search. Use for complex queries where you want both conceptual matches (embeddings) and exact/text matches (Zoekt). Optionally scope by business context (e.g. 'Payments'). Returns merged results with justification when available.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query (natural language or exact phrase)",
+        },
+        businessContext: {
+          type: "string",
+          description: "Optional feature/domain to scope results (e.g. 'Payments', 'Auth')",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum total results (default: 30)",
+        },
+      },
+      required: ["query"],
+    },
+  },
   // Phase 6: Semantic Similarity & Related Code Discovery
   {
     name: "find_similar_code",
@@ -563,6 +621,8 @@ export interface McpServerOptions {
   indexer?: Indexer;
   embeddingService?: IEmbeddingService;
   similarityService?: ISimilarityService;
+  zoektManager?: ZoektManager | null;
+  hybridSearchService?: HybridSearchService | null;
 }
 
 /**
@@ -587,6 +647,8 @@ export function createMcpServer(
     indexer: indexerRef,
     embeddingService: embeddingSvc,
     similarityService: similaritySvc,
+    zoektManager: zoektMgr,
+    hybridSearchService: hybridSearchSvc,
   } = options;
 
   // Create tool context for dependency injection
@@ -959,6 +1021,59 @@ export function createMcpServer(
           }
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        // Phase 2: Zoekt lexical search
+        case "search_code_exact": {
+          const zoekt = zoektMgr ?? zoektManager;
+          if (!zoekt?.isStarted()) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  results: [],
+                  error: "Zoekt not available. Run scripts/setup-zoekt.sh and ensure the server started with Zoekt.",
+                }, null, 2),
+              }],
+            };
+          }
+          const result = await zoekt.search(
+            (args?.query as string) ?? "",
+            {
+              filePattern: args?.filePattern as string | undefined,
+              maxResults: (args?.limit as number) ?? 20,
+            }
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        // Phase 3: Hybrid search (semantic + lexical + optional business context)
+        case "hybrid_search": {
+          const hybrid = hybridSearchSvc ?? hybridSearchService;
+          if (!hybrid) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  results: [],
+                  error: "Hybrid search unavailable. Ensure embeddings and Zoekt are initialized (run scripts/setup-zoekt.sh for Zoekt).",
+                }, null, 2),
+              }],
+            };
+          }
+          const hybridResult = await hybrid.searchWithJustification(
+            (args?.query as string) ?? "",
+            {
+              businessContext: args?.businessContext as string | undefined,
+              limit: (args?.limit as number) ?? 30,
+              enrichWithJustification: true,
+            }
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify({ results: hybridResult }, null, 2) }],
           };
         }
 
@@ -1349,6 +1464,47 @@ export async function startServer(options: ServerOptions): Promise<void> {
     similarityService = null;
   }
 
+  // Initialize Zoekt for lexical search (Phase 2, non-fatal)
+  try {
+    const zoekt = new ZoektManager({
+      repoRoot: config.root,
+      dataDir,
+      port: 6070,
+      binDir: path.join(config.root, "bin"),
+    });
+    await zoekt.start();
+    zoektManager = zoekt;
+    logger.info({ port: zoekt.getPort() }, "Zoekt webserver started for lexical search");
+
+    // Trigger initial reindex in background (non-blocking)
+    zoektManager.reindex().catch((err) => {
+      logger.warn({ err }, "Initial Zoekt reindex failed");
+    });
+  } catch (zoektError) {
+    logger.warn(
+      { error: zoektError },
+      "Zoekt failed to start - exact/regex code search unavailable (run scripts/setup-zoekt.sh)"
+    );
+    zoektManager = null;
+  }
+
+  // Phase 3: Hybrid search (requires embeddings + Zoekt)
+  if (embeddingService && zoektManager) {
+    try {
+      hybridSearchService = new HybridSearchService(
+        graphStore as unknown as IGraphStore,
+        embeddingService,
+        zoektManager
+      );
+      logger.debug("Hybrid search service initialized");
+    } catch (err) {
+      logger.warn({ err }, "Hybrid search service failed to initialize");
+      hybridSearchService = null;
+    }
+  } else {
+    hybridSearchService = null;
+  }
+
   // Create MCP server with full service integration
   server = createMcpServer({
     graphStore,
@@ -1359,6 +1515,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
     indexer,
     embeddingService: embeddingService ?? undefined,
     similarityService: similarityService ?? undefined,
+    zoektManager: zoektManager ?? undefined,
+    hybridSearchService: hybridSearchService ?? undefined,
   });
 
   // Start file watcher for automatic incremental indexing
@@ -1403,6 +1561,17 @@ export async function startServer(options: ServerOptions): Promise<void> {
             logger.warn({ filePath, error: fileError }, "Failed to remove file");
           }
         }
+
+        // Debounced Zoekt reindex (Phase 2)
+        if (zoektManager?.isStarted()) {
+          if (zoektReindexTimer) clearTimeout(zoektReindexTimer);
+          zoektReindexTimer = setTimeout(() => {
+            zoektReindexTimer = null;
+            zoektManager?.reindex().catch((err) => {
+              logger.warn({ err }, "Zoekt reindex failed");
+            });
+          }, ZOEKT_REINDEX_DEBOUNCE_MS);
+        }
       },
       onError: (error) => {
         logger.error({ error }, "File watcher error");
@@ -1428,6 +1597,17 @@ export async function startServer(options: ServerOptions): Promise<void> {
  */
 export async function stopServer(): Promise<void> {
   logger.info("Stopping MCP server");
+
+  if (zoektReindexTimer) {
+    clearTimeout(zoektReindexTimer);
+    zoektReindexTimer = null;
+  }
+  if (zoektManager) {
+    zoektManager.stop();
+    zoektManager = null;
+    logger.debug("Zoekt webserver stopped");
+  }
+  hybridSearchService = null;
 
   // Stop file watcher first
   if (fileWatcher) {

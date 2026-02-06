@@ -505,6 +505,24 @@ export type HasPatternRow = [string, string, string];
 export type PatternHasParticipantRow = [string, string];
 
 // =============================================================================
+// Entity Embeddings (Hybrid Search Phase 1)
+// =============================================================================
+
+/**
+ * Row data for entity_embedding relation.
+ * Order matches schema: entity_id, file_id, vector, text_hash, model, created_at
+ * Used for semantic (vector) search across all embeddable entity types.
+ */
+export type EntityEmbeddingRow = [
+  string, // entity_id
+  string, // file_id
+  number[], // vector (384-dim for all-MiniLM-L6-v2)
+  string, // text_hash (for re-embedding detection)
+  string, // model
+  number // created_at (timestamp)
+];
+
+// =============================================================================
 // CozoBatch - Main Output Structure
 // =============================================================================
 
@@ -567,6 +585,9 @@ export interface CozoBatch {
   patternParticipants: PatternParticipantRow[];
   hasPattern: HasPatternRow[];
   patternHasParticipant: PatternHasParticipantRow[];
+
+  // Entity embeddings for semantic search (Hybrid Search Phase 1)
+  entityEmbeddings: EntityEmbeddingRow[];
 }
 
 // =============================================================================
@@ -752,6 +773,8 @@ export function createEmptyBatch(): CozoBatch {
     patternParticipants: [],
     hasPattern: [],
     patternHasParticipant: [],
+    // Entity embeddings (Hybrid Search Phase 1)
+    entityEmbeddings: [],
   };
 }
 

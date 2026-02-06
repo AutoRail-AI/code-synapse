@@ -116,6 +116,9 @@ export class CozoGraphStore implements IGraphStore {
     if (!hasSchema) {
       // Create all tables directly (simpler than migrations for development)
       await this.createSchema();
+    } else {
+      // Ensure entity_embedding exists (Hybrid Search Phase 1 upgrade path)
+      await this.ensureEntityEmbeddingSchema();
     }
 
     this.initialized = true;
@@ -158,6 +161,44 @@ export class CozoGraphStore implements IGraphStore {
       `);
     } catch (e) {
       // Ignore if already exists
+    }
+
+    // Entity embeddings for semantic search (Hybrid Search Phase 1)
+    await this.ensureEntityEmbeddingSchema();
+  }
+
+  /**
+   * Ensures entity_embedding relation and HNSW index exist.
+   * Used for both fresh DBs (from createSchema) and existing DBs (upgrade path).
+   */
+  private async ensureEntityEmbeddingSchema(): Promise<void> {
+    const exists = await this.db.relationExists("entity_embedding");
+    if (exists) return;
+
+    // entity_id + file_id as key for O(1) cleanup by file on re-index
+    await this.db.execute(`
+      :create entity_embedding {
+        entity_id: String,
+        file_id: String
+        =>
+        vector: <F32; 384>,
+        text_hash: String,
+        model: String,
+        created_at: Int
+      }
+    `);
+
+    try {
+      await this.db.execute(`
+        ::hnsw create entity_embedding:embedding_idx {
+          dim: 384,
+          m: 16,
+          ef_construction: 200,
+          fields: [vector]
+        }
+      `);
+    } catch (e) {
+      // Ignore if index already exists
     }
   }
 
@@ -229,8 +270,29 @@ export class CozoGraphStore implements IGraphStore {
   async vectorSearch(embedding: number[], k: number): Promise<VectorSearchResult[]> {
     this.ensureReady();
     try {
-      // Join function_embedding with function to get function details
-      const results = await this.db.query<{
+      // Prefer entity_embedding (Hybrid Search Phase 1) when populated; fallback to function_embedding
+      const entityResults = await this.db.query<{
+        entity_id: string;
+        file_id: string;
+        distance: number;
+      }>(
+        `?[entity_id, file_id, distance] :=
+          ~entity_embedding:embedding_idx{entity_id, file_id, vector | query: $embedding, k: $k, ef: 100, bind_distance: distance}
+         :order distance
+         :limit $k`,
+        { embedding, k }
+      );
+
+      if (entityResults.length > 0) {
+        return entityResults.map((r) => ({
+          id: r.entity_id,
+          distance: r.distance,
+          fileId: r.file_id,
+        }));
+      }
+
+      // Fallback: function_embedding for backward compatibility
+      const fnResults = await this.db.query<{
         id: string;
         name: string;
         file_id: string;
@@ -245,14 +307,14 @@ export class CozoGraphStore implements IGraphStore {
         { embedding, k }
       );
 
-      return results.map((r) => ({
+      return fnResults.map((r) => ({
         id: r.id,
         distance: r.distance,
         name: r.name,
         fileId: r.file_id,
       }));
     } catch {
-      // If no embeddings exist yet, return empty array
+      // If no embeddings or index exist yet, return empty array
       return [];
     }
   }
@@ -958,6 +1020,28 @@ async function writeBatchToDb(
           fromId: row[0],
           toId: row[1],
         },
+      );
+    }
+  }
+
+  // =========================================================================
+  // Entity embeddings (Hybrid Search Phase 1)
+  // =========================================================================
+
+  if (batch.entityEmbeddings.length > 0) {
+    for (const row of batch.entityEmbeddings) {
+      const [entityId, fileId, vector, textHash, model, createdAt] = row;
+      await db.execute(
+        `?[entity_id, file_id, vector, text_hash, model, created_at] <- [[$entityId, $fileId, $vector, $textHash, $model, $createdAt]]
+        :put entity_embedding {entity_id, file_id => vector, text_hash, model, created_at}`,
+        {
+          entityId,
+          fileId,
+          vector,
+          textHash,
+          model,
+          createdAt,
+        }
       );
     }
   }

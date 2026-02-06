@@ -225,7 +225,7 @@ interface GraphState {
     complexity?: number;
     owner?: string;
   }>;
-  edges: Array<{ source: string; target: string; type: string }>;
+  edges: Array<{ source: string; target: string; kind: string }>;
   setGraphData: (nodes: GraphState['nodes'], edges: GraphState['edges']) => void;
   focusedNode: string | null;
   setFocusedNode: (id: string | null) => void;

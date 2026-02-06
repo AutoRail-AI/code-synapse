@@ -11,9 +11,11 @@ import type { IParser } from "../interfaces/IParser.js";
 import type { IGraphStore } from "../interfaces/IGraphStore.js";
 import type { DetectedProject } from "./project-detector.js";
 import type { FileInfo } from "./scanner.js";
-import type { ExtractionResult, CallsRow } from "../extraction/types.js";
+import type { ExtractionResult, CallsRow, EntityEmbeddingRow } from "../extraction/types.js";
 import type { WriteResult, GraphFileInfo } from "../graph-builder/index.js";
+import type { IEmbeddingService } from "../embeddings/index.js";
 
+import { createHash } from "node:crypto";
 import { FileScanner } from "./scanner.js";
 import { EntityPipeline } from "../extraction/pipeline.js";
 import { CallGraphLinker } from "../extraction/call-graph-linker.js";
@@ -36,6 +38,11 @@ import type {
 import { generateEntityId } from "../extraction/id-generator.js";
 
 const logger = createLogger("indexer-coordinator");
+
+/** Stable hash of text for entity_embedding text_hash (re-embedding detection). */
+function hashText(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
 
 // =============================================================================
 // Types
@@ -134,6 +141,8 @@ export interface IndexerCoordinatorOptions {
   enablePatternDetection?: boolean;
   /** Options for pattern detection */
   patternDetectionOptions?: PatternDetectionOptions;
+  /** Embedding service for entity embeddings (Hybrid Search Phase 1). If provided, embeddingChunks are embedded and stored. */
+  embeddingService?: IEmbeddingService;
 }
 
 // =============================================================================
@@ -172,9 +181,10 @@ export class IndexerCoordinator {
   private callGraphLinker: CallGraphLinker;
   private semanticAnalyzer: SemanticAnalysisService | null = null;
   private patternAnalyzer: PatternAnalysisService | null = null;
+  private embeddingService: IEmbeddingService | null = null;
   /** Collected extraction results for Pass 2 cross-file linking */
   private extractionResults: ExtractionResult[] = [];
-  private options: Required<Omit<IndexerCoordinatorOptions, "onProgress" | "onError" | "semanticAnalysisOptions" | "patternDetectionOptions">> & {
+  private options: Required<Omit<IndexerCoordinatorOptions, "onProgress" | "onError" | "semanticAnalysisOptions" | "patternDetectionOptions" | "embeddingService">> & {
     onProgress?: (event: IndexingProgressEvent) => void;
     onError?: (error: IndexingError) => void;
     semanticAnalysisOptions?: SemanticAnalysisServiceOptions;
@@ -200,6 +210,10 @@ export class IndexerCoordinator {
       semanticAnalysisOptions: options.semanticAnalysisOptions,
       patternDetectionOptions: options.patternDetectionOptions,
     };
+
+    if (options.embeddingService) {
+      this.embeddingService = options.embeddingService;
+    }
 
     // Initialize components
     this.scanner = new FileScanner(this.project);
@@ -525,6 +539,26 @@ export class IndexerCoordinator {
         sourceCode
       );
 
+      // Entity embeddings for semantic search (Hybrid Search Phase 1)
+      if (this.embeddingService && extracted.embeddingChunks.length > 0) {
+        try {
+          const texts = extracted.embeddingChunks.map((c) => c.text);
+          const embeddings = await this.embeddingService.embedBatch(texts);
+          const now = Date.now();
+          const modelId = this.embeddingService.getModelId();
+          extracted.batch.entityEmbeddings = extracted.embeddingChunks.map((chunk, i): EntityEmbeddingRow => [
+            chunk.entityId,
+            extracted.fileId,
+            embeddings[i]!.vector,
+            hashText(chunk.text),
+            modelId,
+            now,
+          ]);
+        } catch (embedError) {
+          logger.warn({ filePath, error: embedError }, "Entity embedding failed (continuing without)");
+        }
+      }
+
       // Write
       const result = await this.writer.writeFile(extracted);
 
@@ -790,6 +824,29 @@ export class IndexerCoordinator {
               logger.warn(
                 { file: file.relativePath, error: patternError },
                 "Pattern detection failed (continuing without)"
+              );
+            }
+          }
+
+          // Entity embeddings for semantic search (Hybrid Search Phase 1)
+          if (this.embeddingService && extracted.embeddingChunks.length > 0) {
+            try {
+              const texts = extracted.embeddingChunks.map((c) => c.text);
+              const embeddings = await this.embeddingService.embedBatch(texts);
+              const now = Date.now();
+              const modelId = this.embeddingService.getModelId();
+              extracted.batch.entityEmbeddings = extracted.embeddingChunks.map((chunk, i): EntityEmbeddingRow => [
+                chunk.entityId,
+                extracted.fileId,
+                embeddings[i]!.vector,
+                hashText(chunk.text),
+                modelId,
+                now,
+              ]);
+            } catch (embedError) {
+              logger.warn(
+                { file: file.relativePath, error: embedError },
+                "Entity embedding failed (continuing without)"
               );
             }
           }

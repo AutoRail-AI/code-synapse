@@ -20,6 +20,7 @@ export * from "./justification/index.js";
 export * from "./ledger/index.js";
 export * from "./memory/index.js";
 export * from "./reconciliation/index.js";
+export * from "./search/index.js";
 
 // Re-export semantic types (using 'export type' for isolatedModules)
 export type {

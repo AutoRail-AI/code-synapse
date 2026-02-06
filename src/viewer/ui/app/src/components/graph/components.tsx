@@ -52,16 +52,17 @@ interface LensButtonProps {
   onClick: () => void;
   label: string;
   lens: LensType;
+  icon?: React.ReactNode;
 }
 
-const lensIcons: Record<LensType, React.ReactNode> = {
+const defaultLensIcons: Record<LensType, React.ReactNode> = {
   structure: <Layers className="w-3.5 h-3.5" />,
   business: <Box className="w-3.5 h-3.5" />,
   infra: <Database className="w-3.5 h-3.5" />,
   pattern: <Hash className="w-3.5 h-3.5" />,
 };
 
-export function LensButton({ active, onClick, label, lens }: LensButtonProps) {
+export function LensButton({ active, onClick, label, lens, icon }: LensButtonProps) {
   return (
     <button
       onClick={onClick}
@@ -71,7 +72,7 @@ export function LensButton({ active, onClick, label, lens }: LensButtonProps) {
           : 'text-slate-400 hover:bg-slate-600 hover:text-white'
       }`}
     >
-      {lensIcons[lens]}
+      {icon || defaultLensIcons[lens]}
       {label}
     </button>
   );

@@ -220,7 +220,7 @@ export const DEFAULT_CONFIG = {
     });
 
     it("should index all files", () => {
-      expect(result.filesIndexed).toBe(4); // 4 TypeScript files
+      expect(result.filesIndexed).toBe(6); // 4 TypeScript files + 2 JSON files
       expect(result.filesFailed).toBe(0);
     });
 
@@ -257,7 +257,7 @@ export const DEFAULT_CONFIG = {
       const result = await store.query<{ id: string; path: string }>(
         `?[id, path] := *file{id, path}`
       );
-      expect(result.rows.length).toBe(4);
+      expect(result.rows.length).toBe(6);
 
       const paths = result.rows.map((r) => r.path);
       expect(paths.some((p) => p.includes("index.ts"))).toBe(true);
@@ -569,7 +569,7 @@ export class NewService {
 
       const stats = await coordinator.getStats();
 
-      expect(stats.files).toBe(4);
+      expect(stats.files).toBe(6);
       expect(stats.functions).toBeGreaterThan(5); // main, findById, create, delete, login, logout, etc.
       expect(stats.classes).toBeGreaterThanOrEqual(2); // UserService, AuthService
       expect(stats.interfaces).toBeGreaterThanOrEqual(2); // User, AuthResult

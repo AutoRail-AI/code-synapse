@@ -39,6 +39,10 @@ import {
   type IndexingProgressEvent,
 } from "../../core/indexer/index.js";
 import {
+  createEmbeddingService,
+  type IEmbeddingService,
+} from "../../core/embeddings/index.js";
+import {
   createLLMJustificationService,
   type JustificationProgress,
 } from "../../core/justification/index.js";
@@ -151,7 +155,8 @@ async function promptForPort(): Promise<number> {
 async function runIndexing(
   store: IGraphStore,
   config: ProjectConfig,
-  spinner: ReturnType<typeof ora>
+  spinner: ReturnType<typeof ora>,
+  embeddingService?: IEmbeddingService
 ): Promise<boolean> {
   const startTime = Date.now();
 
@@ -176,6 +181,7 @@ async function runIndexing(
       project,
       batchSize: 10,
       continueOnError: true,
+      embeddingService,
       onProgress: (event: IndexingProgressEvent) => {
         const phaseEmoji: Record<string, string> = {
           scanning: "🔍",
@@ -478,8 +484,21 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       console.log(chalk.dim("─".repeat(40)));
       console.log();
 
+      // Initialize embedding service for vector generation during indexing
+      let embeddingService: IEmbeddingService | undefined;
+      try {
+        spinner.start("Initializing embedding model...");
+        embeddingService = createEmbeddingService();
+        await embeddingService.initialize();
+        spinner.succeed(chalk.green("Embedding model loaded"));
+      } catch (embeddingError) {
+        spinner.warn(chalk.yellow("Embedding model unavailable - indexing without embeddings"));
+        logger.warn({ err: embeddingError }, "Failed to initialize embedding service for indexing");
+        embeddingService = undefined;
+      }
+
       spinner.start("Indexing project...");
-      await runIndexing(graphStore, config, spinner);
+      await runIndexing(graphStore, config, spinner, embeddingService);
 
       // Log indexing completion
       if (changeLedger) {

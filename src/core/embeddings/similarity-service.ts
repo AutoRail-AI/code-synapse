@@ -218,16 +218,44 @@ export class SimilarityService implements ISimilarityService {
     const opts = { ...DEFAULT_SEARCH_OPTIONS, ...options };
 
     try {
-      // Build the vector similarity query
-      // CozoDB uses v_knn() for k-nearest neighbors search
+      // Prefer store.vectorSearch() which uses entity_embedding when populated (Hybrid Search Phase 1)
+      const vectorResults = await this.store.vectorSearch(embedding, opts.limit * 2);
+      if (vectorResults.length > 0) {
+        const ids = vectorResults.map((r) => r.id);
+        const excludeSet = new Set(opts.excludeIds ?? []);
+        const idToMeta = await this.getEntityNameAndPath(ids);
+        const entities: SimilarEntity[] = [];
+        for (const r of vectorResults) {
+          if (excludeSet.has(r.id)) continue;
+          const similarity = 1 - r.distance;
+          if (similarity < opts.minSimilarity) continue;
+          const meta = idToMeta.get(r.id);
+          entities.push({
+            entityId: r.id,
+            entityType: (meta?.entityType ?? "function") as SimilarEntity["entityType"],
+            name: meta?.name ?? r.id,
+            filePath: meta?.filePath ?? "",
+            similarity,
+            distance: r.distance,
+            signature: meta?.signature,
+          });
+        }
+        const filtered = opts.entityTypes.length
+          ? entities.filter((e) => opts.entityTypes.includes(e.entityType))
+          : entities;
+        const byPath = opts.filePathPattern
+          ? filtered.filter((e) => new RegExp(opts.filePathPattern!).test(e.filePath))
+          : filtered;
+        return byPath.slice(0, opts.limit);
+      }
+
+      // Fallback: query function_embedding directly (backward compatibility)
       const embeddingStr = `[${embedding.join(", ")}]`;
       const excludeClause =
         opts.excludeIds.length > 0
           ? `not (id in [${opts.excludeIds.map((id) => `"${id}"`).join(", ")}]),`
           : "";
 
-      // Query for functions with embeddings
-      // The HNSW index on function_embedding enables fast approximate search
       const query = `
         ?[id, name, file_path, signature, distance] :=
           ~function_embedding:embedding_hnsw{function_id: id | query: ${embeddingStr}, k: ${opts.limit * 2}, ef: 100, bind_distance: distance},
@@ -240,8 +268,6 @@ export class SimilarityService implements ISimilarityService {
       `;
 
       const result = await this.store.query(query);
-
-      // Convert to SimilarEntity format
       const entities: SimilarEntity[] = result.rows.map((row) => {
         const [id, name, filePath, signature, distance] = row as unknown as [
           string,
@@ -250,34 +276,70 @@ export class SimilarityService implements ISimilarityService {
           string | null,
           number
         ];
-
         return {
           entityId: id,
           entityType: "function" as const,
           name,
           filePath,
-          similarity: 1 - distance, // Convert distance to similarity
+          similarity: 1 - distance,
           distance,
           signature: signature ?? undefined,
         };
       });
 
-      // Filter by entity type if specified
-      const filteredEntities = entities.filter((e) =>
-        opts.entityTypes.includes(e.entityType)
-      );
-
-      // Filter by file path pattern if specified
+      const filteredEntities = opts.entityTypes.length
+        ? entities.filter((e) => opts.entityTypes.includes(e.entityType))
+        : entities;
       if (opts.filePathPattern) {
         const pattern = new RegExp(opts.filePathPattern);
         return filteredEntities.filter((e) => pattern.test(e.filePath));
       }
-
       return filteredEntities;
     } catch (error) {
       logger.error({ error }, "Vector similarity search failed");
       return [];
     }
+  }
+
+  /**
+   * Resolve entity IDs to name, file path, and optional signature (for functions).
+   * Used to enrich vectorSearch results from entity_embedding.
+   */
+  private async getEntityNameAndPath(
+    ids: string[]
+  ): Promise<Map<string, { name: string; filePath: string; entityType: string; signature?: string }>> {
+    const map = new Map<string, { name: string; filePath: string; entityType: string; signature?: string }>();
+    if (ids.length === 0) return map;
+
+    const run = async (
+      type: string,
+      script: string,
+      params: { ids: string[] },
+      hasSignature: boolean
+    ): Promise<void> => {
+      try {
+        const result = await this.store.query(script, params);
+        for (const row of result.rows) {
+          const r = row as unknown as [string, string, string] | [string, string, string, string];
+          const id = r[0];
+          const name = r[1];
+          const filePath = r[2];
+          const signature = hasSignature && r.length > 3 ? (r as [string, string, string, string])[3] : undefined;
+          if (!map.has(id)) map.set(id, { name, filePath, entityType: type, signature });
+        }
+      } catch {
+        // Relation may not exist
+      }
+    };
+
+    await Promise.all([
+      run("function", `?[id, name, file_path, signature] := *function{id, name, file_id, signature}, *file{id: file_id, path: file_path}, id in $ids`, { ids }, true),
+      run("class", `?[id, name, file_path] := *class{id, name, file_id}, *file{id: file_id, path: file_path}, id in $ids`, { ids }, false),
+      run("interface", `?[id, name, file_path] := *interface{id, name, file_id}, *file{id: file_id, path: file_path}, id in $ids`, { ids }, false),
+      run("interface", `?[id, name, file_path] := *type_alias{id, name, file_id}, *file{id: file_id, path: file_path}, id in $ids`, { ids }, false),
+      run("variable", `?[id, name, file_path] := *variable{id, name, file_id}, *file{id: file_id, path: file_path}, id in $ids`, { ids }, false),
+    ]);
+    return map;
   }
 
   /**

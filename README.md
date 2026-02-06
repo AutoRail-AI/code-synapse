@@ -530,6 +530,8 @@ When connected, Code-Synapse provides these tools to your AI agent:
 | `get_callees` | Find all functions called by a function |
 | `get_imports` | Get import chain for a file |
 | `get_project_stats` | Get project statistics |
+| `search_code_exact` | Exact/regex code search via Zoekt |
+| `hybrid_search` | Combined semantic + lexical search with optional business context |
 | `vibe_start` | Start a vibe coding session with enriched context |
 | `vibe_change` | Record file changes during coding session |
 | `vibe_complete` | Complete a vibe coding session |

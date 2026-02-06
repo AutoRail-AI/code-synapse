@@ -231,7 +231,7 @@ export const DEFAULT_CONFIG = {
     it("should return overview stats", async () => {
       const stats = await viewer.getOverviewStats();
 
-      expect(stats.totalFiles).toBe(4);
+      expect(stats.totalFiles).toBe(6);
       expect(stats.totalFunctions).toBeGreaterThan(5); // main, findById, create, etc.
       expect(stats.totalClasses).toBeGreaterThanOrEqual(2); // UserService, AuthService
       expect(stats.totalInterfaces).toBeGreaterThanOrEqual(2); // User, AuthResult
@@ -243,7 +243,7 @@ export const DEFAULT_CONFIG = {
     it("should return entity counts", async () => {
       const counts = await viewer.getEntityCounts();
 
-      expect(counts.files).toBe(4);
+      expect(counts.files).toBe(6);
       expect(counts.functions).toBeGreaterThan(5);
       expect(counts.classes).toBeGreaterThanOrEqual(2);
       expect(counts.interfaces).toBeGreaterThanOrEqual(2);
@@ -272,7 +272,7 @@ export const DEFAULT_CONFIG = {
     it("should list files", async () => {
       const files = await viewer.listFiles({ limit: 10 });
 
-      expect(files.length).toBe(4);
+      expect(files.length).toBe(6);
       const paths = files.map((f) => f.relativePath);
       expect(paths.some((p) => p.includes("index.ts"))).toBe(true);
       expect(paths.some((p) => p.includes("user-service.ts"))).toBe(true);
@@ -399,8 +399,8 @@ export const DEFAULT_CONFIG = {
 
       // Status can be healthy or degraded (degraded if no embeddings)
       expect(["healthy", "degraded"]).toContain(health.status);
-      expect(health.coverage.filesIndexed).toBe(4);
-      expect(health.coverage.filesTotal).toBe(4);
+      expect(health.coverage.filesIndexed).toBe(6);
+      expect(health.coverage.filesTotal).toBe(6);
       expect(health.coverage.percentage).toBe(100);
       // isHealthy should be true unless there are errors
       expect(health.isHealthy).toBe(true);

@@ -2069,6 +2069,7 @@ export class CozoGraphViewer implements IGraphViewer {
       id: string;
       label: string;
       kind: string;
+      filePath?: string;
       properties?: Record<string, any>;
     }>;
     edges: Array<{
@@ -2107,43 +2108,47 @@ export class CozoGraphViewer implements IGraphViewer {
           ).then(r => r.rows.map(row => ({
             id: row.id,
             label: row.relative_path,
-            kind: "file"
+            kind: "file",
+            filePath: row.relative_path
           })))
         );
       }
 
       if (nodeKinds.includes("function")) {
         nodePromises.push(
-          this.store.query<{ id: string; name: string }>(
-            `?[id, name] := *function{id, name} :limit ${limit}`
+          this.store.query<{ id: string; name: string; file_path: string }>(
+            `?[id, name, file_path] := *function{id, name, file_id}, *file{id: file_id, relative_path: file_path} :limit ${limit}`
           ).then(r => r.rows.map(row => ({
             id: row.id,
             label: row.name,
-            kind: "function"
+            kind: "function",
+            filePath: row.file_path
           })))
         );
       }
 
       if (nodeKinds.includes("class")) {
         nodePromises.push(
-          this.store.query<{ id: string; name: string }>(
-            `?[id, name] := *class{id, name} :limit ${limit}`
+          this.store.query<{ id: string; name: string; file_path: string }>(
+            `?[id, name, file_path] := *class{id, name, file_id}, *file{id: file_id, relative_path: file_path} :limit ${limit}`
           ).then(r => r.rows.map(row => ({
             id: row.id,
             label: row.name,
-            kind: "class"
+            kind: "class",
+            filePath: row.file_path
           })))
         );
       }
 
       if (nodeKinds.includes("interface")) {
         nodePromises.push(
-          this.store.query<{ id: string; name: string }>(
-            `?[id, name] := *interface{id, name} :limit ${limit}`
+          this.store.query<{ id: string; name: string; file_path: string }>(
+            `?[id, name, file_path] := *interface{id, name, file_id}, *file{id: file_id, relative_path: file_path} :limit ${limit}`
           ).then(r => r.rows.map(row => ({
             id: row.id,
             label: row.name,
-            kind: "interface"
+            kind: "interface",
+            filePath: row.file_path
           })))
         );
       }
@@ -2180,26 +2185,63 @@ export class CozoGraphViewer implements IGraphViewer {
       }
 
       if (edgeKinds.includes("extends")) {
+        // Query extends by resolving class names to IDs
+        // First try to resolve internal extends (class A extends class B where both are indexed)
+        edgePromises.push(
+          this.store.query<{ child_id: string; parent_id: string }>(
+            `?[child_id, parent_id] :=
+              *class{id: child_id, extends_class},
+              extends_class != null,
+              *class{id: parent_id, name: extends_class}
+            :limit ${limit * 5}`
+          ).then(r => r.rows.map(row => ({
+            source: row.child_id,
+            target: row.parent_id,
+            kind: "extends"
+          }))).catch(() => [])  // Ignore errors if query fails
+        );
+
+        // Also try the original extends table for any resolved relationships
         edgePromises.push(
           this.store.query<{ from_id: string; to_id: string }>(
-            `?[from_id, to_id] := *extends{from_id, to_id} :limit ${limit * 5}`
+            `?[from_id, to_id] :=
+              *extends{from_id, to_id},
+              not starts_with(to_id, "unresolved:")
+            :limit ${limit * 5}`
           ).then(r => r.rows.map(row => ({
             source: row.from_id,
             target: row.to_id,
             kind: "extends"
-          })))
+          }))).catch(() => [])  // Ignore errors if query fails
         );
       }
 
       if (edgeKinds.includes("implements")) {
+        // Query implements from the implements table (filtering out unresolved)
         edgePromises.push(
           this.store.query<{ from_id: string; to_id: string }>(
-            `?[from_id, to_id] := *implements{from_id, to_id} :limit ${limit * 5}`
+            `?[from_id, to_id] :=
+              *implements{from_id, to_id},
+              not starts_with(to_id, "unresolved:")
+            :limit ${limit * 5}`
           ).then(r => r.rows.map(row => ({
             source: row.from_id,
             target: row.to_id,
             kind: "implements"
-          })))
+          }))).catch(() => [])
+        );
+      }
+
+      // has_method relationship (class -> method)
+      if (edgeKinds.includes("has_method")) {
+        edgePromises.push(
+          this.store.query<{ from_id: string; to_id: string }>(
+            `?[from_id, to_id] := *has_method{from_id, to_id} :limit ${limit * 5}`
+          ).then(r => r.rows.map(row => ({
+            source: row.from_id,
+            target: row.to_id,
+            kind: "has_method"
+          }))).catch(() => [])
         );
       }
 

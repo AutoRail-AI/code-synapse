@@ -1060,7 +1060,7 @@ export class ViewerServer {
         centerNodeId: center,
         depth,
         nodeKinds: kinds,
-        edgeKinds: ["calls", "imports", "extends", "implements", "contains"],
+        edgeKinds: ["calls", "imports", "extends", "implements", "contains", "has_method"],
         limit
       });
 

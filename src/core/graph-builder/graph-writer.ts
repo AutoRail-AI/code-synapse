@@ -233,7 +233,14 @@ export class GraphWriter {
             { fileId }
           );
         }
-      })()
+      })(),
+
+      // Delete entity_embedding rows for this file (Hybrid Search Phase 1)
+      safeExecute(
+        `?[entity_id, file_id] := *entity_embedding{entity_id, file_id}, file_id = $fileId
+         :rm entity_embedding {entity_id, file_id}`,
+        { fileId }
+      )
     ]);
 
     // Get all entities in this file for relationship cleanup
@@ -454,7 +461,9 @@ export class GraphWriter {
       batch.dataFlowCache.length +
       batch.dataFlowNodes.length +
       batch.crossFunctionFlows.length +
-      batch.taintSources.length
+      batch.taintSources.length +
+      // Entity embeddings (Hybrid Search Phase 1)
+      batch.entityEmbeddings.length
     );
   }
 
