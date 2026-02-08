@@ -177,16 +177,86 @@ export interface SearchResult {
   highlights?: string[];
 }
 
+// Hybrid search types (Phase 5)
+export interface HybridSearchResult {
+  source: "semantic" | "lexical";
+  score: number;
+  filePath: string;
+  entityId?: string;
+  name?: string;
+  entityType?: string;
+  snippet?: string;
+  lineNumber?: number;
+  justification?: {
+    purposeSummary?: string;
+    featureContext?: string;
+    businessValue?: string;
+    confidence?: number;
+  };
+  patterns?: string[];
+  /** Business importance lifted from justification for easy UI access. */
+  businessValue?: string;
+  /** Incoming call count — how many entities reference this one. */
+  popularity?: number;
+  /** Top callers for "Used By" display (max 3). */
+  relatedCode?: Array<{ name: string; filePath: string; relation: "caller" }>;
+}
+
+export interface HybridSearchSummary {
+  answer: string;
+  citations: Array<{
+    index: number;
+    filePath: string;
+    lineNumber?: number;
+    snippet?: string;
+    justification?: string;
+  }>;
+  modelUsed: string;
+  timestamp: string;
+}
+
+// Chat turn (conversation message pair)
+export interface ChatTurn {
+  id: string;
+  query: string;
+  results: HybridSearchResult[];
+  summary: HybridSearchSummary | null;
+  timestamp: number;
+  isLoading: boolean;
+  error?: string;
+}
+
+// Selected search entity for detail panel
+export interface SelectedSearchEntity {
+  entityId: string;
+  entityName: string;
+  filePath: string;
+}
+
 // Search state
 interface SearchState {
   query: string;
   setQuery: (query: string) => void;
-  searchType: 'natural' | 'semantic' | 'exact';
+  searchType: 'natural' | 'semantic' | 'exact' | 'hybrid';
   setSearchType: (type: SearchState['searchType']) => void;
   results: SearchResult[];
   setResults: (results: SearchResult[]) => void;
   searchHistory: string[];
   addToHistory: (query: string) => void;
+  // Phase 5: Hybrid / Insight view
+  enableDeepSearch: boolean;
+  setEnableDeepSearch: (enabled: boolean) => void;
+  hybridResults: HybridSearchResult[];
+  hybridSummary: HybridSearchSummary | null;
+  setHybridSearchResults: (results: HybridSearchResult[], summary: HybridSearchSummary | null) => void;
+  // Chat history
+  chatHistory: ChatTurn[];
+  addChatTurn: (turn: ChatTurn) => void;
+  updateLastTurn: (update: Partial<ChatTurn>) => void;
+  clearChat: () => void;
+  // Entity detail panel
+  selectedSearchEntity: SelectedSearchEntity | null;
+  setSelectedSearchEntity: (entity: SelectedSearchEntity | null) => void;
 }
 
 export const useSearchStore = create<SearchState>()(
@@ -203,6 +273,28 @@ export const useSearchStore = create<SearchState>()(
         set((state) => ({
           searchHistory: [query, ...state.searchHistory.filter((q) => q !== query)].slice(0, 10),
         })),
+      enableDeepSearch: false,
+      setEnableDeepSearch: (enabled) => set({ enableDeepSearch: enabled }),
+      hybridResults: [],
+      hybridSummary: null,
+      setHybridSearchResults: (results, summary) =>
+        set({ hybridResults: results, hybridSummary: summary }),
+      // Chat history
+      chatHistory: [],
+      addChatTurn: (turn) =>
+        set((state) => ({ chatHistory: [...state.chatHistory, turn] })),
+      updateLastTurn: (update) =>
+        set((state) => {
+          const history = [...state.chatHistory];
+          if (history.length > 0) {
+            history[history.length - 1] = { ...history[history.length - 1]!, ...update };
+          }
+          return { chatHistory: history };
+        }),
+      clearChat: () => set({ chatHistory: [], hybridResults: [], hybridSummary: null }),
+      // Entity detail panel
+      selectedSearchEntity: null,
+      setSelectedSearchEntity: (entity) => set({ selectedSearchEntity: entity }),
     }),
     { name: 'code-synapse-search' }
   )

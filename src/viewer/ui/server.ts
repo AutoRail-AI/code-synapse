@@ -26,6 +26,7 @@ import type { IReconciliationWorker } from "../../core/reconciliation/interfaces
 
 import type { LedgerEventType, EventSource } from "../../core/ledger/models/ledger-events.js";
 import type { MemoryRuleScope, MemoryRuleCategory } from "../../core/memory/models/memory-models.js";
+import type { HybridSearchService } from "../../core/search/hybrid-service.js";
 
 // =============================================================================
 // Types
@@ -42,6 +43,8 @@ interface ViewerServerOptions {
   projectMemory?: IProjectMemory;
   ledgerCompaction?: ILedgerCompaction;
   reconciliationWorker?: IReconciliationWorker;
+  /** Phase 6: Hybrid search (semantic + lexical + optional LLM synthesis) */
+  hybridSearchService?: HybridSearchService | null;
 }
 
 interface RouteHandler {
@@ -90,6 +93,7 @@ export class ViewerServer {
   private projectMemory?: IProjectMemory;
   private ledgerCompaction?: ILedgerCompaction;
   private reconciliationWorker?: IReconciliationWorker;
+  private hybridSearchService?: HybridSearchService | null;
 
   constructor(viewer: IGraphViewer, options?: ViewerServerOptions) {
     this.viewer = viewer;
@@ -98,6 +102,7 @@ export class ViewerServer {
     this.projectMemory = options?.projectMemory;
     this.ledgerCompaction = options?.ledgerCompaction;
     this.reconciliationWorker = options?.reconciliationWorker;
+    this.hybridSearchService = options?.hybridSearchService;
 
     // Get the directory where static files are located
     const __filename = fileURLToPath(import.meta.url);
@@ -154,6 +159,7 @@ export class ViewerServer {
     this.addRoute("GET", "/api/search/natural", this.handleNLSearch.bind(this));
     this.addRoute("GET", "/api/search/semantic", this.handleSemanticSearch.bind(this));
     this.addRoute("GET", "/api/search/exact", this.handleSearch.bind(this));
+    this.addRoute("POST", "/api/search/hybrid", this.handleHybridSearch.bind(this));
     this.addRoute("GET", "/api/nl-search", this.handleNLSearch.bind(this));
     this.addRoute("GET", "/api/nl-search/patterns", this.handleNLSearchPatterns.bind(this));
 
@@ -1039,6 +1045,72 @@ export class ViewerServer {
     }));
 
     this.sendJSON(res, results);
+  }
+
+  private async handleHybridSearch(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.hybridSearchService) {
+      this.sendJSON(
+        res,
+        {
+          error: "Hybrid search not available",
+          hint: "Hybrid search requires embeddings and Zoekt. Run 'code-synapse' (full pipeline) to enable.",
+        },
+        503
+      );
+      return;
+    }
+
+    try {
+      const body = (await this.parseBody(req)) as {
+        query?: string;
+        businessContext?: string;
+        limit?: number;
+        enableSynthesis?: boolean;
+      };
+      const query = body.query ?? "";
+      if (!query.trim()) {
+        this.sendJSON(res, { summary: null, results: [], meta: {} });
+        return;
+      }
+
+      const enableSynthesis = body.enableSynthesis === true;
+      const limit = body.limit ?? 30;
+      const opts = {
+        businessContext: body.businessContext,
+        limit,
+      };
+
+      const startTime = Date.now();
+
+      if (enableSynthesis) {
+        const response = await this.hybridSearchService.searchWithSynthesis(query, {
+          ...opts,
+          enableSynthesis: true,
+        });
+        const sources = [...new Set(response.results.map((r) => r.source))] as ("semantic" | "lexical")[];
+        this.sendJSON(res, {
+          summary: response.summary ?? null,
+          results: response.results,
+          meta: { ...(response.meta ?? {}), sources },
+        });
+      } else {
+        const results = await this.hybridSearchService.searchWithJustification(query, opts);
+        const sources = [...new Set(results.map((r) => r.source))] as ("semantic" | "lexical")[];
+        const semanticCount = results.filter((r) => r.source === "semantic").length;
+        const lexicalCount = results.filter((r) => r.source === "lexical").length;
+        this.sendJSON(res, {
+          summary: null,
+          results,
+          meta: { processingTimeMs: Date.now() - startTime, semanticCount, lexicalCount, sources },
+        });
+      }
+    } catch (error) {
+      this.sendError(res, 500, "Hybrid search failed", error);
+    }
   }
 
   // ===========================================================================

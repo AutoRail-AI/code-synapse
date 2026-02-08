@@ -7,6 +7,7 @@
 
 // Note: Max listeners is set in cli/index.ts at module level
 
+import * as path from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 import * as readline from "node:readline/promises";
@@ -17,6 +18,7 @@ import {
   getConfigPath,
   getProjectRoot,
   getGraphDbPath,
+  getDataDir,
   readJson,
   createLogger,
 } from "../../utils/index.js";
@@ -42,6 +44,10 @@ import {
   createEmbeddingService,
   type IEmbeddingService,
 } from "../../core/embeddings/index.js";
+import {
+  ZoektManager,
+  HybridSearchService,
+} from "../../core/search/index.js";
 import {
   createLLMJustificationService,
   type JustificationProgress,
@@ -397,6 +403,10 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
   let graphStore: IGraphStore | null = null;
   let viewer: ReturnType<typeof createGraphViewer> | null = null;
   let changeLedger: IChangeLedger | null = null;
+  // Phase 6: Hybrid search (shared between viewer and MCP)
+  let hybridEmbeddingService: IEmbeddingService | null = null;
+  let hybridZoektManager: ZoektManager | null = null;
+  let hybridSearchService: HybridSearchService | null = null;
 
   // Step 1: Check if initialized, if not run interactive setup (before any logging)
   const configPath = getConfigPath();
@@ -629,6 +639,35 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       viewerPort = 0; // Not used
     }
 
+    // Step 5.5: Initialize hybrid search services (Phase 6 - shared by viewer and MCP)
+    if (!options.skipViewer) {
+      try {
+        spinner.start("Initializing hybrid search (embeddings + Zoekt)...");
+        hybridEmbeddingService = createEmbeddingService();
+        await hybridEmbeddingService.initialize();
+        hybridZoektManager = new ZoektManager({
+          repoRoot: config.root,
+          dataDir: getDataDir(projectRoot),
+          port: 6070,
+          binDir: path.join(config.root, "bin"),
+        });
+        await hybridZoektManager.start();
+        hybridSearchService = new HybridSearchService(
+          graphStore as unknown as import("../../core/interfaces/IGraphStore.js").IGraphStore,
+          hybridEmbeddingService,
+          hybridZoektManager,
+          undefined // LLM injected by MCP server for synthesis
+        );
+        spinner.succeed(chalk.green("Hybrid search ready"));
+      } catch (hybridErr) {
+        logger.warn({ err: hybridErr }, "Hybrid search unavailable - Insight tab will show 503");
+        spinner.info(chalk.dim("Hybrid search unavailable (embeddings/Zoekt)"));
+        hybridEmbeddingService = null;
+        hybridZoektManager = null;
+        hybridSearchService = null;
+      }
+    }
+
     // Step 6: Start the Web Viewer (if not skipped)
     if (!options.skipViewer) {
       spinner.start("Starting Web Viewer...");
@@ -640,9 +679,10 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       // Get stats for display
       const stats = await viewer.getOverviewStats();
 
-      // Start viewer server with classification and ledger
+      // Start viewer server with classification, ledger, and hybrid search (Phase 6)
       const viewerOptions: ViewerServerOptions = {
         changeLedger: changeLedger ?? undefined,
+        hybridSearchService: hybridSearchService ?? undefined,
       };
       viewerServer = await startViewerServer(viewer, viewerPort, "127.0.0.1", viewerOptions);
 
@@ -696,12 +736,14 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
     process.once("SIGTERM", handleShutdown);
 
     // Step 8: Start the MCP server (this blocks until shutdown)
-    // Pass the existing graphStore to avoid RocksDB lock conflicts
+    // Pass existing graphStore and hybrid search services to avoid port conflicts
     console.log();
     await startCommand({
       port: mcpPort,
       debug: options.debug,
       existingStore: graphStore,
+      existingEmbeddingService: hybridEmbeddingService ?? undefined,
+      existingZoektManager: hybridZoektManager ?? undefined,
     });
   } catch (error) {
     spinner.fail(chalk.red("Failed to start Code-Synapse"));

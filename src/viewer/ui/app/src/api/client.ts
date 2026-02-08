@@ -185,6 +185,36 @@ export async function getEntityRelationships(
 }
 
 // ============================================================================
+// Entity Full Detail (combined fetch)
+// ============================================================================
+
+export interface EntityFullDetail {
+  entity: EntityDetail;
+  justification: {
+    entityId: string;
+    purposeSummary?: string;
+    featureContext?: string;
+    businessValue?: string;
+    confidence?: number;
+  } | null;
+  classification: {
+    entityId: string;
+    category?: string;
+    subCategory?: string;
+    confidence?: number;
+  } | null;
+}
+
+export async function getEntityFullDetail(entityId: string): Promise<EntityFullDetail> {
+  const [entity, justification, classification] = await Promise.all([
+    getEntityById(entityId),
+    fetchApi<EntityFullDetail["justification"]>(`/justifications/${encodeURIComponent(entityId)}`).catch(() => null),
+    fetchApi<EntityFullDetail["classification"]>(`/classifications/${encodeURIComponent(entityId)}`).catch(() => null),
+  ]);
+  return { entity, justification, classification };
+}
+
+// ============================================================================
 // Search
 // ============================================================================
 
@@ -206,6 +236,77 @@ export async function searchSemantic(query: string, limit?: number): Promise<Sea
 
 export async function searchExact(pattern: string): Promise<SearchResult[]> {
   return fetchApi<SearchResult[]>(`/search/exact?pattern=${encodeURIComponent(pattern)}`);
+}
+
+// ============================================================================
+// Hybrid Search (Phase 5 / Phase 6)
+// ============================================================================
+
+export interface HybridSearchResult {
+  source: "semantic" | "lexical";
+  score: number;
+  filePath: string;
+  entityId?: string;
+  name?: string;
+  entityType?: string;
+  snippet?: string;
+  lineNumber?: number;
+  justification?: {
+    purposeSummary?: string;
+    featureContext?: string;
+    businessValue?: string;
+    confidence?: number;
+  };
+  patterns?: string[];
+  /** Business importance lifted from justification for easy UI access. */
+  businessValue?: string;
+  /** Incoming call count — how many entities reference this one. */
+  popularity?: number;
+  /** Top callers for "Used By" display (max 3). */
+  relatedCode?: Array<{ name: string; filePath: string; relation: "caller" }>;
+}
+
+export interface HybridSearchCitation {
+  index: number;
+  filePath: string;
+  lineNumber?: number;
+  snippet?: string;
+  justification?: string;
+}
+
+export interface HybridSearchSummary {
+  answer: string;
+  citations: HybridSearchCitation[];
+  modelUsed: string;
+  timestamp: string;
+}
+
+export interface HybridSearchResponse {
+  summary: HybridSearchSummary | null;
+  results: HybridSearchResult[];
+  meta?: {
+    semanticCount?: number;
+    lexicalCount?: number;
+    queryType?: "question" | "keyword";
+    processingTimeMs?: number;
+    sources?: ("semantic" | "lexical")[];
+  };
+}
+
+export interface HybridSearchOptions {
+  businessContext?: string;
+  limit?: number;
+  enableSynthesis?: boolean;
+}
+
+export async function searchHybrid(
+  query: string,
+  options: HybridSearchOptions = {}
+): Promise<HybridSearchResponse> {
+  return fetchApi<HybridSearchResponse>("/search/hybrid", {
+    method: "POST",
+    body: JSON.stringify({ query, ...options }),
+  });
 }
 
 // ============================================================================
@@ -317,27 +418,123 @@ export async function getClassificationStats(): Promise<{
 // Ledger / History
 // ============================================================================
 
+export interface LedgerMCPContext {
+  toolName?: string;
+  query?: string;
+  parameters?: Record<string, unknown>;
+  resultCount?: number;
+  responseTimeMs?: number;
+  cacheHit?: boolean;
+}
+
 export interface LedgerEntry {
   id: string;
-  eventType: string;
-  entityId?: string;
   timestamp: string;
-  details: Record<string, unknown>;
+  sequence?: number;
+  eventType: string;
+  source?: string;
+  summary?: string;
+  details?: string;
+  impactedFiles?: string[];
+  impactedEntities?: string[];
+  mcpContext?: LedgerMCPContext;
+  sessionId?: string;
+  correlationId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  metadata?: Record<string, unknown>;
+  // Deprecated alias for backward compat
+  entityId?: string;
+}
+
+export interface LedgerStats {
+  entryCount: number;
+  oldestTimestamp: string | null;
+  newestTimestamp: string | null;
+  currentSequence: number;
+}
+
+export interface LedgerTimelineEntry {
+  id: string;
+  timestamp: string;
+  eventType: string;
+  source: string;
+  summary: string;
+  impactLevel: 'low' | 'medium' | 'high';
+  hasClassificationChange: boolean;
+  hasUserInteraction: boolean;
+  hasError: boolean;
+}
+
+export interface LedgerAggregation {
+  totalEvents: number;
+  byEventType: Record<string, number>;
+  bySource: Record<string, number>;
+  byHour: Array<{ hour: string; count: number }>;
+  topImpactedFiles: Array<{ file: string; count: number }>;
+  topImpactedEntities: Array<{ entity: string; count: number }>;
+  classificationChanges: number;
+  errorCount: number;
+  averageResponseTimeMs: number;
 }
 
 export async function getLedgerEntries(params?: {
   eventType?: string;
+  eventTypes?: string;
+  sources?: string;
   entityId?: string;
   since?: string;
+  startTime?: string;
+  endTime?: string;
   limit?: number;
+  offset?: number;
 }): Promise<LedgerEntry[]> {
   const searchParams = new URLSearchParams();
   if (params?.eventType) searchParams.set('eventType', params.eventType);
+  if (params?.eventTypes) searchParams.set('eventTypes', params.eventTypes);
+  if (params?.sources) searchParams.set('sources', params.sources);
   if (params?.entityId) searchParams.set('entityId', params.entityId);
   if (params?.since) searchParams.set('since', params.since);
+  if (params?.startTime) searchParams.set('startTime', params.startTime);
+  if (params?.endTime) searchParams.set('endTime', params.endTime);
   if (params?.limit) searchParams.set('limit', String(params.limit));
+  if (params?.offset) searchParams.set('offset', String(params.offset));
   const query = searchParams.toString();
   return fetchApi<LedgerEntry[]>(`/ledger${query ? `?${query}` : ''}`);
+}
+
+export async function getLedgerStats(): Promise<LedgerStats> {
+  return fetchApi<LedgerStats>('/ledger/stats');
+}
+
+export async function getLedgerRecent(limit = 50): Promise<LedgerEntry[]> {
+  return fetchApi<LedgerEntry[]>(`/ledger/recent?limit=${limit}`);
+}
+
+export async function getLedgerTimeline(params?: {
+  limit?: number;
+  offset?: number;
+  startTime?: string;
+  endTime?: string;
+}): Promise<LedgerTimelineEntry[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set('limit', String(params.limit));
+  if (params?.offset) searchParams.set('offset', String(params.offset));
+  if (params?.startTime) searchParams.set('startTime', params.startTime);
+  if (params?.endTime) searchParams.set('endTime', params.endTime);
+  const query = searchParams.toString();
+  return fetchApi<LedgerTimelineEntry[]>(`/ledger/timeline${query ? `?${query}` : ''}`);
+}
+
+export async function getLedgerAggregations(params?: {
+  startTime?: string;
+  endTime?: string;
+}): Promise<LedgerAggregation> {
+  const searchParams = new URLSearchParams();
+  if (params?.startTime) searchParams.set('startTime', params.startTime);
+  if (params?.endTime) searchParams.set('endTime', params.endTime);
+  const query = searchParams.toString();
+  return fetchApi<LedgerAggregation>(`/ledger/aggregations${query ? `?${query}` : ''}`);
 }
 
 // ============================================================================

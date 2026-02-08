@@ -10,7 +10,7 @@ import { ObservabilityView } from './components/observability/ObservabilityView'
 
 function App() {
   return (
-    <div className="h-screen flex flex-col bg-slate-900 text-slate-100">
+    <div className="h-screen flex flex-col bg-bg-main text-slate-100 bg-gradient-mesh">
       {/* Global Header */}
       <Header />
 

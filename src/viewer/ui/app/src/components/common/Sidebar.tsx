@@ -6,7 +6,6 @@ import {
   Search,
   Settings,
   Activity,
-  ChevronRight,
 } from 'lucide-react';
 import { useUIStore } from '../../store';
 
@@ -50,10 +49,10 @@ const navItems: NavItem[] = [
   },
   {
     id: 'observability',
-    label: 'Observability',
+    label: 'Ledger',
     icon: <Activity className="w-5 h-5" />,
     path: '/observability',
-    description: 'Ledger, history, metrics',
+    description: 'Change ledger, MCP tracking, metrics',
   },
 ];
 
@@ -68,8 +67,8 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-16 lg:w-56 bg-slate-800 border-r border-slate-700 flex flex-col">
-      <nav className="flex-1 py-4">
+    <aside className="w-16 lg:w-64 flex flex-col pt-4 pb-6 px-3">
+      <nav className="flex-1 space-y-2">
         {navItems.map((item) => {
           const isActive =
             location.pathname.startsWith(item.path) ||
@@ -79,14 +78,14 @@ export function Sidebar() {
             <button
               key={item.id}
               onClick={() => handleNavClick(item)}
-              className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${isActive
-                ? 'bg-slate-700 text-white border-l-2 border-blue-500'
-                : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200 border-l-2 border-transparent'
+              className={`w-full group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 ${isActive
+                ? 'bg-primary/20 text-white shadow-glow border border-primary/20'
+                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 hover:translate-x-1'
                 }`}
               title={item.description}
             >
               <span
-                className={isActive ? 'text-blue-400' : 'text-slate-500'}
+                className={`transition-colors duration-300 ${isActive ? 'text-primary' : 'text-slate-500 group-hover:text-slate-300'}`}
               >
                 {item.icon}
               </span>
@@ -94,7 +93,7 @@ export function Sidebar() {
                 {item.label}
               </span>
               {isActive && (
-                <ChevronRight className="hidden lg:block w-4 h-4 ml-auto text-slate-500" />
+                <div className="hidden lg:block ml-auto w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(99,102,241,0.6)]" />
               )}
             </button>
           );
@@ -102,10 +101,10 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom section with version info */}
-      <div className="p-4 border-t border-slate-700">
-        <div className="hidden lg:block text-xs text-slate-500">
-          <div>Code-Synapse</div>
-          <div>v0.1.0</div>
+      <div className="mt-auto px-4">
+        <div className="hidden lg:flex items-center justify-between text-xs text-slate-500 bg-slate-900/40 p-3 rounded-lg border border-slate-800/50">
+          <div className="font-medium">Code-Synapse</div>
+          <div className="bg-slate-800 px-1.5 py-0.5 rounded text-[10px] text-slate-400">v0.1.0</div>
         </div>
       </div>
     </aside>

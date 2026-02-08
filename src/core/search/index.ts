@@ -17,4 +17,8 @@ export {
   type HybridSearchOptions,
   type HybridSearchSource,
   type HybridJustificationSnippet,
+  type HybridSearchResponse,
+  type AISummary,
+  type Citation,
+  type QueryIntent,
 } from "./hybrid-service.js";

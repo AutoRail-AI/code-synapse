@@ -70,6 +70,21 @@ export interface SearchResult {
   line?: number;
   signature?: string;
   docComment?: string;
+  // Enrichment fields (optional for backward compat)
+  entityType?: string;
+  entityId?: string;
+  source?: "semantic" | "lexical" | "both";
+  justification?: {
+    purposeSummary?: string;
+    featureContext?: string;
+    businessValue?: string;
+    confidence?: number;
+  } | null;
+  patterns?: string[];
+  classification?: {
+    category?: string;
+    subCategory?: string;
+  } | null;
 }
 
 export interface FunctionDetails {
@@ -134,19 +149,71 @@ export interface FileDependency {
 
 /**
  * Search for code entities (functions, classes, interfaces, etc.)
+ * When hybridSearchService is available (via context), delegates to it for
+ * entity-level results with justification, patterns, and enriched snippets.
+ * Falls back to CozoDB substring search otherwise.
  */
 export async function searchCode(
   store: GraphDatabase,
-  input: SearchCodeInput
+  input: SearchCodeInput,
+  context?: ToolContext
 ): Promise<SearchResult[]> {
   const { query, limit = 10, entityType } = input;
   logger.debug({ query, limit, entityType }, "Searching code");
 
-  const results: SearchResult[] = [];
+  // Hybrid-first: delegate to HybridSearchService when available
+  if (context?.hybridSearchService) {
+    try {
+      const hybridResults = await context.hybridSearchService.searchWithJustification(query, {
+        limit,
+        enrichWithJustification: true,
+        enableSynthesis: false,
+      });
 
-  // Build query based on entity type
-  // Note: CozoDB doesn't have a built-in 'contains' function for substring matching
-  // We use simple name matching with lowercase comparison
+      // Map HybridSearchResult[] → SearchResult[] with enrichment
+      const mapped: SearchResult[] = hybridResults
+        .filter((r) => !entityType || r.entityType === entityType)
+        .map((r) => ({
+          id: r.entityId || r.filePath,
+          name: r.name || r.filePath.split("/").pop() || r.filePath,
+          type: r.entityType || "file",
+          filePath: r.filePath,
+          line: r.lineNumber,
+          snippet: r.snippet,
+          entityType: r.entityType,
+          entityId: r.entityId,
+          source: r.source,
+          justification: r.justification
+            ? {
+                purposeSummary: r.justification.purposeSummary,
+                featureContext: r.justification.featureContext,
+                businessValue: r.justification.businessValue,
+                confidence: r.justification.confidence,
+              }
+            : null,
+          patterns: r.patterns,
+          classification: null,
+        }));
+
+      return mapped.slice(0, limit);
+    } catch (err) {
+      logger.warn({ err }, "Hybrid search failed, falling back to CozoDB search");
+    }
+  }
+
+  // Fallback: CozoDB substring search
+  return searchCodeFallback(store, input);
+}
+
+/**
+ * Fallback CozoDB substring search (original implementation).
+ */
+async function searchCodeFallback(
+  store: GraphDatabase,
+  input: SearchCodeInput
+): Promise<SearchResult[]> {
+  const { query, limit = 10, entityType } = input;
+  const results: SearchResult[] = [];
   const lowerQuery = query.toLowerCase();
 
   if (!entityType || entityType === "function") {
@@ -164,7 +231,7 @@ export async function searchCode(
         start_line: number;
         signature: string;
         doc_comment: string;
-      }>(funcQuery, { limit: limit * 10 }); // Fetch more to filter client-side
+      }>(funcQuery, { limit: limit * 10 });
       for (const row of funcResult) {
         if (row.name.toLowerCase().includes(lowerQuery)) {
           results.push({
@@ -2476,6 +2543,1438 @@ export async function findSimilarCode(
 }
 
 // =============================================================================
+// Lazarus Migration Tools — Input Types
+// =============================================================================
+
+export interface GetEntitySourceInput {
+  entityId?: string;
+  name?: string;
+  filePath?: string;
+  entityType?: "function" | "class" | "interface" | "variable";
+  contextLines?: number;
+}
+
+export interface GetFeatureMapInput {
+  featureContext?: string;
+  includeEntities?: boolean;
+  limit?: number;
+}
+
+export interface GetMigrationContextInput {
+  featureContext?: string;
+  entityIds?: string[];
+  includeSource?: boolean;
+  includeDataFlow?: boolean;
+  includeSideEffects?: boolean;
+}
+
+export interface AnalyzeBlastRadiusInput {
+  entityId: string;
+  maxDepth?: number;
+  direction?: "callers" | "callees" | "both";
+}
+
+export interface GetEntityTestsInput {
+  entityId?: string;
+  name?: string;
+  filePath?: string;
+}
+
+export interface TagEntityInput {
+  entityId: string;
+  tags: string[];
+  source?: string;
+}
+
+export interface GetTaggedEntitiesInput {
+  tag: string;
+  entityType?: "function" | "class" | "interface" | "variable" | "file";
+}
+
+export interface RemoveEntityTagsInput {
+  entityId: string;
+  tags: string[];
+}
+
+export interface ResolveEntityAtLocationInput {
+  filePath: string;
+  line: number;
+}
+
+export interface GetMigrationProgressInput {
+  featureContext?: string;
+  tags?: string[];
+}
+
+export interface GetSliceDependenciesInput {
+  features?: string[];
+}
+
+// =============================================================================
+// Lazarus Migration Tools — Output Types
+// =============================================================================
+
+export interface EntitySourceResult {
+  entityId: string;
+  name: string;
+  entityType: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  language: string;
+  sourceCode: string;
+  lineCount: number;
+}
+
+export interface FeatureMapResult {
+  features: Array<{
+    name: string;
+    entityCount: number;
+    fileCount: number;
+    files: string[];
+    breakdown: { functions: number; classes: number; interfaces: number; variables: number };
+    entities?: Array<{ id: string; name: string; type: string; filePath: string; purposeSummary: string }>;
+  }>;
+  totalFeatures: number;
+  totalEntities: number;
+}
+
+export interface MigrationContextResult {
+  entities: Array<{
+    id: string;
+    name: string;
+    type: string;
+    filePath: string;
+    startLine: number;
+    endLine: number;
+    signature?: string;
+    sourceCode?: string;
+    justification?: { purposeSummary: string; businessValue: string; featureContext: string; confidence: number };
+    sideEffects?: Array<{ category: string; description: string; target?: string }>;
+    dataFlow?: { isPure: boolean; summary: string };
+  }>;
+  internalDependencies: Array<{ fromId: string; fromName: string; toId: string; toName: string; type: string }>;
+  externalDependencies: Array<{ entityId: string; entityName: string; externalName: string; externalFile?: string; type: string }>;
+  businessRules: Array<{ entityName: string; rule: string; confidence: number }>;
+  patterns: Array<{ patternType: string; name: string; participants: string[] }>;
+  stats: { entityCount: number; fileCount: number; internalCallCount: number; externalDepCount: number };
+}
+
+export interface BlastRadiusResult {
+  root: { id: string; name: string; type: string; filePath: string };
+  maxDepth: number;
+  direction: string;
+  hops: Array<{
+    depth: number;
+    entities: Array<{ id: string; name: string; type: string; filePath: string; relationship: string; via: string }>;
+  }>;
+  summary: { totalAffected: number; affectedFiles: string[]; byType: Record<string, number> };
+}
+
+export interface EntityTestsResult {
+  entityId?: string;
+  entityName: string;
+  filePath: string;
+  testFiles: Array<{
+    path: string;
+    matchType: "import" | "nameReference" | "pathConvention";
+    relevantLines?: Array<{ lineNumber: number; content: string }>;
+  }>;
+  coverageEstimate: "high" | "medium" | "low" | "none";
+}
+
+export interface TagEntityResult {
+  entityId: string;
+  tags: string[];
+  added: number;
+  message: string;
+}
+
+export interface GetTaggedResult {
+  tag: string;
+  entities: Array<{ id: string; name: string; type: string; filePath: string; tags: string[]; source?: string }>;
+  count: number;
+}
+
+export interface RemoveEntityTagsResult {
+  entityId: string;
+  removed: number;
+  message: string;
+}
+
+export interface ResolveEntityAtLocationResult {
+  entityId: string;
+  name: string;
+  entityType: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  language: string;
+  signature?: string;
+  justification?: { purposeSummary: string; featureContext: string; businessValue: string; confidence: number };
+}
+
+export interface MigrationProgressResult {
+  features: Array<{
+    name: string;
+    totalEntities: number;
+    taggedEntities: number;
+    tags: Record<string, number>;
+    progressPercent: number;
+  }>;
+  overall: {
+    totalEntities: number;
+    taggedEntities: number;
+    tags: Record<string, number>;
+    progressPercent: number;
+  };
+}
+
+export interface SliceDependenciesResult {
+  features: Array<{
+    name: string;
+    entityCount: number;
+    dependsOn: Array<{ feature: string; connectionCount: number; connections: Array<{ fromName: string; toName: string }> }>;
+  }>;
+  executionOrder: string[];
+  circularDependencies: Array<{ features: string[] }>;
+}
+
+// =============================================================================
+// Lazarus Migration Tools — Handlers
+// =============================================================================
+
+import { readFileWithEncoding } from "../utils/fs.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import fg from "fast-glob";
+
+/**
+ * Universal entity lookup across function/class/interface/variable tables.
+ * Returns the first match found.
+ */
+async function resolveEntity(
+  store: GraphDatabase,
+  opts: { entityId?: string; name?: string; filePath?: string; entityType?: string }
+): Promise<{ id: string; name: string; type: string; filePath: string; startLine: number; endLine: number; language: string; signature?: string } | null> {
+  const tables: Array<{ table: string; kind: string; hasSignature: boolean }> = [
+    { table: "function", kind: "function", hasSignature: true },
+    { table: "class", kind: "class", hasSignature: false },
+    { table: "interface", kind: "interface", hasSignature: false },
+  ];
+
+  // If entityType specified, only check that table
+  const filtered = opts.entityType
+    ? tables.filter((t) => t.kind === opts.entityType)
+    : tables;
+
+  for (const { table, kind, hasSignature } of filtered) {
+    const sigField = hasSignature ? ", signature" : "";
+    let query: string;
+    const params: Record<string, unknown> = {};
+
+    if (opts.entityId) {
+      query = `
+        ?[id, name, file_path, start_line, end_line, language${sigField}] :=
+          *${table}{id, name, file_id, start_line, end_line${sigField}},
+          *file{id: file_id, path: file_path, language},
+          id = $entityId
+        :limit 1
+      `;
+      params.entityId = opts.entityId;
+    } else if (opts.name && opts.filePath) {
+      query = `
+        ?[id, name, file_path, start_line, end_line, language${sigField}] :=
+          *${table}{id, name, file_id, start_line, end_line${sigField}},
+          *file{id: file_id, path: file_path, language},
+          name = $name,
+          ends_with(file_path, $filePath)
+        :limit 1
+      `;
+      params.name = opts.name;
+      params.filePath = opts.filePath;
+    } else if (opts.name) {
+      query = `
+        ?[id, name, file_path, start_line, end_line, language${sigField}] :=
+          *${table}{id, name, file_id, start_line, end_line${sigField}},
+          *file{id: file_id, path: file_path, language},
+          name = $name
+        :limit 1
+      `;
+      params.name = opts.name;
+    } else {
+      continue;
+    }
+
+    try {
+      const result = await store.query<Record<string, unknown>>(query, params);
+      if (result.length > 0 && result[0]) {
+        const row = result[0];
+        return {
+          id: row.id as string,
+          name: row.name as string,
+          type: kind,
+          filePath: row.file_path as string,
+          startLine: row.start_line as number,
+          endLine: row.end_line as number,
+          language: row.language as string,
+          signature: hasSignature ? (row.signature as string | undefined) : undefined,
+        };
+      }
+    } catch {
+      // Try next table
+    }
+  }
+
+  // Also check variable table (different schema: line/column instead of start_line/end_line)
+  if (!opts.entityType || opts.entityType === "variable") {
+    let query: string;
+    const params: Record<string, unknown> = {};
+
+    if (opts.entityId) {
+      query = `
+        ?[id, name, file_path, line, language] :=
+          *variable{id, name, file_id, line},
+          *file{id: file_id, path: file_path, language},
+          id = $entityId
+        :limit 1
+      `;
+      params.entityId = opts.entityId;
+    } else if (opts.name) {
+      query = `
+        ?[id, name, file_path, line, language] :=
+          *variable{id, name, file_id, line},
+          *file{id: file_id, path: file_path, language},
+          name = $name
+        :limit 1
+      `;
+      params.name = opts.name;
+    } else {
+      return null;
+    }
+
+    try {
+      const result = await store.query<Record<string, unknown>>(query, params);
+      if (result.length > 0 && result[0]) {
+        const row = result[0];
+        return {
+          id: row.id as string,
+          name: row.name as string,
+          type: "variable",
+          filePath: row.file_path as string,
+          startLine: row.line as number,
+          endLine: row.line as number,
+          language: row.language as string,
+        };
+      }
+    } catch {
+      // Not found
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Get the actual source code of a function, class, or interface.
+ */
+export async function getEntitySource(
+  store: GraphDatabase,
+  input: GetEntitySourceInput
+): Promise<EntitySourceResult | null> {
+  const { entityId, name, filePath, entityType, contextLines = 0 } = input;
+  logger.debug({ entityId, name, filePath, entityType }, "Getting entity source");
+
+  const entity = await resolveEntity(store, { entityId, name, filePath, entityType });
+  if (!entity) return null;
+
+  try {
+    const content = await readFileWithEncoding(entity.filePath);
+    const lines = content.split("\n");
+    const start = Math.max(0, entity.startLine - 1 - contextLines);
+    const end = Math.min(lines.length, entity.endLine + contextLines);
+    const sourceLines = lines.slice(start, end);
+    const sourceCode = sourceLines
+      .map((line, i) => `${start + i + 1}: ${line}`)
+      .join("\n");
+
+    return {
+      entityId: entity.id,
+      name: entity.name,
+      entityType: entity.type,
+      filePath: entity.filePath,
+      startLine: entity.startLine,
+      endLine: entity.endLine,
+      language: entity.language,
+      sourceCode,
+      lineCount: entity.endLine - entity.startLine + 1,
+    };
+  } catch (err) {
+    logger.debug({ err, filePath: entity.filePath }, "Failed to read source file");
+    return null;
+  }
+}
+
+/**
+ * Get a map of all features/business domains in the codebase.
+ */
+export async function getFeatureMap(
+  store: GraphDatabase,
+  input: GetFeatureMapInput
+): Promise<FeatureMapResult> {
+  const { featureContext, includeEntities = false, limit = 50 } = input;
+  logger.debug({ featureContext, includeEntities, limit }, "Getting feature map");
+
+  try {
+    let query: string;
+    const params: Record<string, unknown> = {};
+
+    if (featureContext) {
+      query = `
+        ?[feature_context, entity_id, entity_type, name, file_path, purpose_summary] :=
+          *justification{entity_id, entity_type, name, file_path, feature_context, purpose_summary},
+          feature_context != "",
+          contains(feature_context, $featureContext)
+      `;
+      params.featureContext = featureContext;
+    } else {
+      query = `
+        ?[feature_context, entity_id, entity_type, name, file_path, purpose_summary] :=
+          *justification{entity_id, entity_type, name, file_path, feature_context, purpose_summary},
+          feature_context != ""
+      `;
+    }
+
+    const rows = await store.query<{
+      feature_context: string;
+      entity_id: string;
+      entity_type: string;
+      name: string;
+      file_path: string;
+      purpose_summary: string;
+    }>(query, params);
+
+    // Group by feature_context
+    const featureMap = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const key = row.feature_context;
+      if (!featureMap.has(key)) featureMap.set(key, []);
+      featureMap.get(key)!.push(row);
+    }
+
+    let totalEntities = 0;
+    const features = Array.from(featureMap.entries())
+      .slice(0, limit)
+      .map(([name, entities]) => {
+        const files = [...new Set(entities.map((e) => e.file_path))];
+        const breakdown = { functions: 0, classes: 0, interfaces: 0, variables: 0 };
+        for (const e of entities) {
+          if (e.entity_type === "function") breakdown.functions++;
+          else if (e.entity_type === "class") breakdown.classes++;
+          else if (e.entity_type === "interface") breakdown.interfaces++;
+          else if (e.entity_type === "variable") breakdown.variables++;
+        }
+        totalEntities += entities.length;
+
+        const result: FeatureMapResult["features"][number] = {
+          name,
+          entityCount: entities.length,
+          fileCount: files.length,
+          files,
+          breakdown,
+        };
+        if (includeEntities) {
+          result.entities = entities.map((e) => ({
+            id: e.entity_id,
+            name: e.name,
+            type: e.entity_type,
+            filePath: e.file_path,
+            purposeSummary: e.purpose_summary,
+          }));
+        }
+        return result;
+      });
+
+    return { features, totalFeatures: featureMap.size, totalEntities };
+  } catch (e) {
+    logger.debug({ error: e }, "Feature map query failed");
+    return { features: [], totalFeatures: 0, totalEntities: 0 };
+  }
+}
+
+/**
+ * Build a Code Contract for a feature slice — entities, business rules,
+ * internal/external dependencies, patterns.
+ */
+export async function getMigrationContext(
+  store: GraphDatabase,
+  input: GetMigrationContextInput
+): Promise<MigrationContextResult> {
+  const {
+    featureContext,
+    entityIds: explicitIds,
+    includeSource = false,
+    includeDataFlow = false,
+    includeSideEffects = false,
+  } = input;
+  logger.debug({ featureContext, explicitIds, includeSource }, "Getting migration context");
+
+  // 1. Resolve entity set
+  let entityIds: string[] = explicitIds ?? [];
+
+  if (featureContext && entityIds.length === 0) {
+    try {
+      const rows = await store.query<{ entity_id: string }>(
+        `?[entity_id] :=
+          *justification{entity_id, feature_context},
+          feature_context != "",
+          contains(feature_context, $featureContext)`,
+        { featureContext }
+      );
+      entityIds = rows.map((r) => r.entity_id);
+    } catch {
+      // Continue with empty set
+    }
+  }
+
+  if (entityIds.length === 0) {
+    return {
+      entities: [],
+      internalDependencies: [],
+      externalDependencies: [],
+      businessRules: [],
+      patterns: [],
+      stats: { entityCount: 0, fileCount: 0, internalCallCount: 0, externalDepCount: 0 },
+    };
+  }
+
+  // 2. Get entity details
+  const entities: MigrationContextResult["entities"] = [];
+  const entityIdSet = new Set(entityIds);
+  const fileSet = new Set<string>();
+
+  for (const eid of entityIds) {
+    const entity = await resolveEntity(store, { entityId: eid });
+    if (!entity) continue;
+
+    fileSet.add(entity.filePath);
+
+    const entityEntry: MigrationContextResult["entities"][number] = {
+      id: entity.id,
+      name: entity.name,
+      type: entity.type,
+      filePath: entity.filePath,
+      startLine: entity.startLine,
+      endLine: entity.endLine,
+      signature: entity.signature,
+    };
+
+    // Source code
+    if (includeSource) {
+      try {
+        const content = await readFileWithEncoding(entity.filePath);
+        const lines = content.split("\n");
+        const start = Math.max(0, entity.startLine - 1);
+        const end = Math.min(lines.length, entity.endLine);
+        entityEntry.sourceCode = lines.slice(start, end).join("\n");
+      } catch {
+        // Skip source
+      }
+    }
+
+    // Justification
+    try {
+      const justRows = await store.query<{
+        purpose_summary: string;
+        business_value: string;
+        feature_context: string;
+        confidence_score: number;
+      }>(
+        `?[purpose_summary, business_value, feature_context, confidence_score] :=
+          *justification{entity_id, purpose_summary, business_value, feature_context, confidence_score},
+          entity_id = $eid
+        :limit 1`,
+        { eid }
+      );
+      if (justRows.length > 0 && justRows[0]) {
+        entityEntry.justification = {
+          purposeSummary: justRows[0].purpose_summary,
+          businessValue: justRows[0].business_value,
+          featureContext: justRows[0].feature_context,
+          confidence: justRows[0].confidence_score,
+        };
+      }
+    } catch {
+      // Skip justification
+    }
+
+    // Side effects
+    if (includeSideEffects && entity.type === "function") {
+      try {
+        const seRows = await store.query<{
+          category: string;
+          description: string;
+          target: string | null;
+        }>(
+          `?[category, description, target] :=
+            *side_effect{function_id, category, description, target},
+            function_id = $eid`,
+          { eid }
+        );
+        if (seRows.length > 0) {
+          entityEntry.sideEffects = seRows.map((s) => ({
+            category: s.category,
+            description: s.description,
+            target: s.target ?? undefined,
+          }));
+        }
+      } catch {
+        // Skip side effects
+      }
+    }
+
+    // Data flow
+    if (includeDataFlow && entity.type === "function") {
+      try {
+        const dfRows = await store.query<{ is_pure: boolean; flow_summary_json: string }>(
+          `?[is_pure, flow_summary_json] :=
+            *data_flow_cache{function_id, is_pure, flow_summary_json},
+            function_id = $eid
+          :limit 1`,
+          { eid }
+        );
+        if (dfRows.length > 0 && dfRows[0]) {
+          entityEntry.dataFlow = {
+            isPure: dfRows[0].is_pure,
+            summary: dfRows[0].flow_summary_json || "{}",
+          };
+        }
+      } catch {
+        // Skip data flow
+      }
+    }
+
+    entities.push(entityEntry);
+  }
+
+  // 3. Internal dependencies (calls where both are in entity set)
+  const internalDependencies: MigrationContextResult["internalDependencies"] = [];
+  const externalDependencies: MigrationContextResult["externalDependencies"] = [];
+
+  try {
+    const callRows = await store.query<{
+      from_id: string;
+      from_name: string;
+      to_id: string;
+      to_name: string;
+    }>(
+      `?[from_id, from_name, to_id, to_name] :=
+        *calls{from_id, to_id},
+        *function{id: from_id, name: from_name},
+        *function{id: to_id, name: to_name}`
+    );
+
+    for (const row of callRows) {
+      if (entityIdSet.has(row.from_id) && entityIdSet.has(row.to_id)) {
+        internalDependencies.push({
+          fromId: row.from_id,
+          fromName: row.from_name,
+          toId: row.to_id,
+          toName: row.to_name,
+          type: "calls",
+        });
+      } else if (entityIdSet.has(row.from_id) && !entityIdSet.has(row.to_id)) {
+        externalDependencies.push({
+          entityId: row.from_id,
+          entityName: row.from_name,
+          externalName: row.to_name,
+          type: "calls",
+        });
+      }
+    }
+  } catch {
+    // Skip calls
+  }
+
+  // 4. Ghost node (external) references
+  try {
+    for (const eid of entityIds) {
+      const ghostRows = await store.query<{
+        ghost_name: string;
+        package_name: string;
+      }>(
+        `?[ghost_name, package_name] :=
+          *references_external{from_id, to_id},
+          from_id = $eid,
+          *ghost_node{id: to_id, name: ghost_name, package_name}`,
+        { eid }
+      );
+      for (const g of ghostRows) {
+        const entityName = entities.find((e) => e.id === eid)?.name ?? eid;
+        externalDependencies.push({
+          entityId: eid,
+          entityName,
+          externalName: g.ghost_name,
+          externalFile: g.package_name || undefined,
+          type: "external_reference",
+        });
+      }
+    }
+  } catch {
+    // Skip ghost nodes
+  }
+
+  // 5. Business rules (from justification.business_value)
+  const businessRules: MigrationContextResult["businessRules"] = [];
+  for (const e of entities) {
+    if (e.justification?.businessValue && e.justification.businessValue.length > 10) {
+      businessRules.push({
+        entityName: e.name,
+        rule: e.justification.businessValue,
+        confidence: e.justification.confidence,
+      });
+    }
+  }
+
+  // 6. Design patterns overlapping with entity set
+  const patterns: MigrationContextResult["patterns"] = [];
+  try {
+    const patternRows = await store.query<{
+      pattern_type: string;
+      name: string;
+    }>(
+      `?[pattern_type, name] :=
+        *design_pattern{id: pattern_id, pattern_type, name},
+        *pattern_participant{pattern_id, entity_name},
+        entity_name in $entityNames`,
+      { entityNames: entities.map((e) => e.name) }
+    );
+    for (const p of patternRows) {
+      if (!patterns.find((pp) => pp.name === p.name)) {
+        patterns.push({
+          patternType: p.pattern_type,
+          name: p.name,
+          participants: entities.map((e) => e.name),
+        });
+      }
+    }
+  } catch {
+    // Skip patterns
+  }
+
+  return {
+    entities,
+    internalDependencies,
+    externalDependencies,
+    businessRules,
+    patterns,
+    stats: {
+      entityCount: entities.length,
+      fileCount: fileSet.size,
+      internalCallCount: internalDependencies.length,
+      externalDepCount: externalDependencies.length,
+    },
+  };
+}
+
+/**
+ * Analyze the transitive impact of changing an entity (multi-hop BFS).
+ */
+export async function analyzeBlastRadius(
+  store: GraphDatabase,
+  input: AnalyzeBlastRadiusInput
+): Promise<BlastRadiusResult | null> {
+  const { entityId, maxDepth = 3, direction = "callers" } = input;
+  logger.debug({ entityId, maxDepth, direction }, "Analyzing blast radius");
+
+  const root = await resolveEntity(store, { entityId });
+  if (!root) return null;
+
+  const visited = new Set<string>();
+  visited.add(root.id);
+  let frontier = [root.id];
+  const hops: BlastRadiusResult["hops"] = [];
+  const allFiles = new Set<string>();
+  allFiles.add(root.filePath);
+  const byType: Record<string, number> = {};
+
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    if (frontier.length === 0) break;
+
+    const hopEntities: BlastRadiusResult["hops"][number]["entities"] = [];
+    const nextFrontier: string[] = [];
+
+    for (const fid of frontier) {
+      // Query callers, callees, or both
+      const queries: Array<{ query: string; relationship: string }> = [];
+
+      if (direction === "callers" || direction === "both") {
+        queries.push({
+          query: `
+            ?[caller_id, caller_name, caller_file] :=
+              *calls{from_id: caller_id, to_id},
+              to_id = $fid,
+              *function{id: caller_id, name: caller_name, file_id},
+              *file{id: file_id, path: caller_file}
+          `,
+          relationship: "calls",
+        });
+      }
+
+      if (direction === "callees" || direction === "both") {
+        queries.push({
+          query: `
+            ?[caller_id, caller_name, caller_file] :=
+              *calls{from_id, to_id: caller_id},
+              from_id = $fid,
+              *function{id: caller_id, name: caller_name, file_id},
+              *file{id: file_id, path: caller_file}
+          `,
+          relationship: "called_by",
+        });
+      }
+
+      for (const { query, relationship } of queries) {
+        try {
+          const rows = await store.query<{
+            caller_id: string;
+            caller_name: string;
+            caller_file: string;
+          }>(query, { fid });
+
+          for (const row of rows) {
+            if (visited.has(row.caller_id)) continue;
+            visited.add(row.caller_id);
+            nextFrontier.push(row.caller_id);
+            allFiles.add(row.caller_file);
+            byType["function"] = (byType["function"] || 0) + 1;
+
+            // Find the via entity name
+            const viaEntity = entities_by_id_cache.get(fid);
+            hopEntities.push({
+              id: row.caller_id,
+              name: row.caller_name,
+              type: "function",
+              filePath: row.caller_file,
+              relationship,
+              via: viaEntity ?? fid,
+            });
+          }
+        } catch {
+          // Skip query errors
+        }
+      }
+    }
+
+    if (hopEntities.length > 0) {
+      hops.push({ depth, entities: hopEntities });
+    }
+    frontier = nextFrontier;
+  }
+
+  return {
+    root: { id: root.id, name: root.name, type: root.type, filePath: root.filePath },
+    maxDepth,
+    direction,
+    hops,
+    summary: {
+      totalAffected: visited.size - 1, // exclude root
+      affectedFiles: [...allFiles],
+      byType,
+    },
+  };
+}
+
+// Cache for blast radius via-entity name lookups
+const entities_by_id_cache = new Map<string, string>();
+
+/**
+ * Find test files that cover a given entity.
+ */
+export async function getEntityTests(
+  store: GraphDatabase,
+  input: GetEntityTestsInput
+): Promise<EntityTestsResult | null> {
+  const { entityId, name, filePath } = input;
+  logger.debug({ entityId, name, filePath }, "Getting entity tests");
+
+  const entity = await resolveEntity(store, { entityId, name, filePath });
+  if (!entity) return null;
+
+  const testFiles: EntityTestsResult["testFiles"] = [];
+  const entityDir = path.dirname(entity.filePath);
+  const entityBaseName = path.basename(entity.filePath).replace(/\.(ts|tsx|js|jsx)$/, "");
+
+  // Build glob patterns for potential test file locations
+  const patterns = [
+    path.join(entityDir, `**/*.{test,spec}.{ts,tsx,js,jsx}`),
+    path.join(entityDir, `__tests__/**/*.{ts,tsx,js,jsx}`),
+  ];
+
+  // Also check project root test directories
+  // Walk up to find project root (look for package.json)
+  let projectRoot = entityDir;
+  for (let i = 0; i < 10; i++) {
+    const parent = path.dirname(projectRoot);
+    if (parent === projectRoot) break;
+    if (fs.existsSync(path.join(parent, "package.json"))) {
+      projectRoot = parent;
+      break;
+    }
+    projectRoot = parent;
+  }
+
+  // Relative path from project root
+  const relPath = path.relative(projectRoot, entity.filePath);
+  const relDir = path.dirname(relPath);
+  patterns.push(
+    path.join(projectRoot, "tests", relDir, `**/*.{ts,tsx,js,jsx}`),
+    path.join(projectRoot, "test", relDir, `**/*.{ts,tsx,js,jsx}`)
+  );
+
+  try {
+    const candidates = await fg(patterns, {
+      absolute: true,
+      ignore: ["**/node_modules/**"],
+      suppressErrors: true,
+    });
+
+    for (const candidate of candidates) {
+      let content: string;
+      try {
+        content = await readFileWithEncoding(candidate);
+      } catch {
+        continue;
+      }
+
+      const relevantLines: Array<{ lineNumber: number; content: string }> = [];
+      const lines = content.split("\n");
+
+      // Check for import of entity's file
+      const hasImport = content.includes(entityBaseName) &&
+        (content.includes("import") || content.includes("require"));
+
+      // Check for entity name reference
+      const hasNameRef = content.includes(entity.name);
+
+      if (hasNameRef) {
+        // Collect lines mentioning the entity name
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i]!.includes(entity.name)) {
+            relevantLines.push({ lineNumber: i + 1, content: lines[i]!.trim() });
+          }
+        }
+      }
+
+      let matchType: "import" | "nameReference" | "pathConvention";
+      if (hasImport && hasNameRef) {
+        matchType = "import";
+      } else if (hasNameRef) {
+        matchType = "nameReference";
+      } else if (candidate.includes(entityBaseName)) {
+        matchType = "pathConvention";
+      } else {
+        continue; // No match
+      }
+
+      testFiles.push({
+        path: candidate,
+        matchType,
+        relevantLines: relevantLines.length > 0 ? relevantLines.slice(0, 20) : undefined,
+      });
+    }
+  } catch (err) {
+    logger.debug({ err }, "Test file glob failed");
+  }
+
+  // Score coverage
+  let coverageEstimate: EntityTestsResult["coverageEstimate"] = "none";
+  if (testFiles.some((t) => t.matchType === "import")) {
+    coverageEstimate = "high";
+  } else if (testFiles.some((t) => t.matchType === "nameReference")) {
+    coverageEstimate = "medium";
+  } else if (testFiles.length > 0) {
+    coverageEstimate = "low";
+  }
+
+  return {
+    entityId: entity.id,
+    entityName: entity.name,
+    filePath: entity.filePath,
+    testFiles,
+    coverageEstimate,
+  };
+}
+
+/**
+ * Add tags to an entity for migration state tracking.
+ */
+export async function tagEntity(
+  store: GraphDatabase,
+  input: TagEntityInput
+): Promise<TagEntityResult> {
+  const { entityId, tags, source = "user" } = input;
+  logger.debug({ entityId, tags, source }, "Tagging entity");
+
+  let added = 0;
+  const now = Date.now();
+
+  for (const tag of tags) {
+    try {
+      await store.execute(
+        `?[entity_id, tag, source, created_at] <- [[$entityId, $tag, $source, $now]]
+        :put entity_tag { entity_id, tag => source, created_at }`,
+        { entityId, tag, source, now }
+      );
+      added++;
+    } catch (err) {
+      logger.warn({ err, entityId, tag }, "Failed to add tag");
+    }
+  }
+
+  return {
+    entityId,
+    tags,
+    added,
+    message: `Added ${added} tag(s) to entity ${entityId}`,
+  };
+}
+
+/**
+ * Find all entities with a specific tag.
+ */
+export async function getTaggedEntities(
+  store: GraphDatabase,
+  input: GetTaggedEntitiesInput
+): Promise<GetTaggedResult> {
+  const { tag, entityType } = input;
+  logger.debug({ tag, entityType }, "Getting tagged entities");
+
+  try {
+    // Get all entity_ids with this tag
+    const tagRows = await store.query<{
+      entity_id: string;
+      tag: string;
+      source: string;
+    }>(
+      `?[entity_id, tag, source] :=
+        *entity_tag{entity_id, tag, source},
+        tag = $tag`,
+      { tag }
+    );
+
+    // Resolve each entity to get name, type, filePath
+    const entities: GetTaggedResult["entities"] = [];
+
+    for (const row of tagRows) {
+      const entity = await resolveEntity(store, { entityId: row.entity_id });
+      if (!entity) continue;
+      if (entityType && entity.type !== entityType) continue;
+
+      // Get all tags for this entity
+      let allTags: string[] = [row.tag];
+      try {
+        const allTagRows = await store.query<{ tag: string }>(
+          `?[tag] := *entity_tag{entity_id, tag}, entity_id = $eid`,
+          { eid: row.entity_id }
+        );
+        allTags = allTagRows.map((t) => t.tag);
+      } catch {
+        // Use single tag
+      }
+
+      entities.push({
+        id: row.entity_id,
+        name: entity.name,
+        type: entity.type,
+        filePath: entity.filePath,
+        tags: allTags,
+        source: row.source,
+      });
+    }
+
+    return { tag, entities, count: entities.length };
+  } catch (e) {
+    logger.debug({ error: e }, "Get tagged entities query failed");
+    return { tag, entities: [], count: 0 };
+  }
+}
+
+/**
+ * Remove specific tags from an entity.
+ */
+export async function removeEntityTags(
+  store: GraphDatabase,
+  input: RemoveEntityTagsInput
+): Promise<RemoveEntityTagsResult> {
+  const { entityId, tags } = input;
+  logger.debug({ entityId, tags }, "Removing entity tags");
+
+  let removed = 0;
+  for (const tag of tags) {
+    try {
+      await store.execute(
+        `?[entity_id, tag] <- [[$entityId, $tag]]
+        :rm entity_tag { entity_id, tag }`,
+        { entityId, tag }
+      );
+      removed++;
+    } catch (err) {
+      logger.warn({ err, entityId, tag }, "Failed to remove tag");
+    }
+  }
+
+  return {
+    entityId,
+    removed,
+    message: `Removed ${removed} tag(s) from entity ${entityId}`,
+  };
+}
+
+// =============================================================================
+// Lazarus Migration Tools — Additional Handlers
+// =============================================================================
+
+/**
+ * Resolve which entity is at a given file+line location.
+ * The healer uses this to go from test error locations to knowledge graph entities.
+ */
+export async function resolveEntityAtLocation(
+  store: GraphDatabase,
+  input: ResolveEntityAtLocationInput
+): Promise<ResolveEntityAtLocationResult | null> {
+  const { filePath, line } = input;
+  logger.debug({ filePath, line }, "Resolving entity at location");
+
+  // Query across function/class/interface tables for entities that span the given line
+  const tables = ["function", "class", "interface"] as const;
+  const typeMap = { function: "function", class: "class", interface: "interface" } as const;
+
+  for (const table of tables) {
+    const hasSignature = table === "function" || table === "interface";
+    const sigSelect = hasSignature ? ", signature" : "";
+    try {
+      const result = await store.query<Record<string, unknown>>(
+        `?[id, name, file_path, start_line, end_line, language${sigSelect}] :=
+          *${table}{id, name, file_id, start_line, end_line${sigSelect}},
+          *file{id: file_id, path: file_path, language},
+          ends_with(file_path, $filePath),
+          start_line <= $line,
+          end_line >= $line
+        :order -start_line
+        :limit 1`,
+        { filePath, line }
+      );
+      if (result.length > 0 && result[0]) {
+        const row = result[0];
+        const entityId = row.id as string;
+
+        // Fetch justification
+        let justification: ResolveEntityAtLocationResult["justification"] = undefined;
+        try {
+          const justRows = await store.query<Record<string, unknown>>(
+            `?[purpose_summary, feature_context, business_value, confidence_score] :=
+              *justification{entity_id, purpose_summary, feature_context, business_value, confidence_score},
+              entity_id = $entityId
+            :limit 1`,
+            { entityId }
+          );
+          if (justRows.length > 0 && justRows[0]) {
+            const j = justRows[0];
+            justification = {
+              purposeSummary: j.purpose_summary as string,
+              featureContext: j.feature_context as string,
+              businessValue: j.business_value as string,
+              confidence: j.confidence_score as number,
+            };
+          }
+        } catch {
+          // No justification available
+        }
+
+        return {
+          entityId,
+          name: row.name as string,
+          entityType: typeMap[table],
+          filePath: row.file_path as string,
+          startLine: row.start_line as number,
+          endLine: row.end_line as number,
+          language: row.language as string,
+          signature: hasSignature ? (row.signature as string | undefined) : undefined,
+          justification,
+        };
+      }
+    } catch {
+      // Try next table
+    }
+  }
+
+  // Check variable table (uses line instead of start_line/end_line)
+  try {
+    const result = await store.query<Record<string, unknown>>(
+      `?[id, name, file_path, line, language] :=
+        *variable{id, name, file_id, line},
+        *file{id: file_id, path: file_path, language},
+        ends_with(file_path, $filePath),
+        line = $line
+      :limit 1`,
+      { filePath, line }
+    );
+    if (result.length > 0 && result[0]) {
+      const row = result[0];
+      return {
+        entityId: row.id as string,
+        name: row.name as string,
+        entityType: "variable",
+        filePath: row.file_path as string,
+        startLine: row.line as number,
+        endLine: row.line as number,
+        language: row.language as string,
+      };
+    }
+  } catch {
+    // No match
+  }
+
+  return null;
+}
+
+/**
+ * Get migration progress aggregated by feature — tag counts per feature for dashboard display.
+ */
+export async function getMigrationProgress(
+  store: GraphDatabase,
+  input: GetMigrationProgressInput
+): Promise<MigrationProgressResult> {
+  const { featureContext, tags: filterTags } = input;
+  logger.debug({ featureContext, filterTags }, "Getting migration progress");
+
+  // Get all entities grouped by feature
+  let featureQuery = `
+    ?[feature_context, entity_id, entity_type] :=
+      *justification{entity_id, entity_type, feature_context},
+      feature_context != ""
+  `;
+  const params: Record<string, unknown> = {};
+
+  if (featureContext) {
+    featureQuery = `
+      ?[feature_context, entity_id, entity_type] :=
+        *justification{entity_id, entity_type, feature_context},
+        feature_context != "",
+        contains(feature_context, $featureContext)
+    `;
+    params.featureContext = featureContext;
+  }
+
+  const entities = await store.query<Record<string, unknown>>(featureQuery, params);
+
+  // Group entities by feature
+  const featureMap = new Map<string, Set<string>>();
+  for (const row of entities) {
+    const fc = row.feature_context as string;
+    const entityId = row.entity_id as string;
+    if (!featureMap.has(fc)) featureMap.set(fc, new Set());
+    featureMap.get(fc)!.add(entityId);
+  }
+
+  // Get all tags
+  let tagRows: Record<string, unknown>[];
+  try {
+    let tagQuery = `?[entity_id, tag] := *entity_tag{entity_id, tag}`;
+    if (filterTags && filterTags.length > 0) {
+      tagQuery = `?[entity_id, tag] := *entity_tag{entity_id, tag}, is_in(tag, $tags)`;
+      params.tags = filterTags;
+    }
+    tagRows = await store.query<Record<string, unknown>>(tagQuery, params);
+  } catch {
+    tagRows = [];
+  }
+
+  // Build tag lookup: entityId -> tags[]
+  const entityTags = new Map<string, string[]>();
+  for (const row of tagRows) {
+    const eid = row.entity_id as string;
+    const tag = row.tag as string;
+    if (!entityTags.has(eid)) entityTags.set(eid, []);
+    entityTags.get(eid)!.push(tag);
+  }
+
+  // Aggregate per feature
+  const features: MigrationProgressResult["features"] = [];
+  const overallTags: Record<string, number> = {};
+  let overallTotal = 0;
+  let overallTagged = 0;
+
+  for (const [name, entityIds] of featureMap) {
+    const total = entityIds.size;
+    let tagged = 0;
+    const tagCounts: Record<string, number> = {};
+
+    for (const eid of entityIds) {
+      const tags = entityTags.get(eid);
+      if (tags && tags.length > 0) {
+        tagged++;
+        for (const t of tags) {
+          tagCounts[t] = (tagCounts[t] || 0) + 1;
+          overallTags[t] = (overallTags[t] || 0) + 1;
+        }
+      }
+    }
+
+    overallTotal += total;
+    overallTagged += tagged;
+
+    features.push({
+      name,
+      totalEntities: total,
+      taggedEntities: tagged,
+      tags: tagCounts,
+      progressPercent: total > 0 ? Math.round((tagged / total) * 100) : 0,
+    });
+  }
+
+  features.sort((a, b) => b.totalEntities - a.totalEntities);
+
+  return {
+    features,
+    overall: {
+      totalEntities: overallTotal,
+      taggedEntities: overallTagged,
+      tags: overallTags,
+      progressPercent: overallTotal > 0 ? Math.round((overallTagged / overallTotal) * 100) : 0,
+    },
+  };
+}
+
+/**
+ * Compute inter-feature dependency ordering for migration slice planning.
+ * Returns which features depend on which, based on cross-feature entity calls.
+ */
+export async function getSliceDependencies(
+  store: GraphDatabase,
+  input: GetSliceDependenciesInput
+): Promise<SliceDependenciesResult> {
+  const { features: filterFeatures } = input;
+  logger.debug({ filterFeatures }, "Computing slice dependencies");
+
+  // Get all entities grouped by feature with their IDs and names
+  const entityRows = await store.query<Record<string, unknown>>(
+    `?[feature_context, entity_id, name] :=
+      *justification{entity_id, name, feature_context},
+      feature_context != ""`,
+    {}
+  );
+
+  // Build entity→feature and feature→entities maps
+  const entityFeature = new Map<string, string>();
+  const featureEntities = new Map<string, Map<string, string>>();
+
+  for (const row of entityRows) {
+    const fc = row.feature_context as string;
+    const eid = row.entity_id as string;
+    const name = row.name as string;
+
+    if (filterFeatures && filterFeatures.length > 0 && !filterFeatures.some((f) => fc.includes(f))) {
+      continue;
+    }
+
+    entityFeature.set(eid, fc);
+    if (!featureEntities.has(fc)) featureEntities.set(fc, new Map());
+    featureEntities.get(fc)!.set(eid, name);
+  }
+
+  // Get all calls between entities
+  const callRows = await store.query<Record<string, unknown>>(
+    `?[from_id, to_id] := *calls{from_id, to_id}`,
+    {}
+  );
+
+  // Find cross-feature dependencies
+  const depMap = new Map<string, Map<string, Array<{ fromName: string; toName: string }>>>();
+
+  for (const row of callRows) {
+    const fromId = row.from_id as string;
+    const toId = row.to_id as string;
+    const fromFeature = entityFeature.get(fromId);
+    const toFeature = entityFeature.get(toId);
+
+    if (!fromFeature || !toFeature || fromFeature === toFeature) continue;
+
+    if (!depMap.has(fromFeature)) depMap.set(fromFeature, new Map());
+    const featureDeps = depMap.get(fromFeature)!;
+    if (!featureDeps.has(toFeature)) featureDeps.set(toFeature, []);
+
+    const fromName = featureEntities.get(fromFeature)?.get(fromId) || fromId;
+    const toName = featureEntities.get(toFeature)?.get(toId) || toId;
+    featureDeps.get(toFeature)!.push({ fromName, toName });
+  }
+
+  // Build features result
+  const features: SliceDependenciesResult["features"] = [];
+  for (const [name, entities] of featureEntities) {
+    const deps = depMap.get(name);
+    const dependsOn: SliceDependenciesResult["features"][0]["dependsOn"] = [];
+    if (deps) {
+      for (const [depFeature, connections] of deps) {
+        dependsOn.push({
+          feature: depFeature,
+          connectionCount: connections.length,
+          connections: connections.slice(0, 10), // Limit for readability
+        });
+      }
+      dependsOn.sort((a, b) => b.connectionCount - a.connectionCount);
+    }
+    features.push({ name, entityCount: entities.size, dependsOn });
+  }
+
+  features.sort((a, b) => a.dependsOn.length - b.dependsOn.length);
+
+  // Topological sort for execution order
+  const executionOrder: string[] = [];
+  const circularDependencies: Array<{ features: string[] }> = [];
+  const featureNames = new Set(featureEntities.keys());
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+
+  function visit(feature: string, path: string[]): boolean {
+    if (visited.has(feature)) return true;
+    if (visiting.has(feature)) {
+      // Circular dependency detected
+      const cycleStart = path.indexOf(feature);
+      circularDependencies.push({ features: path.slice(cycleStart).concat(feature) });
+      return false;
+    }
+
+    visiting.add(feature);
+    const deps = depMap.get(feature);
+    if (deps) {
+      for (const depFeature of deps.keys()) {
+        if (featureNames.has(depFeature)) {
+          visit(depFeature, [...path, feature]);
+        }
+      }
+    }
+    visiting.delete(feature);
+    visited.add(feature);
+    executionOrder.push(feature);
+    return true;
+  }
+
+  for (const name of featureNames) {
+    if (!visited.has(name)) {
+      visit(name, []);
+    }
+  }
+
+  return {
+    features,
+    executionOrder,
+    circularDependencies,
+  };
+}
+
+// =============================================================================
 // Tool Context (for dependency injection)
 // =============================================================================
 
@@ -2486,4 +3985,5 @@ export interface ToolContext {
   justificationService?: import("../core/justification/interfaces/IJustificationService.js").IJustificationService;
   ledger?: import("../core/ledger/interfaces/IChangeLedger.js").IChangeLedger;
   indexer?: import("../core/indexer/index.js").Indexer;
+  hybridSearchService?: import("../core/search/index.js").HybridSearchService;
 }

@@ -7,7 +7,8 @@
  * @module
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as net from "node:net";
@@ -118,10 +119,15 @@ export class ZoektManager {
 
     fs.mkdirSync(this.indexDir, { recursive: true });
 
+    // Auto-install binaries if missing and Go is available
+    if (!this.getBinaryPath("zoekt-webserver")) {
+      await this.ensureBinaries();
+    }
+
     const webserverBin = this.getBinaryPath("zoekt-webserver");
     if (!webserverBin) {
       throw new Error(
-        "zoekt-webserver binary not found. Run scripts/setup-zoekt.sh or set ZOEKT_BIN_DIR."
+        "zoekt-webserver binary not found and auto-install failed (Go not available)."
       );
     }
 
@@ -163,6 +169,43 @@ export class ZoektManager {
       this.webserver.kill("SIGTERM");
       this.webserver = null;
       logger.debug({ port: this.port }, "Zoekt webserver stopped");
+    }
+  }
+
+  /**
+   * Auto-install Zoekt binaries via `go install` if Go is available.
+   */
+  private async ensureBinaries(): Promise<void> {
+    const execFileAsync = promisify(execFile);
+
+    // Check if Go is available
+    try {
+      await execFileAsync("go", ["version"]);
+    } catch {
+      logger.debug("Go not found on PATH - cannot auto-install Zoekt binaries");
+      return;
+    }
+
+    fs.mkdirSync(this.binDir, { recursive: true });
+    logger.info({ binDir: this.binDir }, "Auto-installing Zoekt binaries via Go...");
+
+    const packages = [
+      "github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest",
+      "github.com/sourcegraph/zoekt/cmd/zoekt-git-index@latest",
+    ];
+
+    for (const pkg of packages) {
+      try {
+        await execFileAsync("go", ["install", pkg], {
+          env: { ...process.env, GOBIN: this.binDir },
+          timeout: 120_000,
+        });
+        const name = pkg.split("/").pop()!.split("@")[0]!;
+        logger.info({ binary: name, binDir: this.binDir }, "Zoekt binary installed");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn({ pkg, error: msg }, "Failed to install Zoekt binary");
+      }
     }
   }
 

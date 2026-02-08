@@ -19,6 +19,9 @@ export interface StartOptions {
   debug?: boolean;
   /** Optional existing graph store to use (avoids creating a new one) */
   existingStore?: import("../../core/graph/index.js").IGraphStore;
+  /** Phase 6: Optional pre-created services (shared with viewer when running default command) */
+  existingEmbeddingService?: import("../../core/embeddings/index.js").IEmbeddingService | null;
+  existingZoektManager?: import("../../core/search/index.js").ZoektManager | null;
 }
 
 const DEFAULT_PORT = 3100;
@@ -98,6 +101,8 @@ export async function startCommand(options: StartOptions): Promise<void> {
       config,
       dataDir: getDataDir(),
       existingStore: options.existingStore,
+      existingEmbeddingService: options.existingEmbeddingService,
+      existingZoektManager: options.existingZoektManager,
     });
 
     isServerRunning = true;

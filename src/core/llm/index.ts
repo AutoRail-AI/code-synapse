@@ -53,6 +53,13 @@ export {
   type APILLMServiceConfig,
 } from "./api-llm-service.js";
 
+// Router-based LLM Service (works for local + API via ModelRouter)
+export {
+  RouterLLMService,
+  createRouterLLMService,
+  type RouterLLMServiceConfig,
+} from "./router-llm-service.js";
+
 // LLM Service Interface
 export type { ILLMService } from "./interfaces/ILLMService.js";
 

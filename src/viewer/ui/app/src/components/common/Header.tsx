@@ -39,55 +39,58 @@ export function Header() {
   }, [commandPaletteOpen, setCommandPaletteOpen]);
 
   return (
-    <header className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-4">
-      {/* Logo and Title */}
-      <div className="flex items-center gap-3">
+    <header className="h-16 flex items-center justify-between px-6 z-50">
+      {/* Logo and Title - Floating Glass */}
+      <div className="flex items-center gap-3 glass-panel px-4 py-2 rounded-xl">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+          <div className="w-8 h-8 bg-gradient-to-br from-primary to-accent rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
             <GitBranch className="w-5 h-5 text-white" />
           </div>
-          <span className="font-semibold text-lg text-white">Code-Synapse</span>
+          <span className="font-bold text-lg text-white tracking-tight">Code-Synapse</span>
         </div>
       </div>
 
-      {/* Stats Bar */}
-      <div className="flex items-center gap-6 text-sm">
+      {/* Stats Bar - Centered Pills */}
+      <div className="flex items-center gap-3 backdrop-blur-sm bg-slate-900/30 px-4 py-2 rounded-full border border-slate-700/30">
         {overviewStats ? (
           <>
             <StatBadge
-              icon={<FileCode className="w-4 h-4" />}
+              icon={<FileCode className="w-4 h-4 text-emerald-400" />}
               label="Files"
               value={overviewStats.totalFiles}
             />
+            <div className="w-px h-4 bg-slate-700/50" />
             <StatBadge
-              icon={<Box className="w-4 h-4" />}
+              icon={<Box className="w-4 h-4 text-indigo-400" />}
               label="Functions"
               value={overviewStats.totalFunctions}
             />
+            <div className="w-px h-4 bg-slate-700/50" />
             <StatBadge
-              icon={<Layers className="w-4 h-4" />}
+              icon={<Layers className="w-4 h-4 text-purple-400" />}
               label="Classes"
               value={overviewStats.totalClasses}
             />
+            <div className="w-px h-4 bg-slate-700/50" />
             <StatBadge
-              icon={<Activity className="w-4 h-4" />}
+              icon={<Activity className="w-4 h-4 text-orange-400" />}
               label="Relations"
               value={overviewStats.totalRelationships}
             />
           </>
         ) : (
-          <span className="text-slate-500">Loading stats...</span>
+          <span className="text-slate-500 text-sm">Loading stats...</span>
         )}
       </div>
 
       {/* Command Palette Trigger */}
       <button
         onClick={() => setCommandPaletteOpen(true)}
-        className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-md text-slate-300 text-sm transition-colors"
+        className="group flex items-center gap-3 px-4 py-2 bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 hover:border-sidebar-primary/50 rounded-xl transition-all duration-300 shadow-sm hover:shadow-glow"
       >
-        <Search className="w-4 h-4" />
-        <span>Search...</span>
-        <kbd className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 bg-slate-600 rounded text-xs text-slate-400">
+        <Search className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
+        <span className="text-sm text-slate-400 group-hover:text-white font-medium transition-colors">Search...</span>
+        <kbd className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 bg-slate-900/50 rounded-md text-xs text-slate-500 font-mono group-hover:text-slate-300 border border-slate-700/50">
           <Command className="w-3 h-3" />K
         </kbd>
       </button>

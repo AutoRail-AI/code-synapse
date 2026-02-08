@@ -29,6 +29,10 @@ import {
   type IModelRouter,
 } from "../core/models/index.js";
 import {
+  createRouterLLMService,
+  type ILLMService,
+} from "../core/llm/index.js";
+import {
   createLLMJustificationService,
   type IJustificationService,
 } from "../core/justification/index.js";
@@ -57,6 +61,18 @@ import {
   findPatterns,
   getPattern,
   findSimilarCode,
+  getEntitySource,
+  getFeatureMap,
+  getMigrationContext,
+  analyzeBlastRadius,
+  getEntityTests,
+  tagEntity,
+  getTaggedEntities,
+  removeEntityTags,
+  resolveEntityAtLocation,
+  getMigrationProgress,
+  getSliceDependencies,
+  type GetEntitySourceInput,
   type ToolContext,
 } from "./tools.js";
 import {
@@ -101,6 +117,9 @@ export interface ServerOptions {
   dataDir: string;
   /** Optional existing graph store to use (avoids creating a new one) */
   existingStore?: import("../core/graph/index.js").IGraphStore;
+  /** Phase 6: Optional pre-created services (avoids port conflicts when viewer + MCP run together) */
+  existingEmbeddingService?: IEmbeddingService | null;
+  existingZoektManager?: ZoektManager | null;
 }
 
 let indexer: Indexer | null = null;
@@ -115,6 +134,7 @@ let similarityService: ISimilarityService | null = null;
 let zoektManager: ZoektManager | null = null;
 let zoektReindexTimer: ReturnType<typeof setTimeout> | null = null;
 let hybridSearchService: HybridSearchService | null = null;
+let llmService: ILLMService | null = null;
 
 /**
  * Extended config that includes LLM settings
@@ -138,7 +158,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "search_code",
     description:
-      "Search for code entities (functions, classes, interfaces, variables, files) by name or pattern",
+      "Search for code entities (functions, classes, interfaces, variables, files) by name or pattern. Returns enriched results with entity type, business justification, design patterns, and classification when available.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -524,7 +544,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "search_code_exact",
     description:
-      "Exact or regex code search using Zoekt. Use for finding exact symbols, strings, or patterns in source files. Supports regex. Returns file paths and matching lines.",
+      "Exact or regex code search using Zoekt with entity resolution. Use for finding exact symbols, strings, or patterns in source files. Supports regex. Returns file paths and matching lines, with entity ID, name, and type attached when a known entity contains the matching line.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -544,11 +564,11 @@ export const TOOL_DEFINITIONS = [
       required: ["query"],
     },
   },
-  // Phase 3: Hybrid search (semantic + lexical + optional business context)
+  // Phase 3+4: Hybrid search (semantic + lexical) with optional LLM synthesis
   {
     name: "hybrid_search",
     description:
-      "Combined semantic and lexical code search. Use for complex queries where you want both conceptual matches (embeddings) and exact/text matches (Zoekt). Optionally scope by business context (e.g. 'Payments'). Returns merged results with justification when available.",
+      "Combined semantic and lexical code search with entity-level enrichment. Returns results with business justification, design patterns, entity types, and intent classification metadata. Use for complex queries where you want both conceptual matches (embeddings) and exact/text matches (Zoekt). Optionally scope by business context. Set enableSynthesis=true to get an AI-generated answer summary. Always returns a meta block with intent, source counts, and timing.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -563,6 +583,10 @@ export const TOOL_DEFINITIONS = [
         limit: {
           type: "number",
           description: "Maximum total results (default: 30)",
+        },
+        enableSynthesis: {
+          type: "boolean",
+          description: "If true, generate AI answer summary from top results (Phase 4). Uses local/cloud LLM based on config.",
         },
       },
       required: ["query"],
@@ -601,6 +625,159 @@ export const TOOL_DEFINITIONS = [
           type: "string",
           description: "Filter by file path pattern (regex)",
         },
+      },
+      required: [],
+    },
+  },
+  // Lazarus Migration Tools
+  {
+    name: "get_entity_source",
+    description:
+      "Get the actual source code of a function, class, or interface. Returns the full source with line numbers. Essential for understanding implementation details during code migration.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        entityId: { type: "string", description: "Entity ID from the knowledge graph" },
+        name: { type: "string", description: "Entity name (if no entityId)" },
+        filePath: { type: "string", description: "File path to narrow search" },
+        entityType: { type: "string", enum: ["function", "class", "interface", "variable"], description: "Filter by entity type" },
+        contextLines: { type: "number", description: "Extra lines above/below entity (default 0)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_feature_map",
+    description:
+      "Get a map of all features/business domains in the codebase, grouped by feature context from justifications. Shows which entities belong to each feature, useful for planning migration slices.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        featureContext: { type: "string", description: "Filter to a specific feature name (substring match)" },
+        includeEntities: { type: "boolean", description: "Include entity list per feature (default false)" },
+        limit: { type: "number", description: "Max features to return (default 50)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_migration_context",
+    description:
+      "Build a Code Contract for a feature slice: all entities, their business rules, internal dependencies, external dependencies, side effects, and data flow. The complete context needed to migrate a feature.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        featureContext: { type: "string", description: "Feature name to resolve entities by (from justification)" },
+        entityIds: { type: "array", items: { type: "string" }, description: "Explicit list of entity IDs (alternative to featureContext)" },
+        includeSource: { type: "boolean", description: "Include source code for each entity (default false)" },
+        includeDataFlow: { type: "boolean", description: "Include data flow summaries (default false)" },
+        includeSideEffects: { type: "boolean", description: "Include side effects (default false)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "analyze_blast_radius",
+    description:
+      "Analyze the transitive impact of changing an entity. Traces callers/callees up to N hops deep via BFS to show everything that would be affected by a change.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        entityId: { type: "string", description: "Entity ID to analyze impact for" },
+        maxDepth: { type: "number", description: "Maximum traversal depth (default 3)" },
+        direction: { type: "string", enum: ["callers", "callees", "both"], description: "Traversal direction (default 'callers')" },
+      },
+      required: ["entityId"],
+    },
+  },
+  {
+    name: "get_entity_tests",
+    description:
+      "Find test files that cover a given entity by checking imports, name references, and path conventions. Returns matched test files with relevant lines and a coverage estimate.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        entityId: { type: "string", description: "Entity ID from the knowledge graph" },
+        name: { type: "string", description: "Entity name (if no entityId)" },
+        filePath: { type: "string", description: "File path to narrow search" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "tag_entity",
+    description:
+      "Add migration tags to an entity (e.g. 'legacy', 'migrating', 'migrated', 'deprecated'). Tags persist in the knowledge graph for tracking migration state.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        entityId: { type: "string", description: "Entity ID to tag" },
+        tags: { type: "array", items: { type: "string" }, description: "Tags to add" },
+        source: { type: "string", description: "Who/what added the tag (default 'user')" },
+      },
+      required: ["entityId", "tags"],
+    },
+  },
+  {
+    name: "get_tagged_entities",
+    description:
+      "Find all entities with a specific tag. Useful for tracking migration progress (e.g. find all entities tagged 'legacy' or 'migrated').",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        tag: { type: "string", description: "Tag to search for" },
+        entityType: { type: "string", enum: ["function", "class", "interface", "variable", "file"], description: "Filter by entity type" },
+      },
+      required: ["tag"],
+    },
+  },
+  {
+    name: "remove_entity_tags",
+    description:
+      "Remove specific tags from an entity.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        entityId: { type: "string", description: "Entity ID to remove tags from" },
+        tags: { type: "array", items: { type: "string" }, description: "Tags to remove" },
+      },
+      required: ["entityId", "tags"],
+    },
+  },
+  {
+    name: "resolve_entity_at_location",
+    description:
+      "Resolve which code entity (function, class, interface, variable) exists at a specific file path and line number. Essential for the self-healing diagnosis engine to go from test error locations to knowledge graph entities.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        filePath: { type: "string", description: "File path (relative or absolute)" },
+        line: { type: "number", description: "Line number to resolve" },
+      },
+      required: ["filePath", "line"],
+    },
+  },
+  {
+    name: "get_migration_progress",
+    description:
+      "Get migration progress aggregated by feature. Shows tag counts (legacy, migrating, migrated, etc.) per feature and overall, with progress percentages. Powers the Glass Brain Dashboard confidence display.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        featureContext: { type: "string", description: "Filter to a specific feature (substring match)" },
+        tags: { type: "array", items: { type: "string" }, description: "Filter to specific tags (default: all tags)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_slice_dependencies",
+    description:
+      "Compute inter-feature dependency ordering for migration slice planning. Analyzes cross-feature function calls to determine which features depend on which, and returns a topological execution order with circular dependency detection.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        features: { type: "array", items: { type: "string" }, description: "Filter to specific features (substring match). Omit for all features." },
       },
       required: [],
     },
@@ -659,6 +836,7 @@ export function createMcpServer(
     justificationService,
     ledger,
     indexer: indexerRef,
+    hybridSearchService: hybridSearchSvc ?? undefined,
   };
   const mcpServer = new Server(
     {
@@ -689,17 +867,21 @@ export function createMcpServer(
     try {
       switch (name) {
         case "search_code": {
-          const result = await searchCode(graphStore, {
-            query: args?.query as string,
-            limit: args?.limit as number | undefined,
-            entityType: args?.entityType as
-              | "function"
-              | "class"
-              | "interface"
-              | "variable"
-              | "file"
-              | undefined,
-          });
+          const result = await searchCode(
+            graphStore,
+            {
+              query: args?.query as string,
+              limit: args?.limit as number | undefined,
+              entityType: args?.entityType as
+                | "function"
+                | "class"
+                | "interface"
+                | "variable"
+                | "file"
+                | undefined,
+            },
+            toolContext
+          );
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
@@ -1024,7 +1206,7 @@ export function createMcpServer(
           };
         }
 
-        // Phase 2: Zoekt lexical search
+        // Phase 2: Zoekt lexical search with entity resolution
         case "search_code_exact": {
           const zoekt = zoektMgr ?? zoektManager;
           if (!zoekt?.isStarted()) {
@@ -1038,19 +1220,70 @@ export function createMcpServer(
               }],
             };
           }
-          const result = await zoekt.search(
+          const zoektResult = await zoekt.search(
             (args?.query as string) ?? "",
             {
               filePattern: args?.filePattern as string | undefined,
               maxResults: (args?.limit as number) ?? 20,
             }
           );
+
+          // Post-process: resolve entities at matching file+line locations
+          try {
+            for (const fileMatch of zoektResult.results) {
+              const filePath = fileMatch.fileName;
+              for (const lineMatch of fileMatch.lineMatches) {
+                const lineNum = lineMatch.lineNumber;
+                // Find entity containing this line
+                try {
+                  const entityResult = await graphStore.query<{
+                    entity_id: string;
+                    name: string;
+                    kind: string;
+                  }>(
+                    `?[entity_id, name, kind] :=
+                      *function{id: entity_id, name, file_id, start_line, end_line},
+                      *file{id: file_id, path: file_path},
+                      ends_with(file_path, $filePath),
+                      start_line <= $lineNum, end_line >= $lineNum,
+                      kind = "function"
+                    ?[entity_id, name, kind] :=
+                      *class{id: entity_id, name, file_id, start_line, end_line},
+                      *file{id: file_id, path: file_path},
+                      ends_with(file_path, $filePath),
+                      start_line <= $lineNum, end_line >= $lineNum,
+                      kind = "class"
+                    ?[entity_id, name, kind] :=
+                      *interface{id: entity_id, name, file_id, start_line, end_line},
+                      *file{id: file_id, path: file_path},
+                      ends_with(file_path, $filePath),
+                      start_line <= $lineNum, end_line >= $lineNum,
+                      kind = "interface"
+                    :limit 1`,
+                    { filePath, lineNum }
+                  );
+                  if (entityResult.length > 0 && entityResult[0]) {
+                    const entity = entityResult[0];
+                    // Attach entity info to the line match
+                    (lineMatch as Record<string, unknown>).entityId = entity.entity_id;
+                    (lineMatch as Record<string, unknown>).entityName = entity.name;
+                    (lineMatch as Record<string, unknown>).entityType = entity.kind;
+                  }
+                } catch {
+                  // Entity resolution is best-effort — skip on error
+                }
+              }
+            }
+          } catch {
+            // Entity resolution is best-effort — return raw results if batch fails
+          }
+
           return {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            content: [{ type: "text", text: JSON.stringify(zoektResult, null, 2) }],
           };
         }
 
-        // Phase 3: Hybrid search (semantic + lexical + optional business context)
+        // Phase 3+4: Hybrid search (semantic + lexical) with optional synthesis
         case "hybrid_search": {
           const hybrid = hybridSearchSvc ?? hybridSearchService;
           if (!hybrid) {
@@ -1064,16 +1297,21 @@ export function createMcpServer(
               }],
             };
           }
-          const hybridResult = await hybrid.searchWithJustification(
-            (args?.query as string) ?? "",
-            {
-              businessContext: args?.businessContext as string | undefined,
-              limit: (args?.limit as number) ?? 30,
-              enrichWithJustification: true,
-            }
-          );
+          const enableSynthesis = args?.enableSynthesis === true;
+          const query = (args?.query as string) ?? "";
+          const options = {
+            businessContext: args?.businessContext as string | undefined,
+            limit: (args?.limit as number) ?? 30,
+            enrichWithJustification: true,
+            enableSynthesis,
+          };
+
+          // Always use searchWithSynthesis — it returns meta block in all cases
+          // and only generates AI summary when enableSynthesis=true + query is a question
+          const response = await hybrid.searchWithSynthesis(query, options);
+
           return {
-            content: [{ type: "text", text: JSON.stringify({ results: hybridResult }, null, 2) }],
+            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
           };
         }
 
@@ -1092,6 +1330,175 @@ export function createMcpServer(
             embeddingSvc,
             similaritySvc
           );
+
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        // Lazarus Migration Tools
+        case "get_entity_source": {
+          const result = await getEntitySource(graphStore, {
+            entityId: args?.entityId as string | undefined,
+            name: args?.name as string | undefined,
+            filePath: args?.filePath as string | undefined,
+            entityType: args?.entityType as GetEntitySourceInput["entityType"],
+            contextLines: args?.contextLines as number | undefined,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "Entity not found" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "get_feature_map": {
+          const result = await getFeatureMap(graphStore, {
+            featureContext: args?.featureContext as string | undefined,
+            includeEntities: args?.includeEntities as boolean | undefined,
+            limit: args?.limit as number | undefined,
+          });
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "get_migration_context": {
+          const result = await getMigrationContext(graphStore, {
+            featureContext: args?.featureContext as string | undefined,
+            entityIds: args?.entityIds as string[] | undefined,
+            includeSource: args?.includeSource as boolean | undefined,
+            includeDataFlow: args?.includeDataFlow as boolean | undefined,
+            includeSideEffects: args?.includeSideEffects as boolean | undefined,
+          });
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "analyze_blast_radius": {
+          const result = await analyzeBlastRadius(graphStore, {
+            entityId: args?.entityId as string,
+            maxDepth: args?.maxDepth as number | undefined,
+            direction: args?.direction as "callers" | "callees" | "both" | undefined,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "Entity not found" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "get_entity_tests": {
+          const result = await getEntityTests(graphStore, {
+            entityId: args?.entityId as string | undefined,
+            name: args?.name as string | undefined,
+            filePath: args?.filePath as string | undefined,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "Entity not found" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "tag_entity": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("tag_entity", argsObj, toolContext.sessionId);
+
+          const result = await tagEntity(graphStore, {
+            entityId: args?.entityId as string,
+            tags: args?.tags as string[],
+            source: args?.source as string | undefined,
+          });
+
+          observer?.onToolResult(
+            "tag_entity",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "get_tagged_entities": {
+          const result = await getTaggedEntities(graphStore, {
+            tag: args?.tag as string,
+            entityType: args?.entityType as "function" | "class" | "interface" | "variable" | "file" | undefined,
+          });
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "remove_entity_tags": {
+          const startTime = Date.now();
+          const argsObj = (args ?? {}) as Record<string, unknown>;
+          observer?.onToolCall("remove_entity_tags", argsObj, toolContext.sessionId);
+
+          const result = await removeEntityTags(graphStore, {
+            entityId: args?.entityId as string,
+            tags: args?.tags as string[],
+          });
+
+          observer?.onToolResult(
+            "remove_entity_tags",
+            argsObj,
+            result,
+            toolContext.sessionId,
+            Date.now() - startTime
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "resolve_entity_at_location": {
+          const result = await resolveEntityAtLocation(graphStore, {
+            filePath: args?.filePath as string,
+            line: args?.line as number,
+          });
+          if (!result) {
+            return {
+              content: [{ type: "text", text: "No entity found at the specified location" }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "get_migration_progress": {
+          const result = await getMigrationProgress(graphStore, {
+            featureContext: args?.featureContext as string | undefined,
+            tags: args?.tags as string[] | undefined,
+          });
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        case "get_slice_dependencies": {
+          const result = await getSliceDependencies(graphStore, {
+            features: args?.features as string[] | undefined,
+          });
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
@@ -1353,7 +1760,7 @@ export function createMcpServer(
  * Start the MCP server
  */
 export async function startServer(options: ServerOptions): Promise<void> {
-  const { config, dataDir, existingStore } = options;
+  const { config, dataDir, existingStore, existingEmbeddingService, existingZoektManager } = options;
 
   logger.info({ dataDir }, "Starting MCP server");
 
@@ -1398,6 +1805,13 @@ export async function startServer(options: ServerOptions): Promise<void> {
       modelRouter = result.router;
 
       logger.info({ modelId: result.modelId, provider: result.provider }, "Model router initialized");
+
+      // Phase 4: LLM Service for Hybrid Search synthesis (works for local + API)
+      llmService = createRouterLLMService(modelRouter, {
+        modelId: result.modelId,
+      });
+      await llmService.initialize();
+      logger.debug("Router LLM service initialized for hybrid search synthesis");
     } catch (err) {
       logger.warn(
         { error: err, modelId },
@@ -1444,48 +1858,68 @@ export async function startServer(options: ServerOptions): Promise<void> {
   }
 
   // Initialize embedding and similarity services (non-fatal - semantic search optional)
-  try {
-    embeddingService = createEmbeddingService();
-    await embeddingService.initialize();
-    logger.info({ modelId: embeddingService.getModelId() }, "Embedding service initialized");
-
+  if (existingEmbeddingService) {
+    embeddingService = existingEmbeddingService;
     similarityService = createSimilarityService(
       graphStore as unknown as import("../core/interfaces/IGraphStore.js").IGraphStore,
       embeddingService
     );
     await similarityService.initialize();
-    logger.info("Similarity service initialized");
-  } catch (embeddingError) {
-    logger.warn(
-      { error: embeddingError },
-      "Failed to initialize embedding services - semantic similarity search unavailable"
-    );
-    embeddingService = null;
-    similarityService = null;
+    logger.info("Embedding/similarity services reused (shared with viewer)");
+  } else {
+    try {
+      embeddingService = createEmbeddingService();
+      await embeddingService.initialize();
+      logger.info({ modelId: embeddingService.getModelId() }, "Embedding service initialized");
+
+      similarityService = createSimilarityService(
+        graphStore as unknown as import("../core/interfaces/IGraphStore.js").IGraphStore,
+        embeddingService
+      );
+      await similarityService.initialize();
+      logger.info("Similarity service initialized");
+    } catch (embeddingError) {
+      logger.warn(
+        { error: embeddingError },
+        "Failed to initialize embedding services - semantic similarity search unavailable"
+      );
+      embeddingService = null;
+      similarityService = null;
+    }
   }
 
   // Initialize Zoekt for lexical search (Phase 2, non-fatal)
-  try {
-    const zoekt = new ZoektManager({
-      repoRoot: config.root,
-      dataDir,
-      port: 6070,
-      binDir: path.join(config.root, "bin"),
-    });
-    await zoekt.start();
-    zoektManager = zoekt;
-    logger.info({ port: zoekt.getPort() }, "Zoekt webserver started for lexical search");
-
-    // Trigger initial reindex in background (non-blocking)
+  if (existingZoektManager && existingZoektManager.isStarted()) {
+    zoektManager = existingZoektManager;
+    logger.info("Zoekt reused (shared with viewer)");
+    // Trigger reindex in background (in case not done yet)
     zoektManager.reindex().catch((err) => {
-      logger.warn({ err }, "Initial Zoekt reindex failed");
+      logger.warn({ err }, "Zoekt reindex failed");
     });
-  } catch (zoektError) {
-    logger.warn(
-      { error: zoektError },
-      "Zoekt failed to start - exact/regex code search unavailable (run scripts/setup-zoekt.sh)"
-    );
-    zoektManager = null;
+  } else {
+    try {
+      const zoekt = new ZoektManager({
+        repoRoot: config.root,
+        dataDir,
+        port: 6070,
+        binDir: path.join(config.root, "bin"),
+      });
+      await zoekt.start();
+      zoektManager = zoekt;
+      logger.info({ port: zoekt.getPort() }, "Zoekt webserver started for lexical search");
+
+      // Trigger initial reindex in background (non-blocking)
+      zoektManager.reindex().catch((err) => {
+        logger.warn({ err }, "Initial Zoekt reindex failed");
+      });
+    } catch (zoektError) {
+      const zoektMsg = zoektError instanceof Error ? zoektError.message : String(zoektError);
+      logger.debug(
+        { reason: zoektMsg },
+        "Zoekt not available - lexical/regex code search disabled (optional: run scripts/setup-zoekt.sh)"
+      );
+      zoektManager = null;
+    }
   }
 
   // Phase 3: Hybrid search (requires embeddings + Zoekt)
@@ -1494,7 +1928,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
       hybridSearchService = new HybridSearchService(
         graphStore as unknown as IGraphStore,
         embeddingService,
-        zoektManager
+        zoektManager,
+        llmService ?? undefined
       );
       logger.debug("Hybrid search service initialized");
     } catch (err) {

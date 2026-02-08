@@ -10,6 +10,7 @@
 import type { IGraphStore } from "../interfaces/IGraphStore.js";
 import type { ExtractionResult, CozoBatch } from "../extraction/types.js";
 import { createLogger } from "../../utils/logger.js";
+import { Mutex } from "../../utils/async.js";
 
 const logger = createLogger("graph-writer");
 
@@ -71,6 +72,7 @@ export interface GraphWriterOptions {
 export class GraphWriter {
   private store: IGraphStore;
   private options: Required<GraphWriterOptions>;
+  private embeddingMutex = new Mutex();
 
   constructor(store: IGraphStore, options: GraphWriterOptions = {}) {
     this.store = store;
@@ -104,8 +106,37 @@ export class GraphWriter {
         entitiesDeleted = await this.deleteFileEntities(result.fileId);
       }
 
-      // Write new entities
+      // Separate entity_embeddings to write them under mutex (avoids RocksDB contention)
+      const embeddings = result.batch.entityEmbeddings;
+      result.batch.entityEmbeddings = [];
+
+      // Write all entities except embeddings (safe for concurrent access)
       await this.store.writeBatch(result.batch);
+
+      // Restore embeddings on batch (for accurate counting below)
+      result.batch.entityEmbeddings = embeddings;
+
+      // Write entity_embeddings under mutex to serialize across concurrent files
+      if (embeddings.length > 0) {
+        await this.embeddingMutex.runExclusive(async () => {
+          await this.store.execute(
+            `?[entity_id, file_id, vector, text_hash, model, created_at] <- $rows
+            :put entity_embedding {entity_id, file_id => vector, text_hash, model, created_at}`,
+            {
+              rows: embeddings.map(
+                ([entityId, fileId, vector, textHash, model, createdAt]) => [
+                  entityId,
+                  fileId,
+                  vector,
+                  textHash,
+                  model,
+                  createdAt,
+                ]
+              ),
+            }
+          );
+        });
+      }
 
       // Count entities and relationships written
       const entitiesWritten = this.countEntities(result.batch);
@@ -236,11 +267,21 @@ export class GraphWriter {
       })(),
 
       // Delete entity_embedding rows for this file (Hybrid Search Phase 1)
-      safeExecute(
-        `?[entity_id, file_id] := *entity_embedding{entity_id, file_id}, file_id = $fileId
-         :rm entity_embedding {entity_id, file_id}`,
-        { fileId }
-      )
+      // Uses shared mutex to serialize with concurrent embedding writes
+      (async () => {
+        try {
+          await this.embeddingMutex.runExclusive(() =>
+            this.store.execute(
+              `?[entity_id, file_id] := *entity_embedding{entity_id, file_id}, file_id = $fileId
+               :rm entity_embedding {entity_id, file_id}`,
+              { fileId }
+            )
+          );
+        } catch {
+          // Preserve existing semantics: don't crash on failure
+          logger.warn({ fileId }, "Failed to delete entity_embedding rows");
+        }
+      })()
     ]);
 
     // Get all entities in this file for relationship cleanup

@@ -122,7 +122,11 @@ export class CozoGraphViewer implements IGraphViewer {
       totalTypeAliases: entities.typeAliases,
       totalVariables: entities.variables,
       totalRelationships,
-      embeddingCoverage: entities.functions > 0 ? embeddings / entities.functions : 0,
+      embeddingCoverage:
+        entities.functions + entities.classes + entities.interfaces + entities.typeAliases + entities.variables > 0
+          ? embeddings /
+            (entities.functions + entities.classes + entities.interfaces + entities.typeAliases + entities.variables)
+          : 0,
       totalSizeBytes: totalSize,
       languages: languages.map((l) => l.language),
       justificationCoverage: justificationStats.coveragePercentage,
@@ -237,10 +241,10 @@ export class CozoGraphViewer implements IGraphViewer {
 
   private async getEmbeddingCount(): Promise<number> {
     // Aggregation must be in HEAD, not body
-    const script = `?[count(function_id)] := *function_embedding{function_id}`;
+    const script = `?[count(entity_id)] := *entity_embedding{entity_id}`;
     try {
-      const result = await this.store.query<{ "count(function_id)": number }>(script);
-      return result.rows[0]?.["count(function_id)"] ?? 0;
+      const result = await this.store.query<{ "count(entity_id)": number }>(script);
+      return result.rows[0]?.["count(entity_id)"] ?? 0;
     } catch {
       return 0;
     }
@@ -1379,12 +1383,13 @@ export class CozoGraphViewer implements IGraphViewer {
     const embeddings = await this.getEmbeddingCount();
 
     const filesIndexed = entities.files;
-    const functionsWithEmbeddings = embeddings;
-    const functionsTotal = entities.functions;
+    const entitiesWithEmbeddings = embeddings;
+    const totalEntities =
+      entities.functions + entities.classes + entities.interfaces + entities.typeAliases + entities.variables;
 
     const coveragePercentage = filesIndexed > 0 ? 100 : 0;
     const embeddingPercentage =
-      functionsTotal > 0 ? Math.round((functionsWithEmbeddings / functionsTotal) * 100) : 0;
+      totalEntities > 0 ? Math.round((entitiesWithEmbeddings / totalEntities) * 100) : 0;
 
     const issues: IndexHealth["issues"] = [];
 
@@ -1397,11 +1402,11 @@ export class CozoGraphViewer implements IGraphViewer {
       });
     }
 
-    if (functionsTotal > 0 && functionsWithEmbeddings === 0) {
+    if (totalEntities > 0 && entitiesWithEmbeddings === 0) {
       issues.push({
         type: "info",
         code: "NO_EMBEDDINGS",
-        message: "No function embeddings have been generated",
+        message: "No entity embeddings have been generated",
         suggestion: "Embeddings enable semantic search capabilities",
       });
     }
@@ -1418,8 +1423,8 @@ export class CozoGraphViewer implements IGraphViewer {
         percentage: coveragePercentage,
       },
       embeddings: {
-        functionsWithEmbeddings,
-        functionsTotal,
+        functionsWithEmbeddings: entitiesWithEmbeddings,
+        functionsTotal: totalEntities,
         percentage: embeddingPercentage,
       },
       relationships: {

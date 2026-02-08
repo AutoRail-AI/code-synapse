@@ -147,7 +147,7 @@ describe.skipIf(SKIP_NATIVE_TESTS)("MCP Server Integration", () => {
     it("should list tools via MCP protocol", async () => {
       const result = await client.listTools();
       expect(result.tools).toBeDefined();
-      expect(result.tools.length).toBe(25);
+      expect(result.tools.length).toBe(36);
 
       const toolNames = result.tools.map((t) => t.name);
       expect(toolNames).toContain("search_code");

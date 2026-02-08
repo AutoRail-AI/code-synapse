@@ -18,6 +18,9 @@ import type { CozoBatch } from "../extraction/types.js";
 import { GraphDatabase } from "./database.js";
 import { MigrationRunner } from "./migration-runner.js";
 import { migrations } from "./migrations/index.js";
+import { createLogger } from "../../utils/logger.js";
+
+const logger = createLogger("cozo-graph-store");
 
 // =============================================================================
 // CozoTransaction Adapter
@@ -119,6 +122,9 @@ export class CozoGraphStore implements IGraphStore {
     } else {
       // Ensure entity_embedding exists (Hybrid Search Phase 1 upgrade path)
       await this.ensureEntityEmbeddingSchema();
+
+      // Ensure entity_tag exists (Lazarus tools upgrade path)
+      await this.ensureEntityTagSchema();
     }
 
     this.initialized = true;
@@ -165,6 +171,9 @@ export class CozoGraphStore implements IGraphStore {
 
     // Entity embeddings for semantic search (Hybrid Search Phase 1)
     await this.ensureEntityEmbeddingSchema();
+
+    // Entity tags for migration state tracking (Lazarus tools)
+    await this.ensureEntityTagSchema();
   }
 
   /**
@@ -200,6 +209,24 @@ export class CozoGraphStore implements IGraphStore {
     } catch (e) {
       // Ignore if index already exists
     }
+  }
+
+  /**
+   * Ensures entity_tag relation exists for migration state tracking.
+   */
+  private async ensureEntityTagSchema(): Promise<void> {
+    const exists = await this.db.relationExists("entity_tag");
+    if (exists) return;
+
+    await this.db.execute(`
+      :create entity_tag {
+        entity_id: String,
+        tag: String
+        =>
+        source: String,
+        created_at: Float
+      }
+    `);
   }
 
   async close(): Promise<void> {
@@ -277,7 +304,8 @@ export class CozoGraphStore implements IGraphStore {
         distance: number;
       }>(
         `?[entity_id, file_id, distance] :=
-          ~entity_embedding:embedding_idx{entity_id, file_id, vector | query: $embedding, k: $k, ef: 100, bind_distance: distance}
+          q = vec($embedding),
+          ~entity_embedding:embedding_idx{entity_id, file_id, vector | query: q, k: $k, ef: 100, bind_distance: distance}
          :order distance
          :limit $k`,
         { embedding, k }
@@ -313,8 +341,10 @@ export class CozoGraphStore implements IGraphStore {
         name: r.name,
         fileId: r.file_id,
       }));
-    } catch {
-      // If no embeddings or index exist yet, return empty array
+    } catch (err) {
+      // Log the error for debugging - don't crash but make it visible
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      logger.debug({ error: msg }, "Vector search failed (embeddings/index may not exist yet)");
       return [];
     }
   }
@@ -1029,21 +1059,21 @@ async function writeBatchToDb(
   // =========================================================================
 
   if (batch.entityEmbeddings.length > 0) {
-    for (const row of batch.entityEmbeddings) {
-      const [entityId, fileId, vector, textHash, model, createdAt] = row;
-      await db.execute(
-        `?[entity_id, file_id, vector, text_hash, model, created_at] <- [[$entityId, $fileId, $vector, $textHash, $model, $createdAt]]
-        :put entity_embedding {entity_id, file_id => vector, text_hash, model, created_at}`,
-        {
-          entityId,
-          fileId,
-          vector,
-          textHash,
-          model,
-          createdAt,
-        }
-      );
-    }
+    const rows = batch.entityEmbeddings.map(
+      ([entityId, fileId, vector, textHash, model, createdAt]) => [
+        entityId,
+        fileId,
+        vector,
+        textHash,
+        model,
+        createdAt,
+      ]
+    );
+    await db.execute(
+      `?[entity_id, file_id, vector, text_hash, model, created_at] <- $rows
+      :put entity_embedding {entity_id, file_id => vector, text_hash, model, created_at}`,
+      { rows }
+    );
   }
 }
 

@@ -363,40 +363,49 @@ function buildInfraLayers(
 // =============================================================================
 
 function getNodeColor(node: HierarchyNode, activeLens: LensType): string {
-  if (node.type === 'directory') return '#64748b'; // Slate
-  if (node.type === 'file') return '#3b82f6'; // Blue
+  if (node.type === 'directory') return '#475569'; // Slate-600
+  if (node.type === 'file') return '#eab308'; // Yellow-500
 
   if (activeLens === 'pattern') {
     const confidence = node.confidence ?? 0.5;
-    if (confidence >= 0.8) return '#10b981'; // Green
-    if (confidence >= 0.5) return '#f59e0b'; // Amber
-    return '#ef4444'; // Red
+    if (confidence >= 0.8) return '#10b981'; // Emerald-500
+    if (confidence >= 0.5) return '#f59e0b'; // Amber-500
+    return '#ef4444'; // Red-500
   }
 
   if (activeLens === 'infra') {
-    if (node.classification === 'domain') return '#10b981'; // Green
-    if (node.classification === 'infrastructure') return '#f59e0b'; // Amber
-    return '#6b7280'; // Gray
+    if (node.classification === 'domain') return '#3b82f6'; // Blue-500
+    if (node.classification === 'infrastructure') return '#64748b'; // Slate-500
+    return '#475569'; // Slate-600
   }
 
-  // Default by kind
-  if (node.kind === 'function') return '#3b82f6'; // Blue
-  if (node.kind === 'class') return '#a855f7'; // Purple
-  if (node.kind === 'interface') return '#06b6d4'; // Cyan
-  if (node.kind === 'variable') return '#f59e0b'; // Amber
-  return '#6b7280'; // Gray
+  // Neon Palette based on Kind
+  if (node.kind === 'function') return '#3b82f6'; // Blue-500
+  if (node.kind === 'class') return '#a855f7'; // Purple-500
+  if (node.kind === 'interface') return '#06b6d4'; // Cyan-500
+  if (node.kind === 'variable') return '#94a3b8'; // Slate-400
+  return '#64748b'; // Slate-500
 }
 
 function getNodeSize(node: HierarchyNode, activeLens: LensType): number {
-  if (node.type === 'directory') return 12;
-  if (node.type === 'file') return 8;
-  if (node.isCluster) return Math.max(10, 6 + (node.clusterNodes?.length || 0) * 0.3);
+  // Hub sizing: larger if have higher degree (stored in val)
+  if (node.val && node.val > 6) return node.val;
 
-  if (activeLens === 'pattern') {
-    return 4 + (node.confidence ?? 0.5) * 4;
-  }
+  // Hub sizing: larger if it has more connections or children
+  const baseSize = (() => {
+    if (node.type === 'directory') return 14;
+    if (node.type === 'file') return 10;
+    if (node.isCluster) return Math.max(12, 8 + (node.clusterNodes?.length || 0) * 0.4);
 
-  return 5;
+    // Entity sizing based on importance/confidence
+    let size = 6;
+    if (activeLens === 'pattern') {
+      size = 5 + (node.confidence ?? 0.5) * 5;
+    }
+    return size;
+  })();
+
+  return baseSize;
 }
 
 function renderNode(
@@ -406,77 +415,104 @@ function renderNode(
   activeLens: LensType,
   isHovered: boolean,
   isFocused: boolean,
-  isSearchResult: boolean
+  isSearchResult: boolean,
+  neighbors: Set<string> | null
 ) {
+  // LOD: Hide small details at low zoom
+  if (globalScale < 0.5 && node.level > 1 && !isHovered && !isFocused && !isSearchResult) {
+    return; // Skip rendering small nodes at high altitude
+  }
+
+  // Focus Mode: Fade out non-neighbors
+  const isNeighbor = neighbors ? neighbors.has(node.id) : true;
+  const isHighlighted = isHovered || isFocused || isSearchResult;
+  const opacity = (isHighlighted || (neighbors && isNeighbor)) ? 1 : (neighbors ? 0.1 : 1);
+
+  if (opacity < 0.2 && !node.isCluster && node.type !== 'directory') return; // Skip drawing very faint nodes
+
   const x = node.x!;
   const y = node.y!;
   const baseRadius = getNodeSize(node, activeLens);
-  const radius = (isHovered || isFocused || isSearchResult) ? baseRadius * 1.3 : baseRadius;
+  // Scale up highlighted nodes
+  const radius = isHighlighted ? baseRadius * 1.5 : baseRadius;
   const color = getNodeColor(node, activeLens);
 
-  // Highlight ring for search results
-  if (isSearchResult) {
+  ctx.globalAlpha = opacity;
+
+  // Glow effect for focused/hovered nodes
+  if (isHighlighted) {
     ctx.beginPath();
-    ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
-    ctx.strokeStyle = '#fbbf24';
+    ctx.arc(x, y, radius + 10, 0, Math.PI * 2);
+    ctx.fillStyle = isSearchResult ? 'rgba(251, 191, 36, 0.2)' : `${color}40`; // 25% opacity
+    ctx.fill();
+
+    // Outer ring
+    ctx.beginPath();
+    ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
+    ctx.strokeStyle = isSearchResult ? '#fbbf24' : color;
     ctx.lineWidth = 2 / globalScale;
     ctx.stroke();
   }
 
   ctx.fillStyle = color;
-  ctx.strokeStyle = (isHovered || isFocused) ? '#ffffff' : 'transparent';
-  ctx.lineWidth = 2 / globalScale;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = isHighlighted ? 2 / globalScale : 0;
 
   // Draw shape based on type
   if (node.type === 'directory') {
-    // Folder shape - rounded rectangle
-    const w = radius * 2;
-    const h = radius * 1.5;
+    // Folder - Rounded Rect
+    const w = radius * 2.2;
+    const h = radius * 1.6;
     ctx.beginPath();
-    ctx.roundRect(x - w / 2, y - h / 2, w, h, 3);
-    ctx.fillStyle = 'rgba(100, 116, 139, 0.3)';
+    ctx.roundRect(x - w / 2, y - h / 2, w, h, 4);
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.9)'; // Slate-800
     ctx.fill();
-    ctx.strokeStyle = '#94a3b8';
+    ctx.strokeStyle = color;
     ctx.lineWidth = 1.5 / globalScale;
     ctx.stroke();
-  } else if (node.type === 'file') {
-    // File shape - box with header
-    const w = radius * 2;
-    const h = radius * 2;
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(x - w / 2, y - h / 2, w, h);
+
+    // Tab
     ctx.fillStyle = color;
-    ctx.fillRect(x - w / 2, y - h / 2, w, h * 0.25);
-    if (isHovered || isFocused) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.strokeRect(x - w / 2, y - h / 2, w, h);
-    }
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2, y - h / 2 - h * 0.15, w * 0.4, h * 0.2, 2);
+    ctx.fill();
+  } else if (node.type === 'file') {
+    // File - Doc shape
+    const w = radius * 1.8;
+    const h = radius * 2.2;
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.rect(x - w / 2, y - h / 2, w, h);
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1 / globalScale;
+    ctx.stroke();
+    // Color header
+    ctx.fillStyle = color;
+    ctx.fillRect(x - w / 2, y - h / 2, w, h * 0.2);
   } else if (node.isCluster) {
-    // Cluster - dashed circle
+    // Cluster - Dashed Circle
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = `${color}33`;
+    ctx.fillStyle = `${color}20`;
     ctx.fill();
-    ctx.setLineDash([4 / globalScale, 2 / globalScale]);
+    ctx.setLineDash([6 / globalScale, 4 / globalScale]);
     ctx.strokeStyle = color;
     ctx.lineWidth = 2 / globalScale;
     ctx.stroke();
     ctx.setLineDash([]);
   } else if (node.kind === 'class') {
-    // Class - hexagon
+    // Hexagon
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
       const angle = (Math.PI / 3) * i - Math.PI / 2;
-      const px = x + radius * Math.cos(angle);
-      const py = y + radius * Math.sin(angle);
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      ctx.lineTo(x + radius * Math.cos(angle), y + radius * Math.sin(angle));
     }
     ctx.closePath();
     ctx.fill();
-    if (isHovered || isFocused) ctx.stroke();
+    if (isHighlighted) ctx.stroke();
   } else if (node.kind === 'interface') {
-    // Interface - diamond
+    // Diamond
     ctx.beginPath();
     ctx.moveTo(x, y - radius);
     ctx.lineTo(x + radius, y);
@@ -484,46 +520,66 @@ function renderNode(
     ctx.lineTo(x - radius, y);
     ctx.closePath();
     ctx.fill();
-    if (isHovered || isFocused) ctx.stroke();
+    if (isHighlighted) ctx.stroke();
   } else {
-    // Default - circle
+    // Circle
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
-    if (isHovered || isFocused) ctx.stroke();
+    if (isHighlighted) ctx.stroke();
   }
 
-  // Confidence ring (in pattern lens)
+  // Confidence Indicator (Ring)
   if (node.confidence !== undefined && activeLens === 'pattern' && node.type === 'entity') {
     ctx.beginPath();
-    ctx.arc(x, y, radius + 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * node.confidence);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.lineWidth = 1.5 / globalScale;
+    ctx.arc(x, y, radius + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * node.confidence);
+    ctx.strokeStyle = node.confidence > 0.8 ? '#10b981' : (node.confidence > 0.5 ? '#f59e0b' : '#ef4444');
+    ctx.lineWidth = 2.5 / globalScale;
     ctx.stroke();
   }
 
-  // Labels
+  ctx.globalAlpha = 1; // Reset opacity
+
+  // Labels - LOD Aware
   const isComponent = node.type === 'directory' || node.type === 'file' || node.isCluster;
-  const showLabel = isComponent || globalScale > 1.5 || isHovered || isFocused || isSearchResult;
+  // Show labels if: component OR highlighted OR zoomed in enough
+  let showLabel = isHighlighted || isSearchResult;
+
+  if (!showLabel) {
+    if (globalScale < 0.8) showLabel = !!isComponent; // High altitude: only components
+    else if (globalScale < 1.5) showLabel = isComponent || node.level <= 1; // Mid: components + top level entities
+    else showLabel = true; // Low: show all
+  }
 
   if (showLabel) {
-    const fontSize = Math.max(10, 12 / globalScale);
-    ctx.font = `${isComponent ? 'bold ' : ''}${fontSize}px sans-serif`;
+    const fontSize = Math.max(10, 14 / globalScale);
+    ctx.font = `${isComponent || isHighlighted ? '600 ' : '400 '}${fontSize}px Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
 
     const label = node.isCluster
       ? `${node.label} (${node.clusterNodes?.length || 0})`
       : node.label;
-    const textWidth = ctx.measureText(label).width;
 
-    // Label background
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-    ctx.fillRect(x - textWidth / 2 - 2, y + radius + 2, textWidth + 4, fontSize + 4);
+    const textMetrics = ctx.measureText(label);
+    const textWidth = textMetrics.width;
+    const padding = 6 / globalScale;
+    const bgHeight = fontSize + padding * 1.5;
+    const bgY = y + radius + 6;
 
-    // Label text
-    ctx.fillStyle = isComponent ? '#ffffff' : 'rgba(255, 255, 255, 0.8)';
-    ctx.fillText(label, x, y + radius + 4);
+    // Label pill background
+    ctx.fillStyle = isHighlighted ? 'rgba(139, 92, 246, 0.9)' : 'rgba(2, 6, 23, 0.8)'; // Violet highlight or dark slate
+
+    // Fade out label background for non-highlighted items at distance
+    if (!isHighlighted) ctx.globalAlpha = 0.8;
+
+    ctx.roundRect(x - textWidth / 2 - padding, bgY, textWidth + padding * 2, bgHeight, 4);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Label Text
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(label, x, bgY + padding / 2);
   }
 }
 
@@ -605,6 +661,7 @@ export function GraphView() {
   // Graph Data Processing based on Active Lens
   // ==========================================================================
 
+  // Result of data processing
   const graphData = useMemo(() => {
     if (nodes.length === 0) return { nodes: [], links: [] };
 
@@ -616,41 +673,59 @@ export function GraphView() {
     const typedNodes = filteredNodes as GraphApiNode[];
     const typedEdges = edges as GraphApiEdge[];
 
+    let result = { nodes: [] as HierarchyNode[], links: [] as HierarchyLink[] };
+
     if (activeLens === 'structure' && fileTree.length > 0) {
-      // Hierarchical tree view: Directory -> File -> Entity
-      return buildHierarchicalData(fileTree, typedNodes, typedEdges, classifications);
+      result = buildHierarchicalData(fileTree, typedNodes, typedEdges, classifications);
+    } else if (activeLens === 'business') {
+      result = buildBusinessClusters(typedNodes, typedEdges);
+    } else if (activeLens === 'infra') {
+      result = buildInfraLayers(typedNodes, typedEdges, classifications);
+    } else {
+      // Pattern view
+      const patternNodes: HierarchyNode[] = filteredNodes.map(n => ({
+        id: n.id,
+        label: n.label,
+        kind: n.kind,
+        type: 'entity' as const,
+        level: 0,
+        confidence: (n as GraphApiNode).confidence,
+        classification: (n as GraphApiNode).classification,
+        featureContext: (n as GraphApiNode).featureContext,
+        val: 4 + ((n as GraphApiNode).confidence ?? 0.5) * 6,
+      }));
+
+      const nodeIds = new Set(patternNodes.map(n => n.id));
+      const patternLinks: HierarchyLink[] = edges
+        .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
+        .map(e => ({ source: e.source, target: e.target, type: e.kind }));
+
+      result = { nodes: patternNodes, links: patternLinks };
     }
 
-    if (activeLens === 'business') {
-      // Cluster by feature context
-      return buildBusinessClusters(typedNodes, typedEdges);
-    }
+    // Calculate degrees for sizing
+    const degreeMap = new Map<string, number>();
+    result.links.forEach(link => {
+      const s = typeof link.source === 'object' ? (link.source as any).id : link.source;
+      const t = typeof link.target === 'object' ? (link.target as any).id : link.target;
+      degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+      degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
+    });
 
-    if (activeLens === 'infra') {
-      // Layer by classification (domain vs infrastructure)
-      return buildInfraLayers(typedNodes, typedEdges, classifications);
-    }
+    // Enrich nodes with degree info (stored in 'val' or custom property if type allows, reusing 'val' for simplicity)
+    result.nodes.forEach(node => {
+      const degree = degreeMap.get(node.id) || 0;
+      // Boost size based on degree, capped
+      if (!node.val) node.val = 5;
+      node.val += Math.min(degree, 20) * 0.5;
+    });
 
-    // Pattern view - flat with confidence-based sizing
-    const patternNodes: HierarchyNode[] = filteredNodes.map(n => ({
-      id: n.id,
-      label: n.label,
-      kind: n.kind,
-      type: 'entity' as const,
-      level: 0,
-      confidence: (n as GraphApiNode).confidence,
-      classification: (n as GraphApiNode).classification,
-      featureContext: (n as GraphApiNode).featureContext,
-      val: 4 + ((n as GraphApiNode).confidence ?? 0.5) * 6,
-    }));
-
-    const nodeIds = new Set(patternNodes.map(n => n.id));
-    const patternLinks: HierarchyLink[] = edges
-      .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
-      .map(e => ({ source: e.source, target: e.target, type: e.kind }));
-
-    return { nodes: patternNodes, links: patternLinks };
+    return result;
   }, [nodes, edges, activeLens, filterKinds, fileTree, classifications]);
+
+  // ==========================================================================
+  // Layout Configuration
+  // ==========================================================================
 
   // ==========================================================================
   // Layout Configuration
@@ -671,30 +746,33 @@ export function GraphView() {
     const charge = fg.d3Force('charge');
     const link = fg.d3Force('link');
 
+    // Enhanced physics for better spacing
     if (activeLens === 'structure') {
-      // Stronger repulsion and longer links for tree layout
-      charge?.strength(-300);
-      link?.distance(80);
-    } else if (activeLens === 'business') {
-      charge?.strength(-200);
+      charge?.strength(-500); // Stronger repulsion for tree
       link?.distance(100);
+    } else if (activeLens === 'business') {
+      charge?.strength(-400);
+      link?.distance(150);
     } else if (activeLens === 'infra') {
-      charge?.strength(-250);
-      link?.distance(90);
+      charge?.strength(-450);
+      link?.distance(120);
     } else {
-      charge?.strength(-150);
-      link?.distance(70);
+      // Pattern/Default view - maximum spacing
+      charge?.strength(-600);
+      link?.distance(120);
     }
 
     // Add collision detection with larger radius for better spacing
     fg.d3Force('collide', null);
     import('d3-force').then(d3 => {
-      fg.d3Force('collide', d3.forceCollide().radius((node) =>
-        getNodeSize(node as HierarchyNode, activeLens) + 15
-      ).strength(0.8));
+      fg.d3Force('collide', d3.forceCollide().radius((node) => {
+        const size = getNodeSize(node as HierarchyNode, activeLens);
+        // Add significant padding to prevent overlap
+        return size * 3;
+      }).strength(0.9));
 
-      // Add center force to keep graph centered
-      fg.d3Force('center', d3.forceCenter(dimensions.width / 2, dimensions.height / 2));
+      // Add center force to keep graph centered but allow drift
+      fg.d3Force('center', d3.forceCenter(dimensions.width / 2, dimensions.height / 2).strength(0.1));
     });
 
     fg.d3ReheatSimulation();
@@ -727,6 +805,28 @@ export function GraphView() {
   const handleZoom = useCallback((zoom: { k: number }) => {
     setCurrentZoom(zoom.k);
   }, []);
+
+  // Focus Mode: Calculate neighbors
+  const neighbors = useMemo(() => {
+    if (!hoverNode && !focusedNode) return null;
+    const targetId = hoverNode?.id || focusedNode;
+    if (!targetId) return null;
+
+    const neighborSet = new Set<string>();
+    neighborSet.add(targetId);
+
+    // Find all connected nodes
+    graphData.links.forEach(link => {
+      // Handle both object (after d3 processes) and string/number types
+      const s = typeof link.source === 'object' ? (link.source as any).id : link.source;
+      const t = typeof link.target === 'object' ? (link.target as any).id : link.target;
+
+      if (s === targetId) neighborSet.add(t);
+      if (t === targetId) neighborSet.add(s);
+    });
+
+    return neighborSet;
+  }, [hoverNode, focusedNode, graphData.links]);
 
   // Container resize
   useEffect(() => {
@@ -983,6 +1083,24 @@ export function GraphView() {
               Hierarchy
             </button>
 
+            {/* Focus Mode toggle */}
+            <button
+              onClick={() => {
+                if (focusedNode) setFocusedNode(null); // Clear focus if active
+                // There isn't an explicit "mode" state, but clearing focus resets it. 
+                // The user requested a "Mode" to isolate subgraphs. 
+                // Current implementation isolates on click. A button might be redundant 
+                // unless it acts as a "Reset Focus" or "Help" tip. 
+                // Let's add a "Reset View" or clear selection here if focus is active.
+              }}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${focusedNode ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
+              disabled={!focusedNode}
+              title="Clear focus"
+            >
+              <Maximize2 className="w-3 h-3" />
+              Reset Focus
+            </button>
+
             <div className="flex-1" />
 
             <DetailLevelIndicator detailLevel={detailLevel} />
@@ -1016,8 +1134,20 @@ export function GraphView() {
             nodeVal={(node: HierarchyNode) => node.val || 5}
 
             // Links
+            // Links
             linkColor={(link: HierarchyLink) => {
               const type = typeof link.type === 'string' ? link.type : 'unknown';
+
+              // Dimming logic for focus mode
+              if (neighbors) {
+                const s = typeof link.source === 'object' ? (link.source as any).id : link.source;
+                const t = typeof link.target === 'object' ? (link.target as any).id : link.target;
+                if (!neighbors.has(s) || !neighbors.has(t)) return '#1e293b'; // Dimmed deeply
+              }
+
+              // Hide containment edges at low zoom
+              if (currentZoom < 0.8 && type === 'contains') return 'transparent';
+
               if (type === 'contains') return showContainmentEdges ? 'rgba(255, 255, 255, 0.1)' : 'transparent';
               if (type === 'calls') return '#3b82f680';
               if (type === 'imports') return '#10b98180';
@@ -1026,6 +1156,18 @@ export function GraphView() {
               return '#47556980';
             }}
             linkWidth={(link: HierarchyLink) => {
+              const type = typeof link.type === 'string' ? link.type : 'unknown';
+
+              // Hide containment edges at low zoom
+              if (currentZoom < 0.8 && type === 'contains') return 0;
+
+              // Dimming logic for focus mode
+              if (neighbors) {
+                const s = typeof link.source === 'object' ? (link.source as any).id : link.source;
+                const t = typeof link.target === 'object' ? (link.target as any).id : link.target;
+                if (!neighbors.has(s) || !neighbors.has(t)) return 0.5;
+              }
+
               if (link.type === 'contains') return showContainmentEdges ? 0.5 : 0;
               if (link.count) return Math.min(1 + Math.log2(link.count), 5);
               return 1.5;
@@ -1036,15 +1178,16 @@ export function GraphView() {
             linkLineDash={(link: HierarchyLink) => link.type === 'contains' ? [2, 2] : []}
 
             // Custom rendering
-            nodeCanvasObject={(node: HierarchyNode, ctx, globalScale) => {
+            nodeCanvasObject={(node, ctx, globalScale) => {
               renderNode(
-                node,
+                node as HierarchyNode,
                 ctx,
                 globalScale,
                 activeLens,
                 node === hoverNode,
                 node.id === focusedNode,
-                searchResults.includes(node.id)
+                searchResults.includes(node.id),
+                neighbors
               );
             }}
             nodePointerAreaPaint={(node: HierarchyNode, color, ctx) => {
