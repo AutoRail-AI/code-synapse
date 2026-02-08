@@ -1,0 +1,125 @@
+{
+  "description": "Golden queries for hybrid search MRR evaluation. Each query has expected top files that should appear in results.",
+  "queries": [
+    {
+      "id": 1,
+      "query": "where is Parser defined",
+      "intent": "definition",
+      "expectedFiles": ["src/core/parser/index.ts", "src/core/parser/tree-sitter-parser.ts"]
+    },
+    {
+      "id": 2,
+      "query": "who calls vectorSearch",
+      "intent": "usage",
+      "expectedFiles": ["src/core/search/hybrid-service.ts", "src/core/graph/cozo-graph-store.ts"]
+    },
+    {
+      "id": 3,
+      "query": "how does the indexer work",
+      "intent": "conceptual",
+      "expectedFiles": ["src/core/indexer/coordinator.ts", "src/core/indexer/index.ts"]
+    },
+    {
+      "id": 4,
+      "query": "handlePayment",
+      "intent": "keyword",
+      "expectedFiles": []
+    },
+    {
+      "id": 5,
+      "query": "definition of GraphWriter",
+      "intent": "definition",
+      "expectedFiles": ["src/core/graph-builder/graph-writer.ts"]
+    },
+    {
+      "id": 6,
+      "query": "usages of ILLMService",
+      "intent": "usage",
+      "expectedFiles": ["src/core/llm/interfaces/ILLMService.ts", "src/core/search/hybrid-service.ts"]
+    },
+    {
+      "id": 7,
+      "query": "explain the search pipeline",
+      "intent": "conceptual",
+      "expectedFiles": ["src/core/search/hybrid-service.ts", "src/core/search/zoekt-manager.ts"]
+    },
+    {
+      "id": 8,
+      "query": "CozoGraphStore",
+      "intent": "keyword",
+      "expectedFiles": ["src/core/graph/cozo-graph-store.ts"]
+    },
+    {
+      "id": 9,
+      "query": "class EmbeddingService",
+      "intent": "definition",
+      "expectedFiles": ["src/core/embeddings/index.ts"]
+    },
+    {
+      "id": 10,
+      "query": "where is MCP server used",
+      "intent": "usage",
+      "expectedFiles": ["src/mcp/server.ts", "src/cli/commands/start.ts"]
+    },
+    {
+      "id": 11,
+      "query": "how does justification work",
+      "intent": "conceptual",
+      "expectedFiles": ["src/core/justification/impl/index.ts", "src/core/justification/index.ts"]
+    },
+    {
+      "id": 12,
+      "query": "tree-sitter",
+      "intent": "keyword",
+      "expectedFiles": ["src/core/parser/tree-sitter-parser.ts", "src/core/parser/index.ts"]
+    },
+    {
+      "id": 13,
+      "query": "interface IGraphStore",
+      "intent": "definition",
+      "expectedFiles": ["src/core/interfaces/IGraphStore.ts"]
+    },
+    {
+      "id": 14,
+      "query": "callers of embed",
+      "intent": "usage",
+      "expectedFiles": ["src/core/search/hybrid-service.ts", "src/core/indexer/coordinator.ts"]
+    },
+    {
+      "id": 15,
+      "query": "what is the purpose of the ledger",
+      "intent": "conceptual",
+      "expectedFiles": ["src/core/ledger/impl/index.ts", "src/core/ledger/interfaces/index.ts"]
+    },
+    {
+      "id": 16,
+      "query": "zoekt-manager.ts",
+      "intent": "keyword",
+      "expectedFiles": ["src/core/search/zoekt-manager.ts"]
+    },
+    {
+      "id": 17,
+      "query": "find definition of writeBatch",
+      "intent": "definition",
+      "expectedFiles": ["src/core/graph-builder/graph-writer.ts", "src/core/interfaces/IGraphStore.ts"]
+    },
+    {
+      "id": 18,
+      "query": "references to createLogger",
+      "intent": "usage",
+      "expectedFiles": ["src/utils/logger.ts"]
+    },
+    {
+      "id": 19,
+      "query": "describe the architecture of the CLI",
+      "intent": "conceptual",
+      "expectedFiles": ["src/cli/index.ts", "src/cli/commands/default.ts"]
+    },
+    {
+      "id": 20,
+      "query": "authentication",
+      "intent": "keyword",
+      "expectedFiles": []
+    }
+  ]
+}
