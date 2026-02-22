@@ -9,6 +9,8 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import * as http from "node:http";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -115,6 +117,8 @@ export interface ServerOptions {
   port: number;
   config: ProjectConfig;
   dataDir: string;
+  /** Use HTTP transport instead of stdio */
+  useHttp?: boolean;
   /** Optional existing graph store to use (avoids creating a new one) */
   existingStore?: import("../core/graph/index.js").IGraphStore;
   /** Phase 6: Optional pre-created services (avoids port conflicts when viewer + MCP run together) */
@@ -135,6 +139,8 @@ let zoektManager: ZoektManager | null = null;
 let zoektReindexTimer: ReturnType<typeof setTimeout> | null = null;
 let hybridSearchService: HybridSearchService | null = null;
 let llmService: ILLMService | null = null;
+let httpServer: http.Server | null = null;
+let httpTransport: StreamableHTTPServerTransport | null = null;
 
 /**
  * Extended config that includes LLM settings
@@ -2020,11 +2026,73 @@ export async function startServer(options: ServerOptions): Promise<void> {
     logger.info("File watcher started for incremental indexing");
   }
 
-  // Use stdio transport for MCP communication
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  // Choose transport based on options
+  if (options.useHttp) {
+    // HTTP transport - create HTTP server with Streamable HTTP transport
+    const port = options.port;
 
-  logger.info("MCP server started and connected via stdio");
+    // Create the transport (stateless mode for simplicity)
+    httpTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // Stateless mode
+    });
+
+    // Connect the MCP server to the transport
+    await server.connect(httpTransport);
+
+    // Create HTTP server to handle requests
+    httpServer = http.createServer(async (req, res) => {
+      // Add CORS headers for browser access
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Mcp-Session-Id");
+
+      // Handle preflight requests
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+
+      // Only handle /mcp endpoint
+      if (url.pathname === "/mcp") {
+        try {
+          await httpTransport!.handleRequest(req, res);
+        } catch (err) {
+          logger.error({ err }, "Error handling MCP request");
+          if (!res.headersSent) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Internal server error" }));
+          }
+        }
+      } else if (url.pathname === "/health") {
+        // Health check endpoint
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", transport: "http" }));
+      } else {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not found. Use /mcp for MCP requests or /health for health check." }));
+      }
+    });
+
+    // Start listening
+    await new Promise<void>((resolve, reject) => {
+      httpServer!.once("error", reject);
+      httpServer!.listen(port, "127.0.0.1", () => {
+        httpServer!.removeListener("error", reject);
+        resolve();
+      });
+    });
+
+    logger.info({ port, endpoint: `/mcp` }, "MCP server started with HTTP transport");
+  } else {
+    // Stdio transport (default) - for AI agent integration
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+
+    logger.info("MCP server started and connected via stdio");
+  }
 }
 
 /**
@@ -2078,6 +2146,21 @@ export async function stopServer(): Promise<void> {
   // Clear embedding and similarity services (no explicit cleanup needed)
   embeddingService = null;
   similarityService = null;
+
+  // Close HTTP transport and server if running
+  if (httpTransport) {
+    await httpTransport.close();
+    httpTransport = null;
+    logger.debug("HTTP transport closed");
+  }
+
+  if (httpServer) {
+    await new Promise<void>((resolve) => {
+      httpServer!.close(() => resolve());
+    });
+    httpServer = null;
+    logger.debug("HTTP server stopped");
+  }
 
   if (server) {
     await server.close();

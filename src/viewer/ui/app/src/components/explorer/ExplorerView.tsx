@@ -169,7 +169,7 @@ export function ExplorerView() {
           <div className="h-full flex flex-col bg-slate-900">
             <div className="p-4 border-b border-slate-700 bg-slate-800/30">
               <h2 className="text-lg font-medium text-slate-200 flex items-center gap-2">
-                <FolderOpen className="w-5 h-5 text-blue-400" />
+                <FolderOpen className="w-5 h-5 text-rail-purple" />
                 {selectedFile.split('/').pop()}
                 <span className="text-sm text-slate-500 font-normal ml-2">Folder Overview</span>
               </h2>
@@ -256,7 +256,7 @@ function FileTreeNode({
     <div>
       <button
         onClick={handleClick}
-        className={`w-full flex items-center gap-1 py-1 px-2 rounded text-sm transition-colors ${isSelected ? 'bg-blue-600/20 text-blue-200' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+        className={`w-full flex items-center gap-1 py-1 px-2 rounded text-sm transition-colors ${isSelected ? 'bg-electric-cyan/15 text-electric-cyan' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
           }`}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
       >
@@ -270,12 +270,12 @@ function FileTreeNode({
 
         {isDirectory ? (
           isExpanded ? (
-            <FolderOpen className="w-4 h-4 text-yellow-500/80" />
+            <FolderOpen className="w-4 h-4 text-rail-purple" />
           ) : (
-            <Folder className="w-4 h-4 text-yellow-500/80" />
+            <Folder className="w-4 h-4 text-rail-purple" />
           )
         ) : (
-          <File className="w-4 h-4 text-blue-400/80" />
+          <File className="w-4 h-4 text-electric-cyan" />
         )}
 
         <span className="truncate flex-1 text-left ml-1">{node.name}</span>
@@ -288,7 +288,7 @@ function FileTreeNode({
         )}
 
         {node.entityCount !== undefined && node.entityCount > 0 && (
-          <span className={`text-[10px] px-1.5 rounded-full ${isSelected ? 'bg-blue-500/30 text-blue-100' : 'bg-slate-800 text-slate-500'}`}>
+          <span className={`text-[10px] px-1.5 rounded-full ${isSelected ? 'bg-electric-cyan/20 text-electric-cyan' : 'bg-slate-800 text-slate-500'}`}>
             {node.entityCount}
           </span>
         )}
@@ -321,7 +321,7 @@ function Breadcrumb({ path, onNavigate }: { path: string; onNavigate: (path: str
     <div className="flex items-center gap-1 px-4 py-2 bg-slate-800/50 border-b border-slate-700 text-sm overflow-x-auto">
       <button
         onClick={() => onNavigate('/')}
-        className="text-slate-400 hover:text-blue-400 transition-colors flex items-center gap-1"
+        className="text-slate-400 hover:text-electric-cyan transition-colors flex items-center gap-1"
       >
         <Home className="w-3.5 h-3.5" />
       </button>
@@ -336,7 +336,7 @@ function Breadcrumb({ path, onNavigate }: { path: string; onNavigate: (path: str
               onClick={() => !isLast && onNavigate(segmentPath)}
               className={`truncate max-w-32 ${isLast
                 ? 'text-slate-200 font-medium cursor-default'
-                : 'text-slate-400 hover:text-blue-400 transition-colors'
+                : 'text-slate-400 hover:text-electric-cyan transition-colors'
                 }`}
             >
               {segment}

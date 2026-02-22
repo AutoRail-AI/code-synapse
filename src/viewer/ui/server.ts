@@ -27,6 +27,11 @@ import type { IReconciliationWorker } from "../../core/reconciliation/interfaces
 import type { LedgerEventType, EventSource } from "../../core/ledger/models/ledger-events.js";
 import type { MemoryRuleScope, MemoryRuleCategory } from "../../core/memory/models/memory-models.js";
 import type { HybridSearchService } from "../../core/search/hybrid-service.js";
+import type { GraphDatabase } from "../../core/graph/index.js";
+import type { IGraphStore } from "../../core/interfaces/IGraphStore.js";
+import type { IJustificationService } from "../../core/justification/interfaces/IJustificationService.js";
+import type { Indexer } from "../../core/indexer/index.js";
+import { registerMcpToolRoutes } from "./mcp-tool-routes.js";
 
 // =============================================================================
 // Types
@@ -45,6 +50,11 @@ interface ViewerServerOptions {
   reconciliationWorker?: IReconciliationWorker;
   /** Phase 6: Hybrid search (semantic + lexical + optional LLM synthesis) */
   hybridSearchService?: HybridSearchService | null;
+  /** MCP tool REST API dependencies */
+  graphDatabase?: GraphDatabase;
+  graphStore?: IGraphStore;
+  justificationService?: IJustificationService;
+  indexer?: Indexer;
 }
 
 interface RouteHandler {
@@ -87,6 +97,8 @@ export class ViewerServer {
   private viewer: IGraphViewer;
   private server: http.Server | null = null;
   private routes: Route[] = [];
+  private sseClients: Set<http.ServerResponse> = new Set();
+  private ledgerUnsubscribe?: () => void;
   private staticDir: string;
   private changeLedger?: IChangeLedger;
   private adaptiveIndexer?: IAdaptiveIndexer;
@@ -94,6 +106,10 @@ export class ViewerServer {
   private ledgerCompaction?: ILedgerCompaction;
   private reconciliationWorker?: IReconciliationWorker;
   private hybridSearchService?: HybridSearchService | null;
+  private graphDatabase?: GraphDatabase;
+  private graphStore?: IGraphStore;
+  private justificationService?: IJustificationService;
+  private indexer?: Indexer;
 
   constructor(viewer: IGraphViewer, options?: ViewerServerOptions) {
     this.viewer = viewer;
@@ -103,6 +119,10 @@ export class ViewerServer {
     this.ledgerCompaction = options?.ledgerCompaction;
     this.reconciliationWorker = options?.reconciliationWorker;
     this.hybridSearchService = options?.hybridSearchService;
+    this.graphDatabase = options?.graphDatabase;
+    this.graphStore = options?.graphStore;
+    this.justificationService = options?.justificationService;
+    this.indexer = options?.indexer;
 
     // Get the directory where static files are located
     const __filename = fileURLToPath(import.meta.url);
@@ -195,6 +215,7 @@ export class ViewerServer {
     this.addRoute("GET", "/api/classifications/:entityId", this.handleGetClassification.bind(this));
 
     // Change Ledger (Observability)
+    this.addRoute("GET", "/api/ledger/stream", this.handleLedgerStream.bind(this));
     this.addRoute("GET", "/api/ledger/stats", this.handleLedgerStats.bind(this));
     this.addRoute("GET", "/api/ledger", this.handleQueryLedger.bind(this));
     this.addRoute("GET", "/api/ledger/recent", this.handleRecentLedgerEntries.bind(this));
@@ -238,6 +259,23 @@ export class ViewerServer {
 
     // Health
     this.addRoute("GET", "/api/health", this.handleHealth.bind(this));
+
+    // MCP Tool REST endpoints
+    if (this.graphDatabase) {
+      registerMcpToolRoutes({
+        graphDatabase: this.graphDatabase,
+        graphStore: this.graphStore,
+        justificationService: this.justificationService,
+        ledger: this.changeLedger,
+        adaptiveIndexer: this.adaptiveIndexer,
+        hybridSearchService: this.hybridSearchService,
+        indexer: this.indexer,
+        addRoute: this.addRoute.bind(this),
+        sendJSON: this.sendJSON.bind(this),
+        sendError: this.sendError.bind(this),
+        parseBody: this.parseBody.bind(this),
+      });
+    }
   }
 
   private addRoute(method: string, pattern: string, handler: RouteHandler): void {
@@ -270,7 +308,7 @@ export class ViewerServer {
 
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (method === "OPTIONS") {
@@ -1700,6 +1738,63 @@ export class ViewerServer {
   // ===========================================================================
   // API Handlers - Change Ledger (Observability)
   // ===========================================================================
+
+  private async handleLedgerStream(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _params: RouteParams
+  ): Promise<void> {
+    if (!this.changeLedger) {
+      this.sendJSON(res, { error: "Change ledger not available" }, 503);
+      return;
+    }
+
+    // SSE headers
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    this.sseClients.add(res);
+
+    // Subscribe to ledger entries if not already subscribed
+    if (!this.ledgerUnsubscribe) {
+      this.ledgerUnsubscribe = this.changeLedger.subscribe((entry) => {
+        const data = `data: ${JSON.stringify(entry)}\n\n`;
+        for (const client of this.sseClients) {
+          try {
+            client.write(data);
+          } catch {
+            this.sseClients.delete(client);
+          }
+        }
+      });
+    }
+
+    // Heartbeat every 30s to keep connection alive
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(": heartbeat\n\n");
+      } catch {
+        clearInterval(heartbeat);
+        this.sseClients.delete(res);
+      }
+    }, 30000);
+
+    // Cleanup on close
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      this.sseClients.delete(res);
+
+      // Unsubscribe when no more clients
+      if (this.sseClients.size === 0 && this.ledgerUnsubscribe) {
+        this.ledgerUnsubscribe();
+        this.ledgerUnsubscribe = undefined;
+      }
+    });
+  }
 
   private async handleLedgerStats(
     _req: http.IncomingMessage,

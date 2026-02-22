@@ -133,7 +133,7 @@ function GroupButton({ active, onClick, label }: { active: boolean; onClick: () 
         <button
             onClick={onClick}
             className={`px-3 py-1 rounded text-xs font-medium transition-colors ${active
-                ? 'bg-blue-600 text-white'
+                ? 'bg-rail-purple text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                 }`}
         >
@@ -157,7 +157,7 @@ function EntityRow({ entity, isSelected, onClick, indented }: { entity: EntitySu
             onClick={onClick}
             title={tooltipText}
             className={`cursor-pointer transition-colors ${isSelected
-                ? 'bg-blue-900/40 border-l-2 border-blue-500'
+                ? 'bg-electric-cyan/10 border-l-2 border-electric-cyan'
                 : 'hover:bg-slate-800/50 border-l-2 border-transparent'
                 }`}
         >
@@ -165,7 +165,7 @@ function EntityRow({ entity, isSelected, onClick, indented }: { entity: EntitySu
                 <div className="flex items-center gap-2">
                     <EntityIcon kind={entity.kind} />
                     <div className="flex flex-col min-w-0">
-                        <span className={`text-sm ${isSelected ? 'text-blue-200' : 'text-slate-300'}`}>
+                        <span className={`text-sm ${isSelected ? 'text-electric-cyan' : 'text-slate-300'}`}>
                             {entity.name}
                         </span>
                         {entity.justification && (
@@ -201,7 +201,7 @@ function EntityRow({ entity, isSelected, onClick, indented }: { entity: EntitySu
                 <div className="flex items-center gap-1.5">
                     {entity.classification && (
                         <span className={`text-xs px-2 py-0.5 rounded-full ${entity.classification === 'domain'
-                            ? 'bg-indigo-900/50 text-indigo-300 border border-indigo-700/50'
+                            ? 'bg-rail-purple/20 text-quantum-violet border border-rail-purple/30'
                             : 'bg-slate-700 text-slate-300'
                             }`}>
                             {entity.classification}
@@ -221,9 +221,9 @@ function EntityRow({ entity, isSelected, onClick, indented }: { entity: EntitySu
 function EntityIcon({ kind }: { kind: string }) {
     const props = { className: 'w-4 h-4 flex-shrink-0' };
     switch (kind) {
-        case 'function': return <Box {...props} className="w-4 h-4 text-blue-400" />;
-        case 'class': return <Layers {...props} className="w-4 h-4 text-purple-400" />;
-        case 'interface': return <Hash {...props} className="w-4 h-4 text-cyan-400" />;
-        default: return <FileCode {...props} className="w-4 h-4 text-gray-400" />;
+        case 'function': return <Box {...props} className="w-4 h-4 text-electric-cyan" />;
+        case 'class': return <Layers {...props} className="w-4 h-4 text-rail-purple" />;
+        case 'interface': return <Hash {...props} className="w-4 h-4 text-electric-cyan" />;
+        default: return <FileCode {...props} className="w-4 h-4 text-slate-400" />;
     }
 }

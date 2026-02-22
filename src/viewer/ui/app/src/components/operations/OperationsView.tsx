@@ -114,7 +114,7 @@ export function OperationsView() {
     <div className="h-full overflow-auto custom-scrollbar">
       <div className="max-w-4xl mx-auto p-6">
         <div className="flex items-center gap-3 mb-6">
-          <Settings className="w-6 h-6 text-blue-400" />
+          <Settings className="w-6 h-6 text-electric-cyan" />
           <h1 className="text-xl font-semibold text-white">Operations</h1>
         </div>
 
@@ -318,7 +318,7 @@ function OperationCard({
     <div className="panel">
       <div className="panel-content">
         <div className="flex items-center gap-3 mb-3">
-          <div className="text-blue-400">{icon}</div>
+          <div className="text-electric-cyan">{icon}</div>
           <div>
             <h3 className="font-medium text-white">{title}</h3>
             <p className="text-xs text-slate-500">{description}</p>
@@ -329,7 +329,7 @@ function OperationCard({
           <div
             className={`text-sm p-3 rounded mb-3 ${
               status.status === 'running'
-                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                ? 'bg-electric-cyan/10 text-electric-cyan border border-electric-cyan/20'
                 : status.status === 'success'
                   ? 'bg-green-500/10 text-green-400 border border-green-500/20'
                   : 'bg-red-500/10 text-red-400 border border-red-500/20'
@@ -360,8 +360,8 @@ function OperationCard({
 
             {/* Progress bar animation for running state */}
             {status.status === 'running' && (
-              <div className="mt-2 h-1 bg-blue-900/50 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 rounded-full animate-progress" />
+              <div className="mt-2 h-1 bg-rail-purple/30 rounded-full overflow-hidden">
+                <div className="h-full bg-electric-cyan rounded-full animate-progress" />
               </div>
             )}
           </div>

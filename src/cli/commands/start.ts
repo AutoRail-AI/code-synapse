@@ -17,6 +17,8 @@ import { startServer, stopServer } from "../../mcp/server.js";
 export interface StartOptions {
   port?: number;
   debug?: boolean;
+  /** Use HTTP transport instead of stdio (enables curl/browser access) */
+  http?: boolean;
   /** Optional existing graph store to use (avoids creating a new one) */
   existingStore?: import("../../core/graph/index.js").IGraphStore;
   /** Phase 6: Optional pre-created services (shared with viewer when running default command) */
@@ -96,6 +98,8 @@ export async function startCommand(options: StartOptions): Promise<void> {
     spinner.text = "Initializing indexer...";
     logger.debug({ config: config.name, port }, "Server configuration");
 
+    const useHttp = options.http ?? false;
+
     await startServer({
       port,
       config,
@@ -103,45 +107,68 @@ export async function startCommand(options: StartOptions): Promise<void> {
       existingStore: options.existingStore,
       existingEmbeddingService: options.existingEmbeddingService,
       existingZoektManager: options.existingZoektManager,
+      useHttp,
     });
 
     isServerRunning = true;
-    spinner.succeed(chalk.green(`MCP server started on port ${port}`));
 
-    console.log();
-    console.log(chalk.cyan("Server is ready to accept connections from AI agents."));
-    console.log();
+    if (useHttp) {
+      spinner.succeed(chalk.green(`MCP server started on http://localhost:${port}/mcp`));
+      console.log();
+      console.log(chalk.cyan("HTTP transport enabled - server accepts HTTP requests."));
+      console.log();
+      console.log(chalk.dim("Test with curl:"));
+      console.log(chalk.white(`  curl -X POST http://localhost:${port}/mcp \\`));
+      console.log(chalk.white(`    -H "Content-Type: application/json" \\`));
+      console.log(chalk.white(`    -H "Accept: application/json, text/event-stream" \\`));
+      console.log(chalk.white(`    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`));
+      console.log();
+      console.log(chalk.dim("MCP Configuration for AI agents (HTTP transport):"));
+      console.log(chalk.white(JSON.stringify({
+        mcpServers: {
+          [config.name]: {
+            url: `http://localhost:${port}/mcp`,
+          },
+        },
+      }, null, 2)));
+    } else {
+      spinner.succeed(chalk.green(`MCP server started (stdio transport)`));
+      console.log();
+      console.log(chalk.cyan("Server is ready to accept connections from AI agents."));
+      console.log();
 
-    // Display configuration for AI agents
-    console.log(chalk.dim("MCP Configuration (stdio transport - recommended):"));
-    console.log();
-    
-    console.log(chalk.dim("For Claude Code - Add to ~/.claude.json or .mcp.json:"));
-    console.log(chalk.white(JSON.stringify({
-      mcpServers: {
-        [config.name]: {
-          command: "code-synapse",
-          args: ["start"],
-          cwd: config.root,
+      // Display configuration for AI agents
+      console.log(chalk.dim("MCP Configuration (stdio transport - recommended):"));
+      console.log();
+
+      console.log(chalk.dim("For Claude Code - Add to ~/.claude.json or .mcp.json:"));
+      console.log(chalk.white(JSON.stringify({
+        mcpServers: {
+          [config.name]: {
+            command: "code-synapse",
+            args: ["start"],
+            cwd: config.root,
+          },
         },
-      },
-    }, null, 2)));
-    console.log();
-    
-    console.log(chalk.dim("For Cursor - Add to .cursor/mcp.json or ~/.cursor/mcp.json:"));
-    console.log(chalk.white(JSON.stringify({
-      mcpServers: {
-        [config.name]: {
-          command: "code-synapse",
-          args: ["start"],
-          cwd: config.root,
+      }, null, 2)));
+      console.log();
+
+      console.log(chalk.dim("For Cursor - Add to .cursor/mcp.json or ~/.cursor/mcp.json:"));
+      console.log(chalk.white(JSON.stringify({
+        mcpServers: {
+          [config.name]: {
+            command: "code-synapse",
+            args: ["start"],
+            cwd: config.root,
+          },
         },
-      },
-    }, null, 2)));
-    console.log();
-    
-    console.log(chalk.dim("Alternative: HTTP transport"));
-    console.log(chalk.dim(`  URL: http://localhost:${port}/mcp`));
+      }, null, 2)));
+      console.log();
+
+      console.log(chalk.dim("Alternative: HTTP transport"));
+      console.log(chalk.dim(`  Run with: code-synapse start --http`));
+      console.log(chalk.dim(`  URL: http://localhost:${port}/mcp`));
+    }
     console.log();
 
     if (options.debug) {
@@ -152,44 +179,52 @@ export async function startCommand(options: StartOptions): Promise<void> {
     console.log(chalk.dim("Press Ctrl+C to stop the server."));
 
     // Keep process running
-    logger.info({ port }, "Server running");
+    logger.info({ port, transport: useHttp ? "http" : "stdio" }, "Server running");
 
-    // Keep process alive - wait for stdin to close (when AI agent disconnects) or signal
-    // For stdio transport, the MCP SDK handles stdin, but we need to prevent premature exit
-    // When running manually from terminal, stdin is a TTY and we need to wait for signals
-    // When running via AI agent, stdin is a pipe and we wait for it to close
-    
-    // Keep stdin open to prevent premature exit
-    // In stdio mode, we need stdin to stay open for MCP communication
-    if (!process.stdin.isTTY) {
-      // When running via AI agent (pipe), stdin is managed by MCP SDK
-      // Just wait for it to close
-      await new Promise<void>((resolve) => {
-        const onClose = () => {
-          resolve();
-        };
-        process.stdin.once("end", onClose);
-        process.stdin.once("close", onClose);
-        process.once("SIGINT", onClose);
-        process.once("SIGTERM", onClose);
-      });
-    } else {
-      // When running manually in terminal (TTY), keep process alive
-      // Wait for Ctrl+C or kill signal
-      // The MCP SDK's stdio transport will handle stdin, but we need to prevent exit
+    if (useHttp) {
+      // HTTP mode: just wait for signals (HTTP server keeps event loop alive)
       await new Promise<void>((resolve) => {
         const onSignal = () => {
           resolve();
         };
         process.once("SIGINT", onSignal);
         process.once("SIGTERM", onSignal);
-        
-        // Keep stdin readable to prevent event loop from becoming empty
-        // This prevents beforeExit from firing prematurely
-        if (process.stdin.readable) {
-          process.stdin.resume();
-        }
       });
+    } else {
+      // Stdio mode: keep process alive - wait for stdin to close or signal
+      // For stdio transport, the MCP SDK handles stdin, but we need to prevent premature exit
+      // When running manually from terminal, stdin is a TTY and we need to wait for signals
+      // When running via AI agent, stdin is a pipe and we wait for it to close
+      if (!process.stdin.isTTY) {
+        // When running via AI agent (pipe), stdin is managed by MCP SDK
+        // Just wait for it to close
+        await new Promise<void>((resolve) => {
+          const onClose = () => {
+            resolve();
+          };
+          process.stdin.once("end", onClose);
+          process.stdin.once("close", onClose);
+          process.once("SIGINT", onClose);
+          process.once("SIGTERM", onClose);
+        });
+      } else {
+        // When running manually in terminal (TTY), keep process alive
+        // Wait for Ctrl+C or kill signal
+        // The MCP SDK's stdio transport will handle stdin, but we need to prevent exit
+        await new Promise<void>((resolve) => {
+          const onSignal = () => {
+            resolve();
+          };
+          process.once("SIGINT", onSignal);
+          process.once("SIGTERM", onSignal);
+
+          // Keep stdin readable to prevent event loop from becoming empty
+          // This prevents beforeExit from firing prematurely
+          if (process.stdin.readable) {
+            process.stdin.resume();
+          }
+        });
+      }
     }
   } catch (error) {
     spinner.fail(chalk.red("Failed to start MCP server"));

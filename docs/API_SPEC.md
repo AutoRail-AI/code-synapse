@@ -39,6 +39,12 @@ This document describes every API surface exposed by Code-Synapse:
   - [Compaction](#rest-compaction)
   - [Reconciliation](#rest-reconciliation)
   - [Operations](#rest-operations)
+  - [Semantic Analysis (MCP)](#rest-semantic-analysis)
+  - [Design Patterns (MCP)](#rest-design-patterns)
+  - [Operations — MCP Tools](#rest-operations-mcp)
+  - [Lazarus Migration (MCP)](#rest-lazarus-migration)
+  - [Entity Tagging (MCP)](#rest-entity-tagging)
+  - [Vibe Coding Sessions (MCP)](#rest-vibe-coding-sessions)
 
 ---
 
@@ -1557,3 +1563,132 @@ Returns: `{ "status": "ok" }`
 |--------|------|------|-------------|
 | `POST` | `/api/operations/reindex` | `{ filePaths?: string[] }` | Trigger re-indexing |
 | `POST` | `/api/operations/justify` | `{ entityIds?: string[], force?: boolean }` | Trigger business justification |
+
+---
+
+### REST: Semantic Analysis
+
+These endpoints wrap MCP semantic analysis tools as REST APIs.
+
+| Method | Path | Query Params | Description |
+|--------|------|-------------|-------------|
+| `GET` | `/api/semantics/functions` | `?name=<name>&filePath=<path>` | Get function semantics (parameters, return type, error analysis) |
+| `GET` | `/api/semantics/error-paths` | `?functionName=<name>&filePath=<path>` | Get error propagation paths for a function |
+| `GET` | `/api/semantics/data-flow` | `?functionName=<name>&filePath=<path>&includeFullGraph=false` | Get data flow analysis for a function |
+| `GET` | `/api/semantics/side-effects` | `?functionName=<name>&filePath=<path>&categories=<csv>&minConfidence=<level>` | Get side effects analysis for a function |
+
+**`GET /api/semantics/functions`**
+- `name` (required): Function name to find
+- `filePath` (optional): File path to narrow search
+
+**`GET /api/semantics/data-flow`**
+- `functionName` (required): Function name
+- `includeFullGraph` (optional, default `false`): Include full node/edge graph
+
+---
+
+### REST: Design Patterns
+
+| Method | Path | Query Params | Description |
+|--------|------|-------------|-------------|
+| `GET` | `/api/patterns` | `?patternType=<type>&minConfidence=0.5&filePath=<path>&limit=20` | Find design patterns in the codebase |
+| `GET` | `/api/patterns/:id` | — | Get details of a specific pattern |
+
+**`GET /api/patterns`**
+- `patternType` (optional): One of `factory`, `singleton`, `observer`, `repository`, `service`, `adapter`, `builder`, `strategy`, `decorator`
+- `minConfidence` (optional, default `0.5`): Minimum confidence threshold
+- `limit` (optional, default `20`): Max results
+
+---
+
+### REST: Operations — MCP Tools
+
+These extend the existing Operations section with MCP tool equivalents.
+
+| Method | Path | Body | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/operations/file-changed` | `{ filePath, changeType, previousPath?, changeDescription?, aiGenerated? }` | Notify that a file was changed |
+| `POST` | `/api/operations/enhance-prompt` | `{ prompt, targetFile?, taskType?, includeContext?, maxContextTokens? }` | Enhance a prompt with codebase context |
+| `POST` | `/api/operations/generation-context` | `{ originalPrompt, affectedFiles, sessionId?, generationNotes? }` | Create generation context after code generation |
+
+**`POST /api/operations/file-changed`**
+- `filePath` (required): Path to changed file
+- `changeType` (required): `created` | `modified` | `deleted` | `renamed`
+- `previousPath` (optional): Previous path for renames
+- `changeDescription` (optional): Brief description
+- `aiGenerated` (optional): Whether AI-generated
+
+**`POST /api/operations/enhance-prompt`**
+- `prompt` (required): Original user prompt
+- `taskType` (optional): `create` | `modify` | `refactor` | `fix` | `document` | `test`
+- `includeContext` (optional, default `true`): Include related code context
+- `maxContextTokens` (optional, default `2000`): Max context tokens
+
+**`POST /api/operations/generation-context`**
+- `originalPrompt` (required): The prompt used
+- `affectedFiles` (required): Array of `{ filePath, changeType, summary? }`
+- `sessionId` (optional): Session ID for tracking
+- `generationNotes` (optional): Additional context
+
+---
+
+### REST: Lazarus Migration
+
+| Method | Path | Params | Description |
+|--------|------|--------|-------------|
+| `GET` | `/api/entities/:id/source` | `?contextLines=0` | Get source code for an entity |
+| `GET` | `/api/features` | `?featureContext=<ctx>&includeEntities=false&limit=50` | Get feature map |
+| `POST` | `/api/features/migration-context` | Body: `{ featureContext?, entityIds?, includeSource?, includeDataFlow?, includeSideEffects? }` | Get migration context |
+| `GET` | `/api/entities/:id/blast-radius` | `?maxDepth=3&direction=callers` | Analyze blast radius of an entity |
+| `GET` | `/api/entities/:id/tests` | — | Get tests for an entity |
+| `GET` | `/api/resolve` | `?filePath=<path>&line=<number>` | Resolve entity at a file location |
+| `GET` | `/api/migration/progress` | `?featureContext=<ctx>&tags=<csv>` | Get migration progress |
+| `GET` | `/api/migration/slice-dependencies` | `?features=<csv>` | Get slice dependencies |
+
+**`GET /api/entities/:id/blast-radius`**
+- `maxDepth` (optional, default `3`): Max traversal depth
+- `direction` (optional, default `callers`): `callers` | `callees` | `both`
+
+**`GET /api/resolve`**
+- `filePath` (required): File path
+- `line` (required): Line number
+
+---
+
+### REST: Entity Tagging
+
+| Method | Path | Params | Description |
+|--------|------|--------|-------------|
+| `POST` | `/api/entities/:id/tags` | Body: `{ tags: string[], source? }` | Tag an entity |
+| `GET` | `/api/tags/:tag/entities` | `?entityType=<type>` | Get entities with a tag |
+| `DELETE` | `/api/entities/:id/tags` | Body: `{ tags: string[] }` | Remove tags from an entity |
+
+**`POST /api/entities/:id/tags`**
+- `tags` (required): Array of tag strings
+- `source` (optional): Source of the tagging
+
+**`GET /api/tags/:tag/entities`**
+- `entityType` (optional): Filter by `function` | `class` | `interface` | `variable` | `file`
+
+---
+
+### REST: Vibe Coding Sessions
+
+| Method | Path | Params | Description |
+|--------|------|--------|-------------|
+| `POST` | `/api/sessions/start` | Body: `{ intent, targetFiles?, relatedConcepts?, maxContextItems? }` | Start a vibe coding session |
+| `POST` | `/api/sessions/:sessionId/changes` | Body: `{ filePath, changeType, description, previousPath? }` | Record a change in a session |
+| `POST` | `/api/sessions/:sessionId/complete` | Body: `{ summary? }` | Complete a session |
+| `GET` | `/api/sessions/:sessionId` | — | Get session status |
+
+**`POST /api/sessions/start`**
+- `intent` (required): What the coding session is about
+- `targetFiles` (optional): Files expected to be modified
+- `relatedConcepts` (optional): Related concepts/keywords
+- `maxContextItems` (optional): Max context items to include
+
+**`POST /api/sessions/:sessionId/changes`**
+- `filePath` (required): Path to changed file
+- `changeType` (required): `created` | `modified` | `deleted` | `renamed`
+- `description` (required): What changed
+- `previousPath` (optional): Previous path for renames

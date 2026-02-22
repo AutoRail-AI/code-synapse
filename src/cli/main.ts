@@ -85,6 +85,7 @@ program
   .description("Start the MCP server")
   .option("-p, --port <port>", "Port to run the server on", parseInt)
   .option("-d, --debug", "Enable debug logging")
+  .option("--http", "Use HTTP transport instead of stdio (enables curl/browser access)")
   .action(startCommand);
 
 program

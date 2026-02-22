@@ -74,11 +74,11 @@ function getConfidenceBgColor(level: "high" | "medium" | "low" | "none"): string
 function getEntityTypeBadge(entityType: string | undefined): { label: string; classes: string } | null {
   switch (entityType) {
     case "function":
-      return { label: "fn", classes: "bg-blue-500/20 text-blue-400 border-blue-500/30" };
+      return { label: "fn", classes: "bg-electric-cyan/15 text-electric-cyan border-electric-cyan/30" };
     case "class":
-      return { label: "class", classes: "bg-purple-500/20 text-purple-400 border-purple-500/30" };
+      return { label: "class", classes: "bg-rail-purple/15 text-quantum-violet border-rail-purple/30" };
     case "interface":
-      return { label: "iface", classes: "bg-green-500/20 text-green-400 border-green-500/30" };
+      return { label: "iface", classes: "bg-electric-cyan/10 text-electric-cyan border-electric-cyan/30" };
     default:
       return null;
   }
@@ -94,7 +94,7 @@ export function JustificationCard({ result, index, onClick, idPrefix }: Justific
   const typeBadge = getEntityTypeBadge(result.entityType);
 
   const baseCardClasses =
-    "w-full text-left p-4 rounded-lg border transition-colors";
+    "w-full text-left p-4 rounded-lg border transition-colors overflow-hidden";
   const glassClasses = isHighConfidence
     ? "bg-white/10 backdrop-blur-md border-white/20 hover:bg-white/15"
     : "bg-slate-800 border-slate-700 hover:bg-slate-700";
@@ -128,7 +128,7 @@ export function JustificationCard({ result, index, onClick, idPrefix }: Justific
           <div className="flex items-center gap-2 flex-shrink-0">
             {/* Business Value Badge (Gold/Purple) */}
             {result.businessValue && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 max-w-32 truncate" title={result.businessValue}>
                 {result.businessValue}
               </span>
             )}
@@ -165,7 +165,7 @@ export function JustificationCard({ result, index, onClick, idPrefix }: Justific
 
         {/* Purpose summary */}
         {result.justification?.purposeSummary && (
-          <div className="text-sm text-slate-400 mb-1.5 pl-8">
+          <div className="text-sm text-slate-400 mb-1.5 pl-8 break-words">
             {result.justification.purposeSummary}
           </div>
         )}

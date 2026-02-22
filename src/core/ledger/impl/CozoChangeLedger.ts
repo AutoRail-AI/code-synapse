@@ -157,13 +157,11 @@ export class CozoLedgerStorage implements ILedgerStorage {
 
     const whereClause = conditions.length > 0 ? `, ${conditions.join(", ")}` : "";
 
-    // Use rawQuery for aggregation
-    const dbQuery = `
-      ?[cnt] := cnt = count(id), *${TABLE_NAME}{id, timestamp}${whereClause}
-    `;
+    // Use rawQuery for aggregation - put count(id) in the head like CozoStorageAdapter
+    const dbQuery = `?[count(id)] := *${TABLE_NAME}{id, timestamp}${whereClause}`;
 
-    const rows = await this.adapter.rawQuery<{ cnt: number }>(dbQuery, params);
-    return rows[0]?.cnt ?? 0;
+    const rows = await this.adapter.rawQuery<Record<string, number>>(dbQuery, params);
+    return Object.values(rows[0] || {})[0] || 0;
   }
 
   async getOldestTimestamp(): Promise<string | null> {
@@ -195,14 +193,12 @@ export class CozoLedgerStorage implements ILedgerStorage {
   async deleteOlderThan(timestamp: string): Promise<number> {
     const timestampMs = new Date(timestamp).getTime();
 
-    // First count using rawQuery
-    const countQuery = `
-      ?[cnt] := cnt = count(id), *${TABLE_NAME}{id, timestamp: ts}, ts < $timestamp
-    `;
-    const countRows = await this.adapter.rawQuery<{ cnt: number }>(countQuery, {
+    // First count using rawQuery - put count(id) in the head like CozoStorageAdapter
+    const countQuery = `?[count(id)] := *${TABLE_NAME}{id, timestamp: ts}, ts < $timestamp`;
+    const countRows = await this.adapter.rawQuery<Record<string, number>>(countQuery, {
       timestamp: timestampMs,
     });
-    const count = countRows[0]?.cnt ?? 0;
+    const count = Object.values(countRows[0] || {})[0] || 0;
 
     // Then delete using rawExecute
     const deleteQuery = `

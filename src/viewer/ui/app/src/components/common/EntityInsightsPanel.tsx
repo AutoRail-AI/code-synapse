@@ -30,7 +30,7 @@ export function EntityInsightsPanel({
             <div className="p-4 border-b border-slate-700 bg-slate-800/50">
                 <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2 text-slate-400 text-sm uppercase tracking-wider font-semibold">
-                        <Brain className="w-4 h-4 text-purple-400" />
+                        <Brain className="w-4 h-4 text-rail-purple" />
                         Entity Insights
                     </div>
                     <button
@@ -44,12 +44,12 @@ export function EntityInsightsPanel({
                 <div className="flex items-start gap-4">
                     <div
                         className={`p-3 rounded-xl shadow-lg ${entity.kind === 'function'
-                                ? 'bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30'
+                                ? 'bg-electric-cyan/20 text-electric-cyan ring-1 ring-electric-cyan/30'
                                 : entity.kind === 'class'
-                                    ? 'bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30'
+                                    ? 'bg-rail-purple/20 text-quantum-violet ring-1 ring-rail-purple/30'
                                     : entity.kind === 'interface'
-                                        ? 'bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/30'
-                                        : 'bg-gray-500/20 text-gray-400 ring-1 ring-gray-500/30'
+                                        ? 'bg-electric-cyan/15 text-electric-cyan ring-1 ring-electric-cyan/30'
+                                        : 'bg-slate-500/20 text-slate-400 ring-1 ring-slate-500/30'
                             }`}
                     >
                         <EntityIcon kind={entity.kind} size="lg" />
@@ -74,29 +74,29 @@ export function EntityInsightsPanel({
                     <MetricCard
                         label="Complexity"
                         value={complexityScore.label}
-                        icon={<Activity className="w-4 h-4 text-orange-400" />}
+                        icon={<Activity className="w-4 h-4 text-warning" />}
                         color={complexityScore.color}
                         score={complexityScore.value} // 0-100
                     />
                     <MetricCard
                         label="Impact"
                         value={impactScore.label}
-                        icon={<Zap className="w-4 h-4 text-yellow-400" />}
+                        icon={<Zap className="w-4 h-4 text-warning" />}
                         color={impactScore.color}
                         score={impactScore.value}
                     />
                     <MetricCard
                         label="References"
                         value={`${refCount} Refs`}
-                        icon={<Share2 className="w-4 h-4 text-blue-400" />}
+                        icon={<Share2 className="w-4 h-4 text-electric-cyan" />}
                         color="text-slate-300"
                     />
                     <MetricCard
                         label="Confidence"
                         value={`${Math.round((entity.confidence || 0) * 100)}%`}
-                        icon={<Brain className="w-4 h-4 text-green-400" />}
+                        icon={<Brain className="w-4 h-4 text-success" />}
                         color={
-                            (entity.confidence || 0) > 0.8 ? 'text-green-400' : 'text-yellow-400'
+                            (entity.confidence || 0) > 0.8 ? 'text-success' : 'text-warning'
                         }
                         score={(entity.confidence || 0) * 100}
                     />
@@ -135,7 +135,7 @@ export function EntityInsightsPanel({
                     {entity.featureContext && (
                         <div>
                             <div className="text-xs text-slate-500 mb-1">Feature</div>
-                            <div className="text-sm text-blue-400 bg-blue-400/10 px-2 py-1 rounded inline-block">
+                            <div className="text-sm text-electric-cyan bg-electric-cyan/10 px-2 py-1 rounded inline-block">
                                 {entity.featureContext}
                             </div>
                         </div>
@@ -187,7 +187,7 @@ export function EntityInsightsPanel({
                         <div>
                             <div className="text-xs text-slate-500 mb-0.5">File</div>
                             <div
-                                className="text-sm text-blue-400 hover:text-blue-300 cursor-pointer truncate font-mono bg-slate-900/50 px-2 py-1 rounded"
+                                className="text-sm text-electric-cyan hover:text-electric-cyan/80 cursor-pointer truncate font-mono bg-slate-900/50 px-2 py-1 rounded"
                                 title={entity.filePath}
                             >
                                 {entity.filePath}
@@ -279,12 +279,12 @@ function EntityIcon({
 function KindBadge({ kind }: { kind: string }) {
     const classes =
         kind === 'function'
-            ? 'text-blue-400 bg-blue-400/10 border-blue-400/20'
+            ? 'text-electric-cyan bg-electric-cyan/10 border-electric-cyan/20'
             : kind === 'class'
-                ? 'text-purple-400 bg-purple-400/10 border-purple-400/20'
+                ? 'text-quantum-violet bg-rail-purple/10 border-rail-purple/20'
                 : kind === 'interface'
-                    ? 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20'
-                    : 'text-gray-400 bg-gray-400/10 border-gray-400/20';
+                    ? 'text-electric-cyan bg-electric-cyan/10 border-electric-cyan/20'
+                    : 'text-slate-400 bg-slate-400/10 border-slate-400/20';
 
     return (
         <span
@@ -298,8 +298,8 @@ function KindBadge({ kind }: { kind: string }) {
 function ClassificationBadge({ classification }: { classification: string }) {
     const classes =
         classification === 'domain'
-            ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
-            : 'text-amber-400 bg-amber-400/10 border-amber-400/20';
+            ? 'text-quantum-violet bg-rail-purple/10 border-rail-purple/20'
+            : 'text-electric-cyan bg-electric-cyan/10 border-electric-cyan/20';
 
     return (
         <span
@@ -317,17 +317,17 @@ function useMockComplexity(entity: EntitySummary) {
     const hash = entity.name.length + entity.startLine;
     const score = hash % 100;
 
-    if (score > 80) return { label: 'High', value: score, color: 'text-orange-500' };
-    if (score > 50) return { label: 'Medium', value: score, color: 'text-yellow-500' };
-    return { label: 'Low', value: score, color: 'text-emerald-500' };
+    if (score > 80) return { label: 'High', value: score, color: 'text-error' };
+    if (score > 50) return { label: 'Medium', value: score, color: 'text-warning' };
+    return { label: 'Low', value: score, color: 'text-success' };
 }
 
 function useMockImpact(entity: EntitySummary) {
     const hash = (entity.endLine - entity.startLine);
     const score = Math.min(hash, 100);
 
-    if (score > 70) return { label: 'Extensive', value: score, color: 'text-red-500' };
-    if (score > 30) return { label: 'Moderate', value: score, color: 'text-blue-500' };
+    if (score > 70) return { label: 'Extensive', value: score, color: 'text-error' };
+    if (score > 30) return { label: 'Moderate', value: score, color: 'text-electric-cyan' };
     return { label: 'Local', value: score, color: 'text-slate-400' };
 }
 

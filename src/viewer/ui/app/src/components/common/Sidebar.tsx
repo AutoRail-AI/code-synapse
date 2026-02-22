@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   FolderTree,
-
+  LayoutDashboard,
   GitBranch,
   Search,
   Settings,
@@ -18,6 +18,13 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
+  {
+    id: 'dashboard',
+    label: 'Dashboard',
+    icon: <LayoutDashboard className="w-5 h-5" />,
+    path: '/dashboard',
+    description: 'Overview stats and quick actions',
+  },
   {
     id: 'explorer',
     label: 'Explorer',
@@ -79,13 +86,13 @@ export function Sidebar() {
               key={item.id}
               onClick={() => handleNavClick(item)}
               className={`w-full group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 ${isActive
-                ? 'bg-primary/20 text-white shadow-glow border border-primary/20'
+                ? 'bg-rail-purple/15 text-cloud-white shadow-glow border border-rail-purple/20'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 hover:translate-x-1'
                 }`}
               title={item.description}
             >
               <span
-                className={`transition-colors duration-300 ${isActive ? 'text-primary' : 'text-slate-500 group-hover:text-slate-300'}`}
+                className={`transition-colors duration-300 ${isActive ? 'text-electric-cyan' : 'text-slate-500 group-hover:text-slate-300'}`}
               >
                 {item.icon}
               </span>
@@ -93,7 +100,7 @@ export function Sidebar() {
                 {item.label}
               </span>
               {isActive && (
-                <div className="hidden lg:block ml-auto w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(99,102,241,0.6)]" />
+                <div className="hidden lg:block ml-auto w-1.5 h-1.5 rounded-full bg-rail-purple shadow-[0_0_8px_rgba(110,24,179,0.6)]" />
               )}
             </button>
           );

@@ -12,10 +12,10 @@ export default {
         'slate-grey': 'var(--color-slate-grey)',
         'cloud-white': 'var(--color-cloud-white)',
         'pure-white': 'var(--color-pure-white)',
-        'rail-purple': 'var(--color-rail-purple)',
-        'quantum-violet': 'var(--color-quantum-violet)',
-        'deep-purple': 'var(--color-deep-purple)',
-        'electric-cyan': 'var(--color-electric-cyan)',
+        'rail-purple': '#6E18B3',
+        'quantum-violet': '#8134CE',
+        'deep-purple': '#5B0B96',
+        'electric-cyan': '#00E5FF',
 
         // Main Backgrounds - Mapped to CSS Variables
         bg: {
@@ -31,34 +31,32 @@ export default {
         },
         // Accents
         primary: {
-          DEFAULT: 'var(--color-primary)',
-          hover: 'var(--color-primary-hover)',
-          light: '#a78bfa', // Keeping hardcoded for now or map to quantum-violet with opacity/tint?
+          DEFAULT: '#6E18B3',
+          hover: '#5B0B96',
         },
         accent: {
-          DEFAULT: 'var(--color-accent)',
-          hover: 'var(--color-electric-cyan)', // Lighter for hover
+          DEFAULT: '#00E5FF',
+          hover: '#00E5FF',
         },
         // Semantic Colors
-        success: 'var(--color-success)',
-        warning: 'var(--color-warning)',
-        error: 'var(--color-error)',
-        info: '#3b82f6',
+        success: '#00FF88',
+        warning: '#FFB800',
+        error: '#FF3366',
 
         // Confidence levels
         confidence: {
-          high: 'var(--color-success)',
-          medium: 'var(--color-warning)',
+          high: '#00FF88',
+          medium: '#FFB800',
           low: '#f97316',
-          uncertain: 'var(--color-error)',
+          uncertain: '#FF3366',
         },
         // Entity types (keeping existing palette for distinctness, or could map to theme)
         entity: {
-          function: '#3b82f6',
-          class: '#a855f7',
-          interface: '#06b6d4',
-          variable: '#94a3b8',
-          file: '#eab308',
+          function: 'var(--color-electric-cyan)',
+          class: 'var(--color-rail-purple)',
+          interface: 'var(--color-electric-cyan)',
+          variable: 'rgba(250, 250, 250, 0.6)',
+          file: 'var(--color-electric-cyan)',
         },
       },
       fontFamily: {
@@ -71,6 +69,10 @@ export default {
         'slide-up': 'slideUp 0.4s ease-out',
         'slide-in-right': 'slideInRight 0.25s ease-out',
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'pulse-glow': 'pulseGlow 2s ease-in-out infinite',
+        'breathing-glow': 'breathingGlow 4s ease-in-out infinite',
+        'shimmer': 'shimmer 2s linear infinite',
+        'float': 'float 3s ease-in-out infinite',
       },
       keyframes: {
         fadeIn: {
@@ -85,11 +87,27 @@ export default {
           '0%': { transform: 'translateX(100%)' },
           '100%': { transform: 'translateX(0)' },
         },
+        pulseGlow: {
+          '0%, 100%': { boxShadow: '0 0 10px rgba(110, 24, 179, 0.2)' },
+          '50%': { boxShadow: '0 0 25px rgba(110, 24, 179, 0.4)' },
+        },
+        breathingGlow: {
+          '0%, 100%': { opacity: '0.6' },
+          '50%': { opacity: '1' },
+        },
+        shimmer: {
+          '0%': { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-4px)' },
+        },
       },
       boxShadow: {
-        'glow': '0 0 20px rgba(129, 52, 206, 0.15)', // Quantum Violet glow
-        'glass': '0 4px 30px rgba(0, 0, 0, 0.2)', // Slightly darker glass shadow
-        'rail': '0 0 30px rgba(110, 24, 179, 0.2)', // Rail Purple glow
+        'glow': '0 0 20px rgba(110, 24, 179, 0.15)',
+        'glass': '0 4px 30px rgba(0, 0, 0, 0.2)',
+        'rail': '0 0 30px rgba(110, 24, 179, 0.2)',
       },
     },
   },

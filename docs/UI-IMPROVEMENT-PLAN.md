@@ -444,14 +444,14 @@ Current canvas implementation is custom. Consider:
 - [x] Monaco Definition/Reference Providers (Graph Bridge) - F12/Ctrl+Click for definition, Shift+F12 for references, enhanced hover
 - [x] Explorer Context Panel: AST Tree & Incoming Refs (Partial: Stats for Folders)
 
-### Phase 3: New Views
-- [ ] Dashboard view
-- [ ] Entity detail page
-- [ ] Keyboard shortcuts system
-- [ ] Enhanced command palette
+### Phase 3: New Views ✅ COMPLETE
+- [x] Dashboard view (landing page with hero stats, recent activity, quick actions, classification breakdown)
+- [ ] Entity detail page (deferred)
+- [x] Keyboard shortcuts system (Cmd+1-6 navigation, Cmd+P palette, Cmd+/ help modal)
+- [x] Enhanced command palette (fuzzy search, navigation/actions/entities, keyboard nav)
 
-### Phase 4: Advanced
-- [ ] AI chat interface
-- [ ] WebSocket real-time updates
-- [ ] Export graph as image
-- [ ] Comparison view
+### Phase 4: Advanced (Partial)
+- [ ] AI chat interface (deferred)
+- [x] SSE real-time ledger updates (EventSource-based live streaming, auto-reconnect)
+- [ ] Export graph as image (deferred)
+- [ ] Comparison view (deferred)

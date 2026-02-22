@@ -62,6 +62,14 @@ interface UIState {
   // Error state
   error: string | null;
   setError: (error: string | null) => void;
+
+  // Recent files
+  recentFiles: string[];
+  addRecentFile: (path: string) => void;
+
+  // Shortcut help modal
+  shortcutHelpOpen: boolean;
+  setShortcutHelpOpen: (open: boolean) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -87,6 +95,15 @@ export const useUIStore = create<UIState>()(
 
       error: null,
       setError: (error) => set({ error: error }),
+
+      recentFiles: [],
+      addRecentFile: (path) =>
+        set((state) => ({
+          recentFiles: [path, ...state.recentFiles.filter((f) => f !== path)].slice(0, 10),
+        })),
+
+      shortcutHelpOpen: false,
+      setShortcutHelpOpen: (open) => set({ shortcutHelpOpen: open }),
     }),
     { name: 'code-synapse-ui' }
   )

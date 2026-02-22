@@ -104,7 +104,7 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
         <button
             onClick={onClick}
             className={`flex-1 flex items-center justify-center gap-2 py-3 text-xs font-medium border-b-2 transition-colors ${active
-                ? 'border-blue-500 text-blue-400 bg-slate-800/50'
+                ? 'border-electric-cyan text-electric-cyan bg-slate-800/50'
                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                 }`}
         >
@@ -136,7 +136,7 @@ function StructureView({ entities }: { entities: EntitySummary[] }) {
                         <div className="text-xs text-slate-500 flex justify-between">
                             <span>Line {entity.startLine}</span>
                             {entity.classification && (
-                                <span className={`px-1.5 rounded-full text-[10px] ${entity.classification === 'domain' ? 'bg-blue-900/50 text-blue-300' : 'bg-slate-700 text-slate-300'
+                                <span className={`px-1.5 rounded-full text-[10px] ${entity.classification === 'domain' ? 'bg-rail-purple/20 text-quantum-violet' : 'bg-slate-700 text-slate-300'
                                     }`}>
                                     {entity.classification}
                                 </span>
@@ -170,7 +170,7 @@ function DependenciesView({ data, loading }: { data: GraphData | null; loading: 
             {outgoing.length > 0 && (
                 <div>
                     <div className="text-xs font-semibold text-slate-500 mb-2 uppercase px-2 flex items-center gap-2">
-                        <span className="text-blue-400">→</span> Imports ({outgoing.length})
+                        <span className="text-electric-cyan">→</span> Imports ({outgoing.length})
                     </div>
                     {outgoing.map(node => (
                         <div key={node.id} className="flex items-center gap-2 py-1.5 px-2 hover:bg-slate-800 rounded">
@@ -185,7 +185,7 @@ function DependenciesView({ data, loading }: { data: GraphData | null; loading: 
             {incoming.length > 0 && (
                 <div>
                     <div className="text-xs font-semibold text-slate-500 mb-2 uppercase px-2 flex items-center gap-2">
-                        <span className="text-green-400">←</span> Imported By ({incoming.length})
+                        <span className="text-success">←</span> Imported By ({incoming.length})
                     </div>
                     {incoming.map(node => (
                         <div key={node.id} className="flex items-center gap-2 py-1.5 px-2 hover:bg-slate-800 rounded">
@@ -228,7 +228,7 @@ function InsightsView({ entities }: { entities: EntitySummary[] }) {
                         {entity.classification && (
                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                                 entity.classification === 'domain'
-                                    ? 'bg-indigo-900/50 text-indigo-300 border border-indigo-700/50'
+                                    ? 'bg-rail-purple/20 text-quantum-violet border border-rail-purple/30'
                                     : 'bg-slate-700 text-slate-300 border border-slate-600'
                             }`}>
                                 {entity.classification}
@@ -240,7 +240,7 @@ function InsightsView({ entities }: { entities: EntitySummary[] }) {
                     {entity.justification && (
                         <div className="mb-2">
                             <div className="text-[10px] uppercase text-slate-500 font-medium mb-1">Purpose</div>
-                            <p className="text-xs text-slate-300 leading-relaxed">
+                            <p className="text-xs text-slate-300 leading-relaxed break-words">
                                 {entity.justification}
                             </p>
                         </div>
@@ -250,7 +250,7 @@ function InsightsView({ entities }: { entities: EntitySummary[] }) {
                     {entity.businessValue && (
                         <div className="mb-2">
                             <div className="text-[10px] uppercase text-slate-500 font-medium mb-1">Business Value</div>
-                            <p className="text-xs text-slate-400 leading-relaxed">
+                            <p className="text-xs text-slate-400 leading-relaxed break-words">
                                 {entity.businessValue}
                             </p>
                         </div>
@@ -260,7 +260,7 @@ function InsightsView({ entities }: { entities: EntitySummary[] }) {
                     {entity.featureContext && (
                         <div className="mb-2">
                             <div className="text-[10px] uppercase text-slate-500 font-medium mb-1">Feature Context</div>
-                            <p className="text-xs text-slate-400 leading-relaxed">
+                            <p className="text-xs text-slate-400 leading-relaxed break-words">
                                 {entity.featureContext}
                             </p>
                         </div>
@@ -344,7 +344,7 @@ function StatsView({ entities }: { entities: EntitySummary[] }) {
                 <div className="space-y-2">
                     {Object.entries(byClass).map(([cls, count]) => (
                         <div key={cls} className="flex items-center justify-between text-sm">
-                            <span className={`px-2 py-0.5 rounded text-xs ${cls === 'domain' ? 'bg-indigo-900/50 text-indigo-300' : 'text-slate-400'
+                            <span className={`px-2 py-0.5 rounded text-xs ${cls === 'domain' ? 'bg-rail-purple/20 text-quantum-violet' : 'text-slate-400'
                                 }`}>
                                 {cls}
                             </span>
@@ -360,9 +360,9 @@ function StatsView({ entities }: { entities: EntitySummary[] }) {
 function EntityIcon({ kind }: { kind: string }) {
     const props = { className: 'w-4 h-4 flex-shrink-0' };
     switch (kind) {
-        case 'function': return <Box {...props} className="w-4 h-4 text-blue-400" />;
-        case 'class': return <Layers {...props} className="w-4 h-4 text-purple-400" />;
-        case 'interface': return <Hash {...props} className="w-4 h-4 text-cyan-400" />;
-        default: return <FileCode {...props} className="w-4 h-4 text-gray-400" />;
+        case 'function': return <Box {...props} className="w-4 h-4 text-electric-cyan" />;
+        case 'class': return <Layers {...props} className="w-4 h-4 text-rail-purple" />;
+        case 'interface': return <Hash {...props} className="w-4 h-4 text-electric-cyan" />;
+        default: return <FileCode {...props} className="w-4 h-4 text-slate-400" />;
     }
 }

@@ -26,6 +26,7 @@ import { findAvailablePort, isPortAvailable } from "../../utils/port.js";
 import { initCommand } from "./init.js";
 import { startCommand } from "./start.js";
 import { createGraphStore, createStorageAdapter, type IGraphStore } from "../../core/graph/index.js";
+import type { GraphDatabase } from "../../core/graph/index.js";
 import { createGraphViewer, startViewerServer } from "../../viewer/index.js";
 import type { ViewerServerOptions } from "../../viewer/ui/server.js";
 import { createIParser } from "../../core/parser/index.js";
@@ -679,10 +680,13 @@ export async function defaultCommand(options: DefaultOptions): Promise<void> {
       // Get stats for display
       const stats = await viewer.getOverviewStats();
 
-      // Start viewer server with classification, ledger, and hybrid search (Phase 6)
+      // Start viewer server with classification, ledger, hybrid search, and MCP tool REST APIs
+      const graphDatabase = (graphStore as unknown as { getDatabase(): GraphDatabase }).getDatabase();
       const viewerOptions: ViewerServerOptions = {
         changeLedger: changeLedger ?? undefined,
         hybridSearchService: hybridSearchService ?? undefined,
+        graphDatabase,
+        graphStore,
       };
       viewerServer = await startViewerServer(viewer, viewerPort, "127.0.0.1", viewerOptions);
 

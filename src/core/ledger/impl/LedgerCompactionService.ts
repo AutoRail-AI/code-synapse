@@ -178,12 +178,10 @@ export class CozoCompactionStorage implements ICompactionStorage {
   }
 
   async deleteOlderThan(timestamp: string): Promise<number> {
-    // Use rawQuery for aggregation
-    const countQuery = `
-      ?[cnt] := cnt = count(id), *${TABLE_NAME}{id, timestamp_end: ts}, ts < $timestamp
-    `;
-    const countRows = await this.adapter.rawQuery<{ cnt: number }>(countQuery, { timestamp });
-    const count = countRows[0]?.cnt ?? 0;
+    // Use rawQuery for aggregation - put count(id) in the head like CozoStorageAdapter
+    const countQuery = `?[count(id)] := *${TABLE_NAME}{id, timestamp_end: ts}, ts < $timestamp`;
+    const countRows = await this.adapter.rawQuery<Record<string, number>>(countQuery, { timestamp });
+    const count = Object.values(countRows[0] || {})[0] || 0;
 
     // Use rawExecute for delete
     const deleteQuery = `

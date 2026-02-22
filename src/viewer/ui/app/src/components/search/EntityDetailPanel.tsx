@@ -22,13 +22,13 @@ import { getEntityFullDetail, type EntityFullDetail } from "../../api/client";
 function getEntityTypeBadge(kind: string | undefined): { label: string; classes: string } {
   switch (kind) {
     case "function":
-      return { label: "function", classes: "bg-blue-500/20 text-blue-400 border-blue-500/30" };
+      return { label: "function", classes: "bg-electric-cyan/15 text-electric-cyan border-electric-cyan/30" };
     case "class":
-      return { label: "class", classes: "bg-purple-500/20 text-purple-400 border-purple-500/30" };
+      return { label: "class", classes: "bg-rail-purple/15 text-quantum-violet border-rail-purple/30" };
     case "interface":
-      return { label: "interface", classes: "bg-green-500/20 text-green-400 border-green-500/30" };
+      return { label: "interface", classes: "bg-electric-cyan/10 text-electric-cyan border-electric-cyan/30" };
     case "variable":
-      return { label: "variable", classes: "bg-amber-500/20 text-amber-400 border-amber-500/30" };
+      return { label: "variable", classes: "bg-slate-500/20 text-slate-400 border-slate-500/30" };
     default:
       return { label: kind ?? "entity", classes: "bg-slate-500/20 text-slate-400 border-slate-500/30" };
   }
@@ -173,7 +173,7 @@ export function EntityDetailPanel() {
                   <div className="space-y-1">
                     {entity.parameters.map((p) => (
                       <div key={p.name} className="flex items-center gap-2 text-sm">
-                        <span className="font-mono text-blue-400">{p.name}</span>
+                        <span className="font-mono text-electric-cyan">{p.name}</span>
                         {p.type && (
                           <span className="font-mono text-slate-500">: {p.type}</span>
                         )}
@@ -183,7 +183,7 @@ export function EntityDetailPanel() {
                   {entity.returnType && (
                     <div className="mt-1 text-sm">
                       <span className="text-slate-500">returns</span>{" "}
-                      <span className="font-mono text-green-400">{entity.returnType}</span>
+                      <span className="font-mono text-success">{entity.returnType}</span>
                     </div>
                   )}
                 </section>
@@ -197,15 +197,15 @@ export function EntityDetailPanel() {
                   </h3>
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3 space-y-2">
                     {justification.purposeSummary && (
-                      <p className="text-sm text-slate-200">{justification.purposeSummary}</p>
+                      <p className="text-sm text-slate-200 break-words">{justification.purposeSummary}</p>
                     )}
                     {justification.businessValue && (
-                      <div className="text-xs text-slate-400">
+                      <div className="text-xs text-slate-400 break-words">
                         <span className="text-slate-500">Business Value:</span> {justification.businessValue}
                       </div>
                     )}
                     {justification.featureContext && (
-                      <div className="text-xs text-slate-400">
+                      <div className="text-xs text-slate-400 break-words">
                         <span className="text-slate-500">Feature:</span> {justification.featureContext}
                       </div>
                     )}
@@ -231,8 +231,8 @@ export function EntityDetailPanel() {
                     {classification.category && (
                       <span className={`text-xs font-medium px-2 py-1 rounded border ${
                         classification.category === "domain"
-                          ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                          : "bg-sky-500/15 text-sky-400 border-sky-500/30"
+                          ? "bg-rail-purple/15 text-quantum-violet border-rail-purple/30"
+                          : "bg-electric-cyan/15 text-electric-cyan border-electric-cyan/30"
                       }`}>
                         {classification.category}
                       </span>
